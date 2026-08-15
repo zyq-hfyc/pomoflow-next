@@ -25,7 +25,7 @@ pub use pomodoro::PomodoroSession;
 pub use project::Project;
 pub use review::{DailyReview, MonthlyReview, WeeklyReview};
 pub use tag::Tag;
-pub use task::{Priority, Repeat, Reminder, Task, TaskStatus};
+pub use task::{Priority, Reminder, Repeat, Task, TaskStatus};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

@@ -109,9 +109,9 @@ pub fn merge_changelogs(logs: &[ChangeLog]) -> CoreResult<MergeReport> {
 
     for ((entity, id), group) in groups {
         let mut iter = group.into_iter();
-        let first = iter.next().ok_or_else(|| {
-            CoreError::sync("internal: empty change group")
-        })?;
+        let first = iter
+            .next()
+            .ok_or_else(|| CoreError::sync("internal: empty change group"))?;
 
         let mut current = first;
         let mut had_conflict = false;
@@ -137,10 +137,7 @@ pub fn merge_changelogs(logs: &[ChangeLog]) -> CoreResult<MergeReport> {
         });
     }
 
-    Ok(MergeReport {
-        winners,
-        conflicts,
-    })
+    Ok(MergeReport { winners, conflicts })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

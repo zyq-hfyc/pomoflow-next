@@ -10,39 +10,30 @@ use serde::{Deserialize, Serialize};
 
 use super::{Id, Timestamp};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskStatus {
+    #[default]
     Active,
     Completed,
 }
 
-impl Default for TaskStatus {
-    fn default() -> Self {
-        Self::Active
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Priority {
     High,
     Medium,
     Low,
+    #[default]
     None,
-}
-
-impl Default for Priority {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// 提醒时机 —— v1 字符串取值,这里改成 enum 强制闭合。
 /// 与 v1 取值一一对应(中文 UI 文案由前端 i18n 翻译)。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reminder {
+    #[default]
     None,
     OnTime,
     Minutes5,
@@ -52,28 +43,17 @@ pub enum Reminder {
     Days2,
 }
 
-impl Default for Reminder {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
 /// 重复规则 —— v1 也是字符串枚举。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Repeat {
+    #[default]
     None,
     Daily,
     Weekdays,
     Weekly,
     Monthly,
     Yearly,
-}
-
-impl Default for Repeat {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// 任务主体 —— 所有 Option 字段对应 v1 可空列。

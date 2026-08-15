@@ -17,7 +17,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::error::{CoreError, CoreResult};
-use crate::model::{DailyReview, Id, MonthlyReview, PomodoroSession, Project, Tag, Task, WeeklyReview};
+use crate::model::{
+    DailyReview, Id, MonthlyReview, PomodoroSession, Project, Tag, Task, WeeklyReview,
+};
 
 /// 任务 ↔ 标签 关联查询的入参 / 出参。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -108,12 +110,19 @@ impl InMemoryStore {
 
 impl Store for InMemoryStore {
     fn list_tasks(&self, q: &TaskQuery) -> CoreResult<Vec<Task>> {
-        let g = self.inner.read().map_err(|e| CoreError::storage(e.to_string()))?;
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         let mut out: Vec<Task> = g
             .tasks
             .values()
             .filter(|t| t.deleted_at.is_none())
-            .filter(|t| q.project_id.as_ref().is_none_or(|p| t.project_id.as_ref() == Some(p)))
+            .filter(|t| {
+                q.project_id
+                    .as_ref()
+                    .is_none_or(|p| t.project_id.as_ref() == Some(p))
+            })
             .filter(|t| q.status.is_none_or(|s| t.status == s))
             .cloned()
             .collect();
@@ -132,22 +141,31 @@ impl Store for InMemoryStore {
     }
 
     fn get_task(&self, id: &Id) -> CoreResult<Task> {
-        let g = self.inner.read().map_err(|e| CoreError::storage(e.to_string()))?;
-        g.tasks
-            .get(id)
-            .cloned()
-            .ok_or_else(|| CoreError::NotFound { entity: "task", id: id.to_string() })
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        g.tasks.get(id).cloned().ok_or_else(|| CoreError::NotFound {
+            entity: "task",
+            id: id.to_string(),
+        })
     }
 
     fn upsert_task(&self, task: Task) -> CoreResult<Task> {
-        let mut g = self.inner.write().map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         let stored = task.clone();
         g.tasks.insert(task.id.clone(), task);
         Ok(stored)
     }
 
     fn delete_task(&self, id: &Id) -> CoreResult<()> {
-        let mut g = self.inner.write().map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         // 软删除:不真删数据,只设 deleted_at;sync 时由 LWW 决定最终状态
         if let Some(task) = g.tasks.get_mut(id) {
             task.deleted_at = Some(crate::model::Timestamp::now());
@@ -156,7 +174,10 @@ impl Store for InMemoryStore {
     }
 
     fn list_projects(&self) -> CoreResult<Vec<Project>> {
-        let g = self.inner.read().map_err(|e| CoreError::storage(e.to_string()))?;
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         Ok(g.projects
             .values()
             .filter(|p| p.deleted_at.is_none())
@@ -165,22 +186,34 @@ impl Store for InMemoryStore {
     }
 
     fn get_project(&self, id: &Id) -> CoreResult<Project> {
-        let g = self.inner.read().map_err(|e| CoreError::storage(e.to_string()))?;
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         g.projects
             .get(id)
             .cloned()
-            .ok_or_else(|| CoreError::NotFound { entity: "project", id: id.to_string() })
+            .ok_or_else(|| CoreError::NotFound {
+                entity: "project",
+                id: id.to_string(),
+            })
     }
 
     fn upsert_project(&self, project: Project) -> CoreResult<Project> {
-        let mut g = self.inner.write().map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         let stored = project.clone();
         g.projects.insert(project.id.clone(), project);
         Ok(stored)
     }
 
     fn delete_project(&self, id: &Id) -> CoreResult<()> {
-        let mut g = self.inner.write().map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         if let Some(p) = g.projects.get_mut(id) {
             p.deleted_at = Some(crate::model::Timestamp::now());
         }
@@ -188,7 +221,10 @@ impl Store for InMemoryStore {
     }
 
     fn list_tags(&self) -> CoreResult<Vec<Tag>> {
-        let g = self.inner.read().map_err(|e| CoreError::storage(e.to_string()))?;
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         Ok(g.tags
             .values()
             .filter(|t| t.deleted_at.is_none())
@@ -197,18 +233,30 @@ impl Store for InMemoryStore {
     }
 
     fn get_tag(&self, id: &Id) -> CoreResult<Tag> {
-        let g = self.inner.read().map_err(|e| CoreError::storage(e.to_string()))?;
-        g.tags
-            .get(id)
-            .cloned()
-            .ok_or_else(|| CoreError::NotFound { entity: "tag", id: id.to_string() })
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        g.tags.get(id).cloned().ok_or_else(|| CoreError::NotFound {
+            entity: "tag",
+            id: id.to_string(),
+        })
     }
 
     fn upsert_tag(&self, tag: Tag) -> CoreResult<Tag> {
-        let mut g = self.inner.write().map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         // 唯一性:name 不能重复(v1 行为对齐)
-        if g.tags.values().any(|t| t.name == tag.name && t.id != tag.id && t.deleted_at.is_none()) {
-            return Err(CoreError::Conflict(format!("tag name '{}' already exists", tag.name)));
+        if g.tags
+            .values()
+            .any(|t| t.name == tag.name && t.id != tag.id && t.deleted_at.is_none())
+        {
+            return Err(CoreError::Conflict(format!(
+                "tag name '{}' already exists",
+                tag.name
+            )));
         }
         let stored = tag.clone();
         g.tags.insert(tag.id.clone(), tag);
@@ -216,7 +264,10 @@ impl Store for InMemoryStore {
     }
 
     fn delete_tag(&self, id: &Id) -> CoreResult<()> {
-        let mut g = self.inner.write().map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         if let Some(t) = g.tags.get_mut(id) {
             t.deleted_at = Some(crate::model::Timestamp::now());
         }
@@ -224,7 +275,10 @@ impl Store for InMemoryStore {
     }
 
     fn list_tags_for_task(&self, task_id: &Id) -> CoreResult<Vec<Tag>> {
-        let g = self.inner.read().map_err(|e| CoreError::storage(e.to_string()))?;
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         let tag_ids = g.task_tags.get(task_id).cloned().unwrap_or_default();
         Ok(tag_ids
             .into_iter()
@@ -234,14 +288,20 @@ impl Store for InMemoryStore {
     }
 
     fn set_tags_for_task(&self, task_id: &Id, tag_ids: &[Id]) -> CoreResult<()> {
-        let mut g = self.inner.write().map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         // 校验所有 tag_id 存在(可选;为减少 InMemoryStore 复杂度,这里只插入)
         g.task_tags.insert(task_id.clone(), tag_ids.to_vec());
         Ok(())
     }
 
     fn list_pomodoros(&self) -> CoreResult<Vec<PomodoroSession>> {
-        let g = self.inner.read().map_err(|e| CoreError::storage(e.to_string()))?;
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         Ok(g.pomodoros
             .values()
             .filter(|s| s.deleted_at.is_none())
@@ -250,14 +310,20 @@ impl Store for InMemoryStore {
     }
 
     fn upsert_pomodoro(&self, session: PomodoroSession) -> CoreResult<PomodoroSession> {
-        let mut g = self.inner.write().map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         let stored = session.clone();
         g.pomodoros.insert(session.id.clone(), session);
         Ok(stored)
     }
 
     fn delete_pomodoro(&self, id: &Id) -> CoreResult<()> {
-        let mut g = self.inner.write().map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         if let Some(s) = g.pomodoros.get_mut(id) {
             s.deleted_at = Some(crate::model::Timestamp::now());
         }
@@ -265,36 +331,54 @@ impl Store for InMemoryStore {
     }
 
     fn get_daily_review(&self, date: &str) -> CoreResult<Option<DailyReview>> {
-        let g = self.inner.read().map_err(|e| CoreError::storage(e.to_string()))?;
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         Ok(g.daily_reviews.get(date).cloned())
     }
 
     fn upsert_daily_review(&self, review: DailyReview) -> CoreResult<DailyReview> {
-        let mut g = self.inner.write().map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         let stored = review.clone();
         g.daily_reviews.insert(review.date.clone(), review);
         Ok(stored)
     }
 
     fn get_weekly_review(&self, week_start: &str) -> CoreResult<Option<WeeklyReview>> {
-        let g = self.inner.read().map_err(|e| CoreError::storage(e.to_string()))?;
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         Ok(g.weekly_reviews.get(week_start).cloned())
     }
 
     fn upsert_weekly_review(&self, review: WeeklyReview) -> CoreResult<WeeklyReview> {
-        let mut g = self.inner.write().map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         let stored = review.clone();
         g.weekly_reviews.insert(review.week_start.clone(), review);
         Ok(stored)
     }
 
     fn get_monthly_review(&self, year_month: &str) -> CoreResult<Option<MonthlyReview>> {
-        let g = self.inner.read().map_err(|e| CoreError::storage(e.to_string()))?;
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         Ok(g.monthly_reviews.get(year_month).cloned())
     }
 
     fn upsert_monthly_review(&self, review: MonthlyReview) -> CoreResult<MonthlyReview> {
-        let mut g = self.inner.write().map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
         let stored = review.clone();
         g.monthly_reviews.insert(review.year_month.clone(), review);
         Ok(stored)

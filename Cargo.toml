@@ -10,7 +10,9 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+# Bumped from 1.75 → 1.82 to allow `Option::is_none_or` (stable since 1.82).
+# Rust 1.82 released 2024-10; this is a conservative floor for "modern stable".
+rust-version = "1.82"
 license = "MIT"
 authors = ["PomoFlow Contributors"]
 repository = "https://github.com/zyq-hfyc/pomoflow-next"
