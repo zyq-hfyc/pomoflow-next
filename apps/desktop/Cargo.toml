@@ -28,18 +28,25 @@ pomoflow-core = { path = "../../crates/core" }
 # Tauri 2 主框架
 tauri = { version = "2.11", features = [] }
 
+# SQLite 持久化(P1.2 实现 `crates/core::Store` trait)
+# bundled 把 SQLite C 源码编进 binary,无需系统预装 libsqlite3。
+rusqlite = { version = "0.40", features = ["bundled"] }
+
 # 序列化(commands 桥接需要)
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-# 日志(后续 store impl 用)
+# 时间(ms ↔ chrono)
+chrono = { workspace = true }
+
+# 日志
 log = { workspace = true }
 env_logger = { workspace = true }
 
 # 本阶段不引入的依赖(避免锁依赖):
-# - rusqlite:P1.2 才加
 # - tauri-plugin-* (notification/autostart/fs/dialog/store):P1.4 才加
 # - tauri-plugin-sql:不打算用,直接 rusqlite 自写
+# - sqlx:不打算用,race condition 没必要
 
 [features]
 # 默认开启;P1.2 / P1.4 阶段会按需扩展。

@@ -5,6 +5,8 @@
 
 use log::info;
 
+pub mod store_sqlite;
+
 /// Tauri app 启动入口。
 ///
 /// P1.1 阶段:仅打日志 + 启动。P1.2 起会在这里初始化持久化层 + 注册 commands。
