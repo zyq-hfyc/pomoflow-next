@@ -1,0 +1,47 @@
+[package]
+name = "pomoflow-desktop"
+version = "0.1.0"
+description = "PomoFlow 桌面端 —— Tauri 2 + Svelte 5"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# Tauri 2 桌面端产物(bin + lib);mobile entry 暂不开,desktop-only。
+# Tauri 2 推荐 desktop-only 工程也用 lib + main 模式,以便后续切 mobile 时只加 mobile 入口。
+[lib]
+name = "pomoflow_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "pomoflow-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+# 复用 P0 域模型(同步协议 / Store trait / 业务校验)
+pomoflow-core = { path = "../../crates/core" }
+
+# Tauri 2 主框架
+tauri = { version = "2.11", features = [] }
+
+# 序列化(commands 桥接需要)
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# 日志(后续 store impl 用)
+log = { workspace = true }
+env_logger = { workspace = true }
+
+# 本阶段不引入的依赖(避免锁依赖):
+# - rusqlite:P1.2 才加
+# - tauri-plugin-* (notification/autostart/fs/dialog/store):P1.4 才加
+# - tauri-plugin-sql:不打算用,直接 rusqlite 自写
+
+[features]
+# 默认开启;P1.2 / P1.4 阶段会按需扩展。
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

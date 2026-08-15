@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
-# P0: 仅 crates/core 实际可编译。apps/desktop、tools/migrate-v1 在后续 P1 / 阶段
-# 解锁时再加,避免空 workspace member 导致 CI 跑空集。
+# P0: crates/core 奠基;P1: apps/desktop 加入(Tauri 2 桌面端);后续 P2 加 tools/migrate-v1。
 members = [
     "crates/core",
+    "apps/desktop",
 ]
 
 # 全局包元信息,被所有 members 继承(可单独覆盖)
