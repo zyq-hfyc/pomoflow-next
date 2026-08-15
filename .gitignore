@@ -1,0 +1,64 @@
+# --- Rust / Cargo ---
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# 本机工具链指向(由各机器 owner 各自配置,绝不入仓)
+/.cargo/config.toml
+/.cargo/config.local.toml
+
+# workspace 的 Cargo.lock 不提交(binary crate 才提交);这里 crates/core 是 lib,
+# apps/desktop 是 bin —— 在它们自己的 Cargo.toml 里单独决定。
+# 简单起见:整个 workspace 都不提交 Cargo.lock,等出现 bin crate 再说。
+
+# --- Tauri ---
+/apps/desktop/target/
+/apps/desktop/gen/
+
+# --- 前端(Web UI,装到 apps/desktop/ui/) ---
+/apps/desktop/ui/node_modules/
+/apps/desktop/ui/dist/
+/apps/desktop/ui/.vite/
+/apps/desktop/ui/tsconfig.tsbuildinfo
+
+# --- Python 残留(以防从 v1 仓库误拷过来) ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+
+# --- 数据库 / 用户数据(绝不进仓库) ---
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.bak
+*.bak.*
+
+# --- 日志 / 临时文件 ---
+*.log
+*.tmp
+*.swp
+*~
+
+# --- IDE / 编辑器 ---
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.iml
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- 测试 / 覆盖率 ---
+coverage/
+*.lcov
+.pytest_cache/
+.grcov/

@@ -1,0 +1,42 @@
+[workspace]
+resolver = "2"
+# P0: 仅 crates/core 实际可编译。apps/desktop、tools/migrate-v1 在后续 P1 / 阶段
+# 解锁时再加,避免空 workspace member 导致 CI 跑空集。
+members = [
+    "crates/core",
+]
+
+# 全局包元信息,被所有 members 继承(可单独覆盖)
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+authors = ["PomoFlow Contributors"]
+repository = "https://github.com/zyq-hfyc/pomoflow-next"
+
+# 全局依赖版本,统一管理,避免各 crate 版本漂移
+[workspace.dependencies]
+# 序列化与反序列化(sync 协议 / Store trait 都依赖)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# UUID(本地主键 + sync revision device_id 都用)
+uuid = { version = "1", features = ["v4", "serde"] }
+# 时间戳
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+# 错误派生
+thiserror = "1"
+# 日志(后续 store impl 用,先引入备着)
+log = "0.4"
+env_logger = "0.11"
+
+# release profile:启用 LTO + strip 让最终二进制更小;debug profile 保持快速
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev]
+# dev profile 加快编译速度,牺牲一些运行时性能
+incremental = true
+debug = 1

@@ -1,0 +1,25 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+# P1 阶段实装:tag `v*` push → 在 Windows / macOS / Ubuntu 三平台构建 Tauri 桌面端
+# → 产出 `.msi` / `.dmg` / `.AppImage` / `.deb` / `.rpm`
+# → 上传到 GitHub Releases(自动从 tag 名生成 release notes)
+#
+# P0 阶段空占位,避免 tag push 触发失败 CI。
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  placeholder:
+    name: P0 placeholder (no release yet)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip until P1
+        run: |
+          echo "P1 阶段才会实装 release workflow"
+          echo "现在 P0 阶段 crates/core 已经验证可编译"
+          echo "tag ${{ github.ref_name }} 已接收,不会产生产物,等 P1 再启用"

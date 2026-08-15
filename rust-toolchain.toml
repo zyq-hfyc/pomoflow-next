@@ -1,0 +1,6 @@
+# 锁定 Rust 工具链版本,确保所有贡献者和 CI 用同一个版本编译。
+# 升级时改这里 + cargo update 即可,无需四处同步。
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
