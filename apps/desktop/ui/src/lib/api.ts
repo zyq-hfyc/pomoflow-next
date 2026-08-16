@@ -281,3 +281,72 @@ export const upsertNotificationTemplate = (template: NotificationTemplate) =>
 /** 番茄钟页"今日专注"分钟数(start_ms / end_ms 由前端按本地时区算出后传入) */
 export const todayCompletedMinutes = (startMs: number, endMs: number) =>
   invoke<number>("today_completed_minutes", { startMs, endMs });
+
+/** 趋势聚合粒度(v1 /api/stats/range?group=) */
+export type StatsGroup = "day" | "week" | "month";
+
+export interface RangeTrendPoint {
+  /** 日(YYYY-MM-DD)/ 周一日期(YYYY-MM-DD)/ 月(YYYY-MM) */
+  key: string;
+  minutes: number;
+  sessions: number;
+}
+
+/** 项目时间分布一行(完成任务口径:completed_pomodoros × pomodoro_duration) */
+export interface ProjectStat {
+  project_id: string;
+  project_name: string;
+  project_color: string;
+  total_minutes: number;
+}
+
+export interface RangeStats {
+  trend: RangeTrendPoint[];
+  summary: {
+    total_minutes: number;
+    total_sessions: number;
+    completed_tasks: number;
+  };
+  projects: ProjectStat[];
+}
+
+export interface OverviewStats {
+  today_minutes: number;
+  today_sessions: number;
+  week_minutes: number;
+  week_sessions: number;
+  month_minutes: number;
+  total_sessions: number;
+  total_tasks_completed: number;
+}
+
+/**
+ * 统计页维度查询(v1 /api/stats/range)。
+ * start/end 是本地日期 YYYY-MM-DD(双端包含);tzOffsetMin 东正西负(如上海 +480)。
+ */
+export const statsRange = (
+  startDate: string,
+  endDate: string,
+  group: StatsGroup,
+  tzOffsetMin: number,
+) =>
+  invoke<RangeStats>("stats_range", {
+    startDate,
+    endDate,
+    group,
+    tzOffsetMin,
+  });
+
+/** 统计总览(v1 /api/stats/overview);三个日期为本地时区的 YYYY-MM-DD */
+export const statsOverview = (
+  today: string,
+  weekStart: string,
+  monthStart: string,
+  tzOffsetMin: number,
+) =>
+  invoke<OverviewStats>("stats_overview", {
+    today,
+    weekStart,
+    monthStart,
+    tzOffsetMin,
+  });
