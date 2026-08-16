@@ -391,3 +391,28 @@ export const statsOverview = (
     monthStart,
     tzOffsetMin,
   });
+
+// === Export(xlsx) ===
+
+/** 导出一行(展示字段全部本地化/格式化后传入;Rust 不做 i18n) */
+export interface ExportRow {
+  title: string;
+  project: string;
+  priority: string;
+  dueDate: string;
+  estimated: string;
+  tags: string;
+  subtasks: string;
+  status: string;
+}
+
+/**
+ * 任务清单导出 .xlsx(v1 exportTasksToExcel;9 列/表头灰底加粗/自动换行)。
+ * `path` 由调用方用 save 对话框取得;`headers` 为 9 个本地化列名。
+ */
+export const exportTasksXlsx = (
+  path: string,
+  sheetName: string,
+  headers: string[],
+  rows: ExportRow[],
+) => invoke<void>("export_tasks_xlsx", { path, sheetName, headers, rows });

@@ -11,6 +11,7 @@ use tauri_plugin_autostart::MacosLauncher;
 use crate::commands::{ensure_parent, store_path, AppState};
 
 pub mod commands;
+pub mod export;
 pub mod repeat_service;
 pub mod tray;
 
@@ -53,6 +54,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(state)
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             // 静默启动:开机时不抢焦点,常驻托盘
@@ -100,6 +102,7 @@ pub fn run() {
             commands::today_completed_minutes,
             commands::stats_range,
             commands::stats_overview,
+            export::export_tasks_xlsx,
         ])
         .setup(|app| {
             info!("Tauri app setup complete, building tray...");

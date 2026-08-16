@@ -11,14 +11,22 @@
   // 全局 tick:`$effect` 监听 `running`,true 时每秒 `tick()`,false 时清掉 interval。
   // 这样 timer 状态在所有页面共享,路由切换不丢进度。
 
+  import { onMount } from "svelte";
   import { currentRoute, navigate, ROUTES } from "./lib/router.svelte";
   import { getDict } from "./lib/i18n.svelte";
-  import { getTimerState, tick as timerTick } from "./lib/timer.svelte";
+  import {
+    getTimerState,
+    tick as timerTick,
+    recalibrateOnVisible,
+    refreshNotificationTemplate,
+  } from "./lib/timer.svelte";
+  import { initReminders } from "./lib/reminders.svelte";
   import { initTheme } from "./lib/theme.svelte";
   import TimerPage from "./pages/TimerPage.svelte";
   import TasksPage from "./pages/TasksPage.svelte";
   import StatsPage from "./pages/StatsPage.svelte";
   import SettingsPage from "./pages/SettingsPage.svelte";
+  import HelpPage from "./pages/HelpPage.svelte";
 
   // === i18n 词典(响应式;setLang 后整棵导航栏重渲染) ===
   const t = $derived(getDict());
@@ -33,6 +41,16 @@
     if (!state.running) return;
     const id = setInterval(() => timerTick(), 1000);
     return () => clearInterval(id);
+  });
+
+  onMount(() => {
+    // 回前台立即校准剩余时间(v1 visibilitychange;后台/睡眠不漂移)
+    void refreshNotificationTemplate();
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) recalibrateOnVisible();
+    });
+    // 任务提醒引擎(30s 轮询 + 专注抑制/补弹 + 启动补弹)
+    initReminders();
   });
 
   // === 路由渲染 ===
@@ -68,6 +86,8 @@
       <StatsPage />
     {:else if route === "/settings"}
       <SettingsPage />
+    {:else if route === "/help"}
+      <HelpPage />
     {:else}
       <TimerPage />
     {/if}

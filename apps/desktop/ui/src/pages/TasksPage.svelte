@@ -20,6 +20,7 @@
 
   import { onMount } from "svelte";
   import { Clock, Target, CircleCheck, ChartColumn } from "lucide-svelte";
+  import { save } from "@tauri-apps/plugin-dialog";
   import * as api from "../lib/api";
   import type {
     Project,
@@ -42,7 +43,11 @@
   import JournalView from "../components/Tasks/JournalView.svelte";
   import MonthReviewPanel from "../components/Tasks/MonthReviewPanel.svelte";
 
-  type TaskWithTags = Task & { tags?: Tag[] };
+  // list_tasks 返回 TaskView(拍平 tags + subtasks);导出 xlsx 需要子任务
+  type TaskWithTags = Task & {
+    tags?: Tag[];
+    subtasks?: { id: string; title: string; is_completed: boolean; position: number }[];
+  };
   type FilterKey = "today" | "tomorrow" | "week" | "planned" | "completed" | "journal" | "";
 
   let tasks = $state<TaskWithTags[]>([]);
@@ -432,38 +437,41 @@
     }
   }
 
+  // 导出 .xlsx(v1 exportTasksToExcel:9 列本地化 + Rust 侧排版)。
   async function handleExportPlanned() {
-    // 占位：v1 实际是 .xlsx（exportTasksToExcel）。
-    // 这里只导 CSV 用 Blob 下载以满足"导出按钮可用"。
-    const rows = filtered;
-    const header = [
-      t.export.title,
-      t.export.project,
-      t.export.priority,
-      t.export.dueDate,
-      t.export.tags,
-      t.export.estimated,
-      t.export.status,
-    ];
-    const csvRows = rows.map((t) => [
-      t.title,
-      projects.find((p) => p.id === t.project_id)?.name ?? "",
-      t.priority ?? "",
-      datePart(t.due_date),
-      (t.tags ?? []).map((x) => x.name).join("; "),
-      `${t.completed_pomodoros ?? 0}/${t.estimated_pomodoros ?? 0}`,
-      t.status,
-    ]);
-    const csv = [header, ...csvRows]
-      .map((r) => r.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `tasks-${todayStr()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      const path = await save({
+        defaultPath: `${t.export.fileName}_${todayStr()}.xlsx`,
+        filters: [{ name: "xlsx", extensions: ["xlsx"] }],
+      });
+      if (!path) return; // 用户取消
+      const headers = [
+        t.export.index,
+        t.export.title,
+        t.export.project,
+        t.export.priority,
+        t.export.dueDate,
+        t.export.estimated,
+        t.export.tags,
+        t.export.subtasks,
+        t.export.status,
+      ];
+      const rows = filtered.map((task) => ({
+        title: task.title,
+        project: projects.find((p) => p.id === task.project_id)?.name ?? "",
+        priority: t.priority[task.priority ?? "none"] ?? task.priority ?? "",
+        dueDate: task.due_date ? task.due_date.slice(0, 10) : "",
+        // v1 只导 estimated
+        estimated: String(task.estimated_pomodoros ?? 0),
+        tags: (task.tags ?? []).map((x) => x.name).join(", "),
+        subtasks: (task.subtasks ?? []).map((s) => s.title).join("\n"),
+        status:
+          task.status === "completed" ? t.export.statusCompleted : t.export.statusActive,
+      }));
+      await api.exportTasksXlsx(path, t.nav.tasks, headers, rows);
+    } catch (e) {
+      error = String(e);
+    }
   }
 </script>
 

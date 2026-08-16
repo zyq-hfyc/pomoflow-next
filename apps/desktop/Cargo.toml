@@ -30,9 +30,13 @@ pomoflow-core = { path = "../../crates/core" }
 # - image-png:从 PNG 字节加载 tray icon
 tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
 
-# Tauri 2 官方插件(P1.4 引入)
+# Tauri 2 官方插件(P1.4 引入;dialog = 阶段 H xlsx 导出保存框)
 tauri-plugin-notification = "2"
 tauri-plugin-autostart = "2"
+tauri-plugin-dialog = "2"
+
+# xlsx 导出(v1 ExcelJS 对应物;表头/标签由前端 i18n 传入,Rust 不做本地化)
+rust_xlsxwriter = "0.79"
 
 # 序列化(commands 桥接需要)
 serde = { workspace = true }

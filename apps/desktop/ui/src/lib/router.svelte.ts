@@ -1,8 +1,8 @@
 //! Hash-based router —— 无外部依赖,Svelte 5 runes 模块态。
 //!
 //! 设计要点:
-//! - 路由形态:`#/timer`、`#/tasks`、`#/stats`、`#/settings`
-//!   (手账模式并入任务页 journal 视图,无独立路由;帮助页后续阶段加)
+//! - 路由形态:`#/timer`、`#/tasks`、`#/stats`、`#/settings`、`#/help`
+//!   (v1 五项导航;手账模式并入任务页 journal 视图,无独立路由)
 //! - `currentRoute()` 是 reactive getter;在 template / `$derived` 里调用会被追踪。
 //! - `navigate(path)` 只改 hash,`hashchange` 事件统一回写到 `_current`。
 //! - SSR 不支持(WebView SPA),直接读 `window.location`。
@@ -56,6 +56,7 @@ export const ROUTES = [
   { path: "/tasks", labelKey: "tasks" },
   { path: "/stats", labelKey: "stats" },
   { path: "/settings", labelKey: "settings" },
+  { path: "/help", labelKey: "help" },
 ] as const;
 
 export type RoutePath = (typeof ROUTES)[number]["path"];
