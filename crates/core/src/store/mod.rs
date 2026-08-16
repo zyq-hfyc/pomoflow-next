@@ -20,11 +20,13 @@ pub mod sqlite;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, CoreResult};
 use crate::model::{
-    DailyReview, Id, MonthlyReview, PomodoroSession, Project, Tag, Task, WeeklyReview,
+    DailyReview, Id, MonthlyReview, Motto, PomodoroSession, Priority, Project, SubTask, Tag, Task,
+    WeeklyReview,
 };
 
 pub use sqlite::SqliteStore;
@@ -37,6 +39,11 @@ pub struct TagLink {
 }
 
 /// 任务查询条件(全字段可选)。
+///
+/// 与 v1 `/api/tasks?project_id=&tag_id=&status=&limit=&priority=&date=` 对齐:
+/// - `priority`:高/中/低 三档过滤
+/// - `date`:`today` / `tomorrow` / `this_week` / `month` 由后端展开为 due_date 范围
+///   (实现统一在 sqlite impl 里处理)。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskQuery {
@@ -44,6 +51,22 @@ pub struct TaskQuery {
     pub tag_id: Option<Id>,
     pub status: Option<crate::model::TaskStatus>,
     pub limit: Option<usize>,
+    /// v1 番茄钟页右侧任务清单支持按优先级筛选。
+    pub priority: Option<Priority>,
+    /// v1 番茄钟页右侧任务清单支持按 due_date 维度筛选(today / tomorrow / this_week / month)。
+    pub date: Option<TaskDateFilter>,
+    /// 番茄钟页右侧任务清单限定"当月任务"。month_end 单独传,跟 `date` 互不冲突。
+    pub month_start_ms: Option<i64>,
+    pub month_end_ms: Option<i64>,
+}
+
+/// 番茄钟页右侧任务清单支持的日期过滤维度 —— 与 v1 `timerFilter.date` 一一对应。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskDateFilter {
+    Today,
+    Tomorrow,
+    ThisWeek,
 }
 
 /// 存储抽象 —— 任何具体实现(SQLite / 内存 / Postgres)都满足这套接口。
@@ -72,6 +95,8 @@ pub trait Store: std::fmt::Debug {
 
     // --- Task ↔ Tag links ---
     fn list_tags_for_task(&self, task_id: &Id) -> CoreResult<Vec<Tag>>;
+    /// 批量:返回 task_id → tags 映射(未关联的 task 不在结果里)。供 list_tasks embed 用。
+    fn list_tags_for_tasks(&self, task_ids: &[Id]) -> CoreResult<HashMap<Id, Vec<Tag>>>;
     fn set_tags_for_task(&self, task_id: &Id, tag_ids: &[Id]) -> CoreResult<()>;
 
     // --- Pomodoro sessions ---
@@ -88,6 +113,27 @@ pub trait Store: std::fmt::Debug {
 
     fn get_monthly_review(&self, year_month: &str) -> CoreResult<Option<MonthlyReview>>;
     fn upsert_monthly_review(&self, review: MonthlyReview) -> CoreResult<MonthlyReview>;
+
+    // --- SubTasks ---
+    /// 列出某 Task 下所有未软删的子任务,按 position 升序。
+    fn list_subtasks_for_task(&self, task_id: &Id) -> CoreResult<Vec<SubTask>>;
+    /// 批量:返回 task_id → subtasks 映射(未关联的 task 不在结果里)。供 list_tasks embed 用。
+    fn list_subtasks_for_tasks(&self, task_ids: &[Id]) -> CoreResult<HashMap<Id, Vec<SubTask>>>;
+    fn upsert_subtask(&self, subtask: SubTask) -> CoreResult<SubTask>;
+    /// 软删除(id 不存在时静默返回 Ok,与现有 delete_task / delete_tag 风格一致)。
+    fn delete_subtask(&self, id: &Id) -> CoreResult<()>;
+
+    // --- Mottos ---
+    /// 列出所有未软删的座右铭,按 updated_at 倒序(最近改的在前)。
+    fn list_mottos(&self) -> CoreResult<Vec<Motto>>;
+    fn upsert_motto(&self, motto: Motto) -> CoreResult<Motto>;
+    fn delete_motto(&self, id: &Id) -> CoreResult<()>;
+
+    // --- Pomodoro stats(番茄钟页"今日专注分钟"用) ---
+    /// 返回今日完成的番茄分钟数(把所有 is_completed=1 且 ended_at 在当天区间内的
+    /// session 的 duration_minutes 求和)。后端按本地"今天 00:00 ~ 次日 00:00 UTC"
+    /// 区间聚合。
+    fn today_completed_minutes(&self, start_ms: i64, end_ms: i64) -> CoreResult<u32>;
 }
 
 /// `InMemoryStore` —— 用于单元测试 + "先把流程跑通"的占位实现。
@@ -106,9 +152,11 @@ struct Inner {
     tags: HashMap<Id, Tag>,
     task_tags: HashMap<Id, Vec<Id>>,
     pomodoros: HashMap<Id, PomodoroSession>,
+    subtasks: HashMap<Id, SubTask>,
     daily_reviews: HashMap<String, DailyReview>,
     weekly_reviews: HashMap<String, WeeklyReview>,
     monthly_reviews: HashMap<String, MonthlyReview>,
+    mottos: HashMap<Id, Motto>,
 }
 
 impl InMemoryStore {
@@ -133,6 +181,45 @@ impl Store for InMemoryStore {
                     .is_none_or(|p| t.project_id.as_ref() == Some(p))
             })
             .filter(|t| q.status.is_none_or(|s| t.status == s))
+            .filter(|t| q.priority.is_none_or(|p| t.priority == p))
+            .filter(|t| {
+                // 月份区间(可选,与 date 互不冲突)
+                if q.month_start_ms.is_none() && q.month_end_ms.is_none() {
+                    return true;
+                }
+                let Some(due) = t.due_date else {
+                    return false;
+                };
+                let ms = due.timestamp_millis();
+                q.month_start_ms.is_none_or(|s| ms >= s)
+                    && q.month_end_ms.is_none_or(|e| ms <= e)
+            })
+            .filter(|t| match q.date {
+                None => true,
+                Some(TaskDateFilter::Today) => {
+                    let now = chrono::Utc::now();
+                    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+                    let today_end = today_start + chrono::Duration::days(1);
+                    t.due_date.is_some_and(|d| d >= today_start && d < today_end)
+                }
+                Some(TaskDateFilter::Tomorrow) => {
+                    let now = chrono::Utc::now();
+                    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+                    let tomorrow_start = today_start + chrono::Duration::days(1);
+                    let tomorrow_end = tomorrow_start + chrono::Duration::days(1);
+                    t.due_date.is_some_and(|d| d >= tomorrow_start && d < tomorrow_end)
+                }
+                Some(TaskDateFilter::ThisWeek) => {
+                    // 周一到周日(本地化,这里按 UTC 周一算)
+                    let now = chrono::Utc::now();
+                    let weekday = now.date_naive().weekday().num_days_from_monday();
+                    let week_start = now.date_naive()
+                        - chrono::Duration::days(weekday as i64);
+                    let week_start_dt = week_start.and_hms_opt(0, 0, 0).unwrap().and_utc();
+                    let week_end_dt = week_start_dt + chrono::Duration::days(7);
+                    t.due_date.is_some_and(|d| d >= week_start_dt && d < week_end_dt)
+                }
+            })
             .cloned()
             .collect();
         if let Some(tag_id) = &q.tag_id {
@@ -296,6 +383,27 @@ impl Store for InMemoryStore {
             .collect())
     }
 
+    fn list_tags_for_tasks(&self, task_ids: &[Id]) -> CoreResult<HashMap<Id, Vec<Tag>>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: HashMap<Id, Vec<Tag>> = HashMap::new();
+        for tid in task_ids {
+            if let Some(tag_ids) = g.task_tags.get(tid) {
+                let tags: Vec<Tag> = tag_ids
+                    .iter()
+                    .filter_map(|t| g.tags.get(t).cloned())
+                    .filter(|t| t.deleted_at.is_none())
+                    .collect();
+                if !tags.is_empty() {
+                    out.insert(tid.clone(), tags);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     fn set_tags_for_task(&self, task_id: &Id, tag_ids: &[Id]) -> CoreResult<()> {
         let mut g = self
             .inner
@@ -391,6 +499,117 @@ impl Store for InMemoryStore {
         let stored = review.clone();
         g.monthly_reviews.insert(review.year_month.clone(), review);
         Ok(stored)
+    }
+
+    fn list_subtasks_for_task(&self, task_id: &Id) -> CoreResult<Vec<SubTask>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<SubTask> = g
+            .subtasks
+            .values()
+            .filter(|s| s.deleted_at.is_none() && &s.task_id == task_id)
+            .cloned()
+            .collect();
+        out.sort_by_key(|s| s.position);
+        Ok(out)
+    }
+
+    fn list_subtasks_for_tasks(&self, task_ids: &[Id]) -> CoreResult<HashMap<Id, Vec<SubTask>>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: HashMap<Id, Vec<SubTask>> = HashMap::new();
+        for tid in task_ids {
+            let mut subs: Vec<SubTask> = g
+                .subtasks
+                .values()
+                .filter(|s| s.deleted_at.is_none() && &s.task_id == tid)
+                .cloned()
+                .collect();
+            if !subs.is_empty() {
+                subs.sort_by_key(|s| s.position);
+                out.insert(tid.clone(), subs);
+            }
+        }
+        Ok(out)
+    }
+
+    fn upsert_subtask(&self, subtask: SubTask) -> CoreResult<SubTask> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let stored = subtask.clone();
+        g.subtasks.insert(subtask.id.clone(), subtask);
+        Ok(stored)
+    }
+
+    fn delete_subtask(&self, id: &Id) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        if let Some(s) = g.subtasks.get_mut(id) {
+            s.deleted_at = Some(crate::model::Timestamp::now());
+        }
+        Ok(())
+    }
+
+    fn list_mottos(&self) -> CoreResult<Vec<Motto>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<Motto> = g
+            .mottos
+            .values()
+            .filter(|m| m.deleted_at.is_none())
+            .cloned()
+            .collect();
+        out.sort_by_key(|m| std::cmp::Reverse(m.updated_at.0));
+        Ok(out)
+    }
+
+    fn upsert_motto(&self, motto: Motto) -> CoreResult<Motto> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let stored = motto.clone();
+        g.mottos.insert(motto.id.clone(), motto);
+        Ok(stored)
+    }
+
+    fn delete_motto(&self, id: &Id) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        if let Some(m) = g.mottos.get_mut(id) {
+            m.deleted_at = Some(crate::model::Timestamp::now());
+        }
+        Ok(())
+    }
+
+    fn today_completed_minutes(&self, start_ms: i64, end_ms: i64) -> CoreResult<u32> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut total: u64 = 0;
+        for s in g.pomodoros.values() {
+            if s.deleted_at.is_some() || !s.is_completed {
+                continue;
+            }
+            let ended_ms = s.ended_at.timestamp_millis();
+            if ended_ms >= start_ms && ended_ms < end_ms {
+                total = total.saturating_add(s.duration as u64);
+            }
+        }
+        u32::try_from(total).map_err(|_| CoreError::storage("today minutes overflow"))
     }
 }
 

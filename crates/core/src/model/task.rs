@@ -44,6 +44,9 @@ pub enum Reminder {
 }
 
 /// 重复规则 —— v1 也是字符串枚举。
+///
+/// `Custom` 与 v1 `repeat_config` 字段配套:repeat="custom" 时,具体规则在
+/// repeat_config 里(JSON 字符串,如 `{type:"week", weekdays:[1,3,5], ...}`)。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Repeat {
@@ -54,6 +57,8 @@ pub enum Repeat {
     Weekly,
     Monthly,
     Yearly,
+    /// 自定义规则 —— 实际配置存在 `Task.repeat_config` 字段(JSON)。
+    Custom,
 }
 
 /// 任务主体 —— 所有 Option 字段对应 v1 可空列。
@@ -88,6 +93,10 @@ pub struct Task {
     pub reminder: Reminder,
     #[serde(default)]
     pub repeat: Repeat,
+    /// 自定义重复规则 JSON 字符串(只在 `repeat = Custom` 时有值)。
+    /// v1 用 string 列存,我们直接以 `String`  透传,具体 schema 由前端 dialog 决定。
+    #[serde(default)]
+    pub repeat_config: Option<String>,
 
     pub completed_at: Option<DateTime<Utc>>,
 
@@ -119,6 +128,7 @@ impl Task {
             pomodoro_duration: None,
             reminder: Reminder::default(),
             repeat: Repeat::default(),
+            repeat_config: None,
             completed_at: None,
             revision: 1,
             deleted_at: None,

@@ -26,18 +26,19 @@
 //! - `updated_at` 索引覆盖更多查询模式
 //! - WAL 模式提升并发读性能(写入仍需互斥)
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::error::{CoreError, CoreResult};
 use crate::model::{
-    DailyReview, Id, MonthlyReview, PomodoroSession, Priority, Project, Reminder, Repeat, Tag,
-    Task, TaskStatus, Timestamp, WeeklyReview,
+    DailyReview, Id, MonthlyReview, Motto, PomodoroSession, Priority, Project, Reminder, Repeat,
+    SubTask, Tag, Task, TaskStatus, Timestamp, WeeklyReview,
 };
-use crate::store::{Store, TaskQuery};
+use crate::store::{Store, TaskDateFilter, TaskQuery};
 
 /// `pomoflow-core::Store` trait 的 SQLite 持久化实现。
 #[derive(Debug, Clone)]
@@ -62,6 +63,21 @@ impl SqliteStore {
 
         conn.execute_batch(SCHEMA_SQL)
             .map_err(|e| CoreError::storage(format!("apply schema: {e}")))?;
+
+        // 轻量字段迁移:P0 → P1.8.6b 加了 tasks.repeat_config,旧库需要 ALTER TABLE。
+        // PRAGMA table_info 不能放在同一 execute_batch 里(IF NOT EXISTS 不支持 column 级),
+        // 单独跑一次检查。
+        let has_repeat_config: bool = conn
+            .prepare("PRAGMA table_info(tasks)")
+            .map_err(|e| CoreError::storage(format!("pragma table_info: {e}")))?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| CoreError::storage(format!("query pragma: {e}")))?
+            .filter_map(|r| r.ok())
+            .any(|name| name == "repeat_config");
+        if !has_repeat_config {
+            conn.execute_batch("ALTER TABLE tasks ADD COLUMN repeat_config TEXT;")
+                .map_err(|e| CoreError::storage(format!("migrate add repeat_config: {e}")))?;
+        }
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -135,6 +151,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   pomodoro_duration INTEGER,
   reminder TEXT NOT NULL DEFAULT 'none',
   repeat_kind TEXT NOT NULL DEFAULT 'none',
+  repeat_config TEXT,
   completed_at_ms INTEGER,
   revision INTEGER NOT NULL DEFAULT 1,
   deleted_at_ms INTEGER,
@@ -189,6 +206,30 @@ CREATE TABLE IF NOT EXISTS monthly_reviews (
   content TEXT NOT NULL DEFAULT '',
   updated_at_ms INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS subtasks (
+  id TEXT PRIMARY KEY NOT NULL,
+  task_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  is_completed INTEGER NOT NULL DEFAULT 0,
+  position INTEGER NOT NULL DEFAULT 0,
+  revision INTEGER NOT NULL DEFAULT 1,
+  deleted_at_ms INTEGER,
+  updated_at_ms INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mottos (
+  id TEXT PRIMARY KEY NOT NULL,
+  text TEXT NOT NULL DEFAULT '',
+  author TEXT,
+  revision INTEGER NOT NULL DEFAULT 1,
+  deleted_at_ms INTEGER,
+  updated_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mottos_updated ON mottos(updated_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);
 "#;
 
 // === 时间转换 helper ===
@@ -287,6 +328,7 @@ fn repeat_str(r: Repeat) -> &'static str {
         Repeat::Weekly => "weekly",
         Repeat::Monthly => "monthly",
         Repeat::Yearly => "yearly",
+        Repeat::Custom => "custom",
     }
 }
 
@@ -298,7 +340,38 @@ fn repeat_parse(s: &str) -> CoreResult<Repeat> {
         "weekly" => Ok(Repeat::Weekly),
         "monthly" => Ok(Repeat::Monthly),
         "yearly" => Ok(Repeat::Yearly),
+        "custom" => Ok(Repeat::Custom),
         other => Err(CoreError::storage(format!("unknown Repeat: {other}"))),
+    }
+}
+
+/// 把 `TaskDateFilter` 展开为 `[start_ms, end_ms)` 区间,SQL 直接拿两个参数。
+///
+/// 与 v1 TimerPage 行为对齐(UTC 今日 0 点起 + 24h / +48h / 周一起一周)。
+fn date_filter_range(f: TaskDateFilter) -> (i64, i64) {
+    let now = Utc::now();
+    let today_start = now
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc();
+    match f {
+        TaskDateFilter::Today => {
+            let end = today_start + chrono::Duration::days(1);
+            (dt_to_ms(today_start), dt_to_ms(end))
+        }
+        TaskDateFilter::Tomorrow => {
+            let start = today_start + chrono::Duration::days(1);
+            let end = today_start + chrono::Duration::days(2);
+            (dt_to_ms(start), dt_to_ms(end))
+        }
+        TaskDateFilter::ThisWeek => {
+            // 周一为一周开始
+            let weekday = now.date_naive().weekday().num_days_from_monday() as i64;
+            let week_start = today_start - chrono::Duration::days(weekday);
+            let week_end = week_start + chrono::Duration::days(7);
+            (dt_to_ms(week_start), dt_to_ms(week_end))
+        }
     }
 }
 
@@ -360,6 +433,7 @@ fn row_to_task(row: &Row<'_>) -> rusqlite::Result<Task> {
             pomodoro_duration: pomodoro_duration.map(|v| v as u32),
             reminder: reminder_parse(&reminder_s).map_err(core_err)?,
             repeat: repeat_parse(&repeat_kind_s).map_err(core_err)?,
+            repeat_config: row.get("repeat_config")?,
             completed_at: completed_at_ms
                 .map(dt_from_ms)
                 .transpose()
@@ -517,6 +591,53 @@ fn row_to_monthly_review(row: &Row<'_>) -> rusqlite::Result<MonthlyReview> {
     }))
 }
 
+fn row_to_subtask(row: &Row<'_>) -> rusqlite::Result<SubTask> {
+    let id_s: String = row.get("id")?;
+    let id = Id::parse(&id_s)
+        .ok_or_else(|| core_err(CoreError::storage(format!("invalid subtask id: {id_s}"))))?;
+
+    let task_id_s: String = row.get("task_id")?;
+    let task_id = Id::parse(&task_id_s).ok_or_else(|| {
+        core_err(CoreError::storage(format!(
+            "invalid subtask task_id: {task_id_s}"
+        )))
+    })?;
+
+    core_try(Ok(SubTask {
+        id,
+        task_id,
+        title: row.get("title")?,
+        is_completed: row.get::<_, i64>("is_completed")? != 0,
+        position: row.get::<_, i64>("position")? as u32,
+        revision: row.get::<_, i64>("revision")? as u64,
+        deleted_at: row
+            .get::<_, Option<i64>>("deleted_at_ms")?
+            .map(ts_from_ms)
+            .transpose()
+            .map_err(core_err)?,
+        updated_at: ts_from_ms(row.get("updated_at_ms")?).map_err(core_err)?,
+    }))
+}
+
+fn row_to_motto(row: &Row<'_>) -> rusqlite::Result<Motto> {
+    let id_s: String = row.get("id")?;
+    let id = Id::parse(&id_s)
+        .ok_or_else(|| core_err(CoreError::storage(format!("invalid motto id: {id_s}"))))?;
+
+    core_try(Ok(Motto {
+        id,
+        text: row.get("text")?,
+        author: row.get::<_, Option<String>>("author")?,
+        revision: row.get::<_, i64>("revision")? as u64,
+        deleted_at: row
+            .get::<_, Option<i64>>("deleted_at_ms")?
+            .map(ts_from_ms)
+            .transpose()
+            .map_err(core_err)?,
+        updated_at: ts_from_ms(row.get("updated_at_ms")?).map_err(core_err)?,
+    }))
+}
+
 // === Store trait impl ===
 
 impl Store for SqliteStore {
@@ -543,6 +664,26 @@ impl Store for SqliteStore {
                 " AND EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND tt.tag_id = ?)",
             );
             args.push(Box::new(tag_id.as_str().to_string()));
+        }
+        if let Some(p) = q.priority {
+            sql.push_str(" AND t.priority = ?");
+            args.push(Box::new(priority_str(p).to_string()));
+        }
+        // 月份区间(v1 番茄钟右侧"当月任务"用)
+        if let Some(start) = q.month_start_ms {
+            sql.push_str(" AND t.due_date_ms >= ?");
+            args.push(Box::new(start));
+        }
+        if let Some(end) = q.month_end_ms {
+            sql.push_str(" AND t.due_date_ms <= ?");
+            args.push(Box::new(end));
+        }
+        // 日期维度(today / tomorrow / this_week) —— 在 SQL 里展开
+        if let Some(date_filter) = q.date {
+            let (start, end) = date_filter_range(date_filter);
+            sql.push_str(" AND t.due_date_ms >= ? AND t.due_date_ms < ?");
+            args.push(Box::new(start));
+            args.push(Box::new(end));
         }
 
         sql.push_str(" ORDER BY t.updated_at_ms DESC");
@@ -588,9 +729,9 @@ impl Store for SqliteStore {
             "INSERT INTO tasks (
                 id, title, description, project_id, priority, status,
                 due_date_ms, estimated_pomodoros, completed_pomodoros, pomodoro_duration,
-                reminder, repeat_kind, completed_at_ms,
+                reminder, repeat_kind, repeat_config, completed_at_ms,
                 revision, deleted_at_ms, updated_at_ms
-             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title,
                 description=excluded.description,
@@ -603,6 +744,7 @@ impl Store for SqliteStore {
                 pomodoro_duration=excluded.pomodoro_duration,
                 reminder=excluded.reminder,
                 repeat_kind=excluded.repeat_kind,
+                repeat_config=excluded.repeat_config,
                 completed_at_ms=excluded.completed_at_ms,
                 revision=excluded.revision,
                 deleted_at_ms=excluded.deleted_at_ms,
@@ -620,6 +762,7 @@ impl Store for SqliteStore {
                 task.pomodoro_duration.map(|v| v as i64),
                 reminder_str(task.reminder),
                 repeat_str(task.repeat),
+                task.repeat_config,
                 task.completed_at.map(dt_to_ms),
                 task.revision as i64,
                 task.deleted_at.map(ts_to_ms),
@@ -804,6 +947,43 @@ impl Store for SqliteStore {
             .collect()
     }
 
+    fn list_tags_for_tasks(&self, task_ids: &[Id]) -> CoreResult<HashMap<Id, Vec<Tag>>> {
+        let mut out: HashMap<Id, Vec<Tag>> = HashMap::new();
+        if task_ids.is_empty() {
+            return Ok(out);
+        }
+        let conn = self.lock()?;
+        // 用 IN (...) 一次查所有 task_tag 关联,内存里再 join tags。
+        let placeholders = std::iter::repeat_n("?", task_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT tt.task_id, t.* FROM tags t
+             JOIN task_tags tt ON tt.tag_id = t.id
+             WHERE tt.task_id IN ({placeholders}) AND t.deleted_at_ms IS NULL
+             ORDER BY t.name"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| CoreError::storage(format!("prepare list_tags_for_tasks: {e}")))?;
+        let mut rows = stmt
+            .query(rusqlite::params_from_iter(
+                task_ids.iter().map(|i| i.as_str())
+            ))
+            .map_err(|e| CoreError::storage(format!("query: {e}")))?;
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| CoreError::storage(format!("row: {e}")))?
+        {
+            let task_id_s: String = row
+                .get::<_, String>(0)
+                .map_err(|e| CoreError::storage(format!("row.task_id: {e}")))?;
+            let tag = row_to_tag(row).map_err(|e| CoreError::storage(format!("row_to_tag: {e}")))?;
+            out.entry(Id(task_id_s)).or_default().push(tag);
+        }
+        Ok(out)
+    }
+
     fn set_tags_for_task(&self, task_id: &Id, tag_ids: &[Id]) -> CoreResult<()> {
         let conn = self.lock()?;
         let tx = conn
@@ -967,6 +1147,172 @@ impl Store for SqliteStore {
         )
         .map_err(|e| CoreError::storage(format!("upsert_monthly_review: {e}")))?;
         Ok(review)
+    }
+
+    fn list_subtasks_for_task(&self, task_id: &Id) -> CoreResult<Vec<SubTask>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT * FROM subtasks
+                 WHERE task_id = ? AND deleted_at_ms IS NULL
+                 ORDER BY position ASC, updated_at_ms ASC",
+            )
+            .map_err(|e| CoreError::storage(format!("prepare list_subtasks: {e}")))?;
+        let rows = stmt
+            .query_map(params![task_id.as_str()], row_to_subtask)
+            .map_err(|e| CoreError::storage(format!("query list_subtasks: {e}")))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| CoreError::storage(format!("row list_subtasks: {e}")))?);
+        }
+        Ok(out)
+    }
+
+    fn list_subtasks_for_tasks(&self, task_ids: &[Id]) -> CoreResult<HashMap<Id, Vec<SubTask>>> {
+        let mut out: HashMap<Id, Vec<SubTask>> = HashMap::new();
+        if task_ids.is_empty() {
+            return Ok(out);
+        }
+        let conn = self.lock()?;
+        let placeholders = std::iter::repeat_n("?", task_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT * FROM subtasks
+             WHERE task_id IN ({placeholders}) AND deleted_at_ms IS NULL
+             ORDER BY task_id, position ASC, updated_at_ms ASC"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| CoreError::storage(format!("prepare list_subtasks_for_tasks: {e}")))?;
+        let mut rows = stmt
+            .query(rusqlite::params_from_iter(
+                task_ids.iter().map(|i| i.as_str())
+            ))
+            .map_err(|e| CoreError::storage(format!("query: {e}")))?;
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| CoreError::storage(format!("row: {e}")))?
+        {
+            let task_id_s: String = row
+                .get::<_, String>("task_id")
+                .map_err(|e| CoreError::storage(format!("row.task_id: {e}")))?;
+            let st = row_to_subtask(row)
+                .map_err(|e| CoreError::storage(format!("row_to_subtask: {e}")))?;
+            out.entry(Id(task_id_s)).or_default().push(st);
+        }
+        Ok(out)
+    }
+
+    fn upsert_subtask(&self, subtask: SubTask) -> CoreResult<SubTask> {
+        let conn = self.lock()?;
+        // upsert by primary key;revision / deleted_at 在客户端控制(Store trait 不感知)
+        conn.execute(
+            "INSERT INTO subtasks
+              (id, task_id, title, is_completed, position, revision, deleted_at_ms, updated_at_ms)
+             VALUES (?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET
+                task_id=excluded.task_id,
+                title=excluded.title,
+                is_completed=excluded.is_completed,
+                position=excluded.position,
+                revision=excluded.revision,
+                deleted_at_ms=excluded.deleted_at_ms,
+                updated_at_ms=excluded.updated_at_ms",
+            params![
+                subtask.id.as_str(),
+                subtask.task_id.as_str(),
+                subtask.title,
+                subtask.is_completed as i64,
+                subtask.position as i64,
+                subtask.revision as i64,
+                subtask.deleted_at.map(ts_to_ms),
+                ts_to_ms(subtask.updated_at),
+            ],
+        )
+        .map_err(|e| CoreError::storage(format!("upsert_subtask: {e}")))?;
+        Ok(subtask)
+    }
+
+    fn delete_subtask(&self, id: &Id) -> CoreResult<()> {
+        let conn = self.lock()?;
+        // 软删除 —— 只置 deleted_at_ms;list 时过滤掉
+        conn.execute(
+            "UPDATE subtasks SET deleted_at_ms = ?, updated_at_ms = ?
+             WHERE id = ? AND deleted_at_ms IS NULL",
+            params![now_ms(), now_ms(), id.as_str()],
+        )
+        .map_err(|e| CoreError::storage(format!("delete_subtask: {e}")))?;
+        Ok(())
+    }
+
+    // --- Mottos ---
+
+    fn list_mottos(&self) -> CoreResult<Vec<Motto>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT * FROM mottos WHERE deleted_at_ms IS NULL ORDER BY updated_at_ms DESC",
+            )
+            .map_err(|e| CoreError::storage(format!("prepare list_mottos: {e}")))?;
+        let rows = stmt
+            .query_map([], row_to_motto)
+            .map_err(|e| CoreError::storage(format!("query list_mottos: {e}")))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| CoreError::storage(format!("row list_mottos: {e}")))?);
+        }
+        Ok(out)
+    }
+
+    fn upsert_motto(&self, motto: Motto) -> CoreResult<Motto> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO mottos (id, text, author, revision, deleted_at_ms, updated_at_ms)
+             VALUES (?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET
+                text=excluded.text,
+                author=excluded.author,
+                revision=excluded.revision,
+                deleted_at_ms=excluded.deleted_at_ms,
+                updated_at_ms=excluded.updated_at_ms",
+            params![
+                motto.id.as_str(),
+                motto.text,
+                motto.author,
+                motto.revision as i64,
+                motto.deleted_at.map(ts_to_ms),
+                ts_to_ms(motto.updated_at),
+            ],
+        )
+        .map_err(|e| CoreError::storage(format!("upsert_motto: {e}")))?;
+        Ok(motto)
+    }
+
+    fn delete_motto(&self, id: &Id) -> CoreResult<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "UPDATE mottos SET deleted_at_ms = ?, updated_at_ms = ?
+             WHERE id = ? AND deleted_at_ms IS NULL",
+            params![now_ms(), now_ms(), id.as_str()],
+        )
+        .map_err(|e| CoreError::storage(format!("delete_motto: {e}")))?;
+        Ok(())
+    }
+
+    fn today_completed_minutes(&self, start_ms: i64, end_ms: i64) -> CoreResult<u32> {
+        let conn = self.lock()?;
+        let total: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(duration_minutes), 0) FROM pomodoros
+                 WHERE deleted_at_ms IS NULL
+                   AND is_completed = 1
+                   AND ended_at_ms >= ? AND ended_at_ms < ?",
+                params![start_ms, end_ms],
+                |row| row.get(0),
+            )
+            .map_err(|e| CoreError::storage(format!("today_completed_minutes: {e}")))?;
+        u32::try_from(total).map_err(|_| CoreError::storage("today minutes overflow"))
     }
 }
 

@@ -61,6 +61,13 @@ pub fn run() {
             commands::upsert_weekly_review,
             commands::get_monthly_review,
             commands::upsert_monthly_review,
+            commands::list_subtasks_for_task,
+            commands::upsert_subtask,
+            commands::delete_subtask,
+            commands::list_mottos,
+            commands::upsert_motto,
+            commands::delete_motto,
+            commands::today_completed_minutes,
         ])
         .setup(|app| {
             info!("Tauri app setup complete, building tray...");

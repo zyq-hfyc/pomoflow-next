@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use pomoflow_core::model::{
-    DailyReview, Id, MonthlyReview, PomodoroSession, Project, Tag, Task, TaskStatus, Timestamp,
-    WeeklyReview,
+    DailyReview, Id, MonthlyReview, Motto, PomodoroSession, Project, SubTask, Tag, Task,
+    TaskStatus, TaskView, Timestamp, WeeklyReview,
 };
 use pomoflow_core::store::{SqliteStore, Store, TaskQuery};
 use tauri::State;
@@ -74,19 +74,40 @@ fn map_err(e: pomoflow_core::error::CoreError) -> String {
 // === Task commands ===
 
 #[tauri::command]
-pub fn list_tasks(query: TaskQuery, state: State<'_, AppState>) -> Result<Vec<Task>, String> {
-    state.store.list_tasks(&query).map_err(map_err)
+pub fn list_tasks(query: TaskQuery, state: State<'_, AppState>) -> Result<Vec<TaskView>, String> {
+    let tasks = state.store.list_tasks(&query).map_err(map_err)?;
+    embed_views(&state, tasks)
 }
 
 #[tauri::command]
-pub fn get_task(id: String, state: State<'_, AppState>) -> Result<Task, String> {
+pub fn get_task(id: String, state: State<'_, AppState>) -> Result<TaskView, String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
-    state.store.get_task(&id).map_err(map_err)
+    let task = state.store.get_task(&id).map_err(map_err)?;
+    embed_views(&state, vec![task]).map(|mut v| {
+        debug_assert!(v.len() == 1);
+        v.pop().unwrap()
+    })
+}
+
+/// 把一批 task 装上 tags + subtasks。共享 helper:list_tasks / get_task 都走这里。
+fn embed_views(state: &AppState, tasks: Vec<Task>) -> Result<Vec<TaskView>, String> {
+    let ids: Vec<Id> = tasks.iter().map(|t| t.id.clone()).collect();
+    let tags_map = state.store.list_tags_for_tasks(&ids).map_err(map_err)?;
+    let subs_map = state.store.list_subtasks_for_tasks(&ids).map_err(map_err)?;
+    Ok(tasks
+        .into_iter()
+        .map(|t| TaskView {
+            tags: tags_map.get(&t.id).cloned().unwrap_or_default(),
+            subtasks: subs_map.get(&t.id).cloned().unwrap_or_default(),
+            task: t,
+        })
+        .collect())
 }
 
 #[tauri::command]
-pub fn upsert_task(task: Task, state: State<'_, AppState>) -> Result<Task, String> {
-    state.store.upsert_task(task).map_err(map_err)
+pub fn upsert_task(task: Task, state: State<'_, AppState>) -> Result<TaskView, String> {
+    let saved = state.store.upsert_task(task).map_err(map_err)?;
+    embed_views(&state, vec![saved]).map(|mut v| v.pop().unwrap())
 }
 
 #[tauri::command]
@@ -238,23 +259,25 @@ pub fn list_pomodoros(state: State<'_, AppState>) -> Result<Vec<PomodoroSession>
 // 这里封装成 command —— Store trait 不感知"完成"业务语义。
 
 #[tauri::command]
-pub fn complete_task(id: String, state: State<'_, AppState>) -> Result<Task, String> {
+pub fn complete_task(id: String, state: State<'_, AppState>) -> Result<TaskView, String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     let mut task = state.store.get_task(&id).map_err(map_err)?;
     task.status = TaskStatus::Completed;
     task.completed_at = Some(Utc::now());
     task.updated_at = Timestamp::now();
-    state.store.upsert_task(task).map_err(map_err)
+    let saved = state.store.upsert_task(task).map_err(map_err)?;
+    embed_views(&state, vec![saved]).map(|mut v| v.pop().unwrap())
 }
 
 #[tauri::command]
-pub fn reopen_task(id: String, state: State<'_, AppState>) -> Result<Task, String> {
+pub fn reopen_task(id: String, state: State<'_, AppState>) -> Result<TaskView, String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     let mut task = state.store.get_task(&id).map_err(map_err)?;
     task.status = TaskStatus::Active;
     task.completed_at = None;
     task.updated_at = Timestamp::now();
-    state.store.upsert_task(task).map_err(map_err)
+    let saved = state.store.upsert_task(task).map_err(map_err)?;
+    embed_views(&state, vec![saved]).map(|mut v| v.pop().unwrap())
 }
 
 // === Review commands(日 / 周 / 月复盘透传) ===
@@ -305,4 +328,70 @@ pub fn upsert_monthly_review(
     state: State<'_, AppState>,
 ) -> Result<MonthlyReview, String> {
     state.store.upsert_monthly_review(review).map_err(map_err)
+}
+
+// === SubTask commands ===
+
+#[tauri::command]
+pub fn list_subtasks_for_task(
+    task_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SubTask>, String> {
+    let id = Id::parse(&task_id).ok_or_else(|| format!("invalid task_id: {task_id}"))?;
+    state.store.list_subtasks_for_task(&id).map_err(map_err)
+}
+
+#[tauri::command]
+pub fn upsert_subtask(subtask: SubTask, state: State<'_, AppState>) -> Result<SubTask, String> {
+    // 写入前 bump updated_at + revision —— 业务规则集中在 command 层,Store 不感知
+    let mut s = subtask;
+    s.updated_at = Timestamp::now();
+    s.revision = s.revision.saturating_add(1);
+    state.store.upsert_subtask(s).map_err(map_err)
+}
+
+#[tauri::command]
+pub fn delete_subtask(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
+    state.store.delete_subtask(&id).map_err(map_err)
+}
+
+// === Motto commands(座右铭) ===
+
+#[tauri::command]
+pub fn list_mottos(state: State<'_, AppState>) -> Result<Vec<Motto>, String> {
+    state.store.list_mottos().map_err(map_err)
+}
+
+#[tauri::command]
+pub fn upsert_motto(motto: Motto, state: State<'_, AppState>) -> Result<Motto, String> {
+    // 写入前 bump updated_at + revision
+    let mut m = motto;
+    m.updated_at = Timestamp::now();
+    m.revision = m.revision.saturating_add(1);
+    state.store.upsert_motto(m).map_err(map_err)
+}
+
+#[tauri::command]
+pub fn delete_motto(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
+    state.store.delete_motto(&id).map_err(map_err)
+}
+
+// === Stats helpers ===
+
+/// 番茄钟页"今日专注"分钟数 —— 与 v1 `todayMinutes` 对齐。
+///
+/// 入参是今日 0 点的 UTC 毫秒和次日 0 点的 UTC 毫秒(前端按本地时区算好后传入),
+/// 后端做 SUM(duration_minutes) 聚合。
+#[tauri::command]
+pub fn today_completed_minutes(
+    start_ms: i64,
+    end_ms: i64,
+    state: State<'_, AppState>,
+) -> Result<u32, String> {
+    state
+        .store
+        .today_completed_minutes(start_ms, end_ms)
+        .map_err(map_err)
 }

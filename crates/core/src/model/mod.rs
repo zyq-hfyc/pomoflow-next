@@ -15,15 +15,19 @@
 //! 本阶段只实现最简骨架(每个实体一个 struct + 默认值 + Debug/Clone/Serialize),
 //! 字段集合按 v1 `models.py` 一一对应。**业务方法(如"完成一个任务")放到 P1**。
 
+pub mod motto;
 pub mod pomodoro;
 pub mod project;
 pub mod review;
+pub mod subtask;
 pub mod tag;
 pub mod task;
 
+pub use motto::Motto;
 pub use pomodoro::PomodoroSession;
 pub use project::Project;
 pub use review::{DailyReview, MonthlyReview, WeeklyReview};
+pub use subtask::SubTask;
 pub use tag::Tag;
 pub use task::{Priority, Reminder, Repeat, Task, TaskStatus};
 
@@ -86,5 +90,35 @@ impl Timestamp {
 impl Default for Timestamp {
     fn default() -> Self {
         Self::now()
+    }
+}
+
+/// `Task` 的「展示视图」:把任务本身 + 它的标签 + 子任务拍平到一个 JSON 对象里。
+///
+/// `#[serde(flatten)]` 让前端拿到与 `Task` 同构的字段(没有 wrapper),只多了
+/// `tags` / `subtasks` 两个可选数组。`#[serde(default)]` 让旧客户端(只想要
+/// Task 字段)无感升级,缺这两个字段时不报错。
+///
+/// 用法:`list_tasks` / `get_task` 命令返回 `Vec<TaskView>`,与 v1 FastAPI
+/// `TaskOut.from_orm` embed tags/subtasks 的行为对齐。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskView {
+    #[serde(flatten)]
+    pub task: Task,
+
+    #[serde(default)]
+    pub tags: Vec<Tag>,
+
+    #[serde(default)]
+    pub subtasks: Vec<SubTask>,
+}
+
+impl TaskView {
+    pub fn new(task: Task) -> Self {
+        Self {
+            task,
+            tags: Vec::new(),
+            subtasks: Vec::new(),
+        }
     }
 }
