@@ -344,9 +344,9 @@
       const r: DailyReview = existing
         ? { ...existing, content: text }
         : {
+            id: crypto.randomUUID(),
             date: today,
             content: text,
-            created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           };
       await api.upsertDailyReview(r);

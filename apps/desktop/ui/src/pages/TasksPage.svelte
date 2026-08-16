@@ -19,7 +19,14 @@
   import { onMount } from "svelte";
   import { Clock, Target, CircleCheck, ChartColumn } from "lucide-svelte";
   import * as api from "../lib/api";
-  import type { Project, Tag, Task, Priority } from "../lib/api";
+  import type {
+    Project,
+    Tag,
+    Task,
+    Priority,
+    Reminder,
+    Repeat,
+  } from "../lib/api";
   import { currentRoute, navigate } from "../lib/router.svelte";
   import { todayStr, tomorrowStr, datePart, hasTimePart } from "../lib/dueDate";
   import ProjectSidebar from "../components/Tasks/ProjectSidebar.svelte";
@@ -74,7 +81,10 @@
         const pa = priorityOrder[a.priority || "none"] ?? 3;
         const pb = priorityOrder[b.priority || "none"] ?? 3;
         if (pa !== pb) return pa - pb;
-        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        return (
+          new Date(a.created_at ?? 0).getTime() -
+          new Date(b.created_at ?? 0).getTime()
+        );
       });
       return result;
     }
@@ -133,7 +143,10 @@
       const pa = priorityOrder[a.priority || "none"] ?? 3;
       const pb = priorityOrder[b.priority || "none"] ?? 3;
       if (pa !== pb) return pa - pb;
-      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      return (
+        new Date(a.created_at ?? 0).getTime() -
+        new Date(b.created_at ?? 0).getTime()
+      );
     });
 
     return result;
@@ -366,8 +379,8 @@
     due_date?: string | null;
     estimated_pomodoros: number;
     pomodoro_duration: number;
-    reminder?: string | null;
-    repeat?: string | null;
+    reminder?: Reminder | null;
+    repeat?: Repeat | null;
     repeat_config?: string | null;
     tag_ids: string[];
   }) {
@@ -387,6 +400,8 @@
         pomodoro_duration: data.pomodoro_duration,
         reminder: data.reminder ?? "none",
         repeat: data.repeat ?? "none",
+        repeat_parent_id: null,
+        repeat_end_date: null,
         repeat_config: data.repeat_config ?? null,
         completed_at: null,
         created_at: nowIso(),

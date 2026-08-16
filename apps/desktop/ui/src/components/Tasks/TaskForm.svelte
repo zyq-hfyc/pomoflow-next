@@ -18,16 +18,18 @@
   import RepeatCustomDialog from "./RepeatCustomDialog.svelte";
   import { todayStr, hasTimePart, fillCurrentTime } from "../../lib/dueDate";
   import { getSettings } from "../../lib/settings.svelte";
-  import type { Project, Tag, Priority } from "../../lib/api";
+  import type { Project, Tag, Priority, Reminder, Repeat } from "../../lib/api";
 
+  // value 与 Rust `Reminder` serde(snake_case)输出一一对应:
+  // Minutes5 → "minutes5"(无下划线),以此类推
   const REMINDER_OPTIONS = [
     { value: "none", label: "不提醒" },
     { value: "on_time", label: "准时" },
-    { value: "minutes_5", label: "提前 5 分钟" },
-    { value: "minutes_30", label: "提前 30 分钟" },
-    { value: "hour_1", label: "提前 1 小时" },
-    { value: "day_1", label: "提前 1 天" },
-    { value: "days_2", label: "提前 2 天" },
+    { value: "minutes5", label: "提前 5 分钟" },
+    { value: "minutes30", label: "提前 30 分钟" },
+    { value: "hour1", label: "提前 1 小时" },
+    { value: "day1", label: "提前 1 天" },
+    { value: "days2", label: "提前 2 天" },
   ] as const;
 
   const REPEAT_OPTIONS = [
@@ -42,6 +44,11 @@
 
   type ReminderValue = (typeof REMINDER_OPTIONS)[number]["value"];
   type RepeatValue = (typeof REPEAT_OPTIONS)[number]["value"];
+  // options 的 value 就是 Rust enum 的 serde 输出,与 api.ts 的类型一致:
+  const _optionsMatchApi: ReminderValue = "none" satisfies Reminder;
+  const _repeatOptionsMatchApi: RepeatValue = "none" satisfies Repeat;
+  void _optionsMatchApi;
+  void _repeatOptionsMatchApi;
 
   interface AddData {
     title: string;
@@ -50,8 +57,8 @@
     due_date?: string | null;
     estimated_pomodoros: number;
     pomodoro_duration: number;
-    reminder?: string | null;
-    repeat?: string | null;
+    reminder?: Reminder | null;
+    repeat?: Repeat | null;
     repeat_config?: string | null;
     tag_ids: string[];
   }

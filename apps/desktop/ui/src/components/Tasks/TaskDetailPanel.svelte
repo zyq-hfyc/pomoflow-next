@@ -21,6 +21,8 @@
   import type {
     Priority,
     Project,
+    Reminder,
+    Repeat,
     SubTask as ApiSubTask,
     Tag,
     Task as ApiTask,
@@ -211,14 +213,15 @@
   }
 
   // === reminder / repeat 标签 ===
+  // value 与 Rust `Reminder` serde(snake_case)输出一致(Minutes5 → "minutes5")
   const REMINDER_OPTIONS = [
     { value: "none", label: "不提醒" },
     { value: "on_time", label: "准时" },
-    { value: "minutes_5", label: "提前 5 分钟" },
-    { value: "minutes_30", label: "提前 30 分钟" },
-    { value: "hour_1", label: "提前 1 小时" },
-    { value: "day_1", label: "提前 1 天" },
-    { value: "days_2", label: "提前 2 天" },
+    { value: "minutes5", label: "提前 5 分钟" },
+    { value: "minutes30", label: "提前 30 分钟" },
+    { value: "hour1", label: "提前 1 小时" },
+    { value: "day1", label: "提前 1 天" },
+    { value: "days2", label: "提前 2 天" },
   ] as const;
 
   const REPEAT_OPTIONS = [
@@ -333,7 +336,7 @@
         id="reminder"
         value={task.reminder ?? "none"}
         onchange={(e) => {
-          const v = (e.currentTarget as HTMLSelectElement).value;
+          const v = (e.currentTarget as HTMLSelectElement).value as Reminder;
           void patchTask({ reminder: v });
         }}
       >
@@ -348,7 +351,7 @@
         id="repeat"
         value={task.repeat ?? "none"}
         onchange={(e) => {
-          const v = (e.currentTarget as HTMLSelectElement).value;
+          const v = (e.currentTarget as HTMLSelectElement).value as Repeat;
           void patchTask({ repeat: v });
         }}
       >
