@@ -1,11 +1,12 @@
-//! 存储抽象 —— `Store` trait + 内存实现
+//! 存储抽象 —— `Store` trait + 内存实现 + SQLite 实现
 //!
 //! ## 用途
 //!
 //! - 业务逻辑(`validate` / 未来的 service 层)只依赖这个 trait,不关心底层是
 //!   SQLite、PostgreSQL 还是内存 mock
 //! - P0 提供 `InMemoryStore` 供单元测试与"跑一遍流程"使用
-//! - P1 在 `apps/desktop/src/store_sqlite.rs` 提供 `rusqlite` 实现
+//! - P1.2 起 `sqlite::SqliteStore` 作为桌面端持久化(P1.5 起迁移工具 `tools/migrate-v1`
+//!   也复用,见 `crate::store::sqlite` 模块头注释)
 //! - P2+ 云端提供 Postgres / DynamoDB 实现
 //!
 //! ## trait 设计原则
@@ -13,6 +14,9 @@
 //! - **读写分离**:CRUD 都返回 `CoreResult`,错误统一走 [`CoreError`]
 //! - **同步 trait(非 async)**:当前不引入 Tokio 依赖;P1 真需要异步再权衡
 //!   (rusqlite 本身是同步 API)
+
+pub mod sqlite;
+
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -22,6 +26,8 @@ use crate::error::{CoreError, CoreResult};
 use crate::model::{
     DailyReview, Id, MonthlyReview, PomodoroSession, Project, Tag, Task, WeeklyReview,
 };
+
+pub use sqlite::SqliteStore;
 
 /// 任务 ↔ 标签 关联查询的入参 / 出参。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

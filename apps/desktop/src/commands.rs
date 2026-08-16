@@ -14,10 +14,8 @@
 use std::path::{Path, PathBuf};
 
 use pomoflow_core::model::{Id, Project, Tag, Task};
-use pomoflow_core::store::{Store, TaskQuery};
+use pomoflow_core::store::{SqliteStore, Store, TaskQuery};
 use tauri::State;
-
-use crate::store_sqlite::SqliteStore;
 
 /// 全局应用状态 —— Tauri `manage()` 注入,每个 command 拿 `State<AppState>`。
 ///

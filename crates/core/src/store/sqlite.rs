@@ -1,5 +1,12 @@
 //! `crates/core::Store` trait 的 SQLite 实现。
 //!
+//! ## 位置说明
+//!
+//! 历史:此文件最初在 `apps/desktop/src/store_sqlite.rs`(P1.2),P1.5 新增
+//! `tools/migrate-v1` 也需要这个实现,所以把它搬进 `crates/core` ——
+//! `core` 是 desktop + cloud + 迁移工具共享的"业务大脑",SQLite 持久化属于
+//! 共享能力。这与 ADR-005 "关键域逻辑用 Rust `core` crate 共享"一致。
+//!
 //! ## 设计要点
 //!
 //! - **每个实体一张表 + 软删除列 `deleted_at_ms`**:列表查询过滤 `deleted_at_ms IS NULL`,
@@ -13,7 +20,7 @@
 //! - **线程安全**:`Connection` 不 `Sync`,包一层 `Arc<Mutex<Connection>>`。
 //!   Tauri command 处理器并发调用时互斥。
 //!
-//! ## 未来(P1.5+)要做的事
+//! ## 未来(P2+)要做的事
 //!
 //! - 迁移系统(添加字段时 ALTER TABLE + 数据回填)
 //! - `updated_at` 索引覆盖更多查询模式
@@ -23,13 +30,14 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, TimeZone, Utc};
-use pomoflow_core::error::{CoreError, CoreResult};
-use pomoflow_core::model::{
+use rusqlite::{params, Connection, OptionalExtension, Row};
+
+use crate::error::{CoreError, CoreResult};
+use crate::model::{
     DailyReview, Id, MonthlyReview, PomodoroSession, Priority, Project, Reminder, Repeat, Tag, Task,
     TaskStatus, Timestamp, WeeklyReview,
 };
-use pomoflow_core::store::{Store, TaskQuery};
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use crate::store::{Store, TaskQuery};
 
 /// `pomoflow-core::Store` trait 的 SQLite 持久化实现。
 #[derive(Debug, Clone)]
@@ -42,7 +50,8 @@ impl SqliteStore {
     ///
     /// `path` 通常是 `~/.local/share/pomoflow/store.db`(Linux)、`%APPDATA%\pomoflow\store.db`、
     /// `~/Library/Application Support/pomoflow/store.db` —— 桌面端启动时确定。P1.3 起由
-    /// `lib.rs::run()` 决定具体路径。
+    /// `apps/desktop/src/lib.rs::run()` 决定具体路径。P1.5 起迁移工具 `tools/migrate-v1`
+    /// 也用同样的 `open()` 把 v1 数据写到 v2 store。
     pub fn open(path: impl AsRef<Path>) -> CoreResult<Self> {
         let conn = Connection::open(path.as_ref())
             .map_err(|e| CoreError::storage(format!("open sqlite: {e}")))?;
@@ -85,7 +94,7 @@ impl SqliteStore {
 
 /// SQLite schema —— 8 张表,所有时间戳 ms INTEGER,所有枚举 TEXT。
 ///
-/// 加字段时手动 append(无迁移系统,P1.5 加)。
+/// 加字段时手动 append(无迁移系统,P2+ 加)。
 const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY NOT NULL,
@@ -932,5 +941,42 @@ impl Store for SqliteStore {
         )
         .map_err(|e| CoreError::storage(format!("upsert_monthly_review: {e}")))?;
         Ok(review)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Task;
+
+    #[test]
+    fn upsert_and_get_task_roundtrip() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let task = Task::new("写代码");
+        let id = task.id.clone();
+        store.upsert_task(task.clone()).unwrap();
+        let got = store.get_task(&id).unwrap();
+        assert_eq!(got.title, "写代码");
+    }
+
+    #[test]
+    fn soft_delete_marks_deleted_at() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let task = Task::new("已删除");
+        let id = task.id.clone();
+        store.upsert_task(task).unwrap();
+        store.delete_task(&id).unwrap();
+        assert!(store.list_tasks(&TaskQuery::default()).unwrap().is_empty());
+        let got = store.get_task(&id).unwrap();
+        assert!(got.deleted_at.is_some());
+    }
+
+    #[test]
+    fn tag_unique_name_conflict() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        store.upsert_tag(Tag::new("urgent")).unwrap();
+        let dup = Tag::new("urgent");
+        let err = store.upsert_tag(dup).unwrap_err();
+        assert!(matches!(err, CoreError::Conflict(_)));
     }
 }

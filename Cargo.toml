@@ -1,9 +1,10 @@
 [workspace]
 resolver = "2"
-# P0: crates/core 奠基;P1: apps/desktop 加入(Tauri 2 桌面端);后续 P2 加 tools/migrate-v1。
+# P0: crates/core 奠基;P1: apps/desktop 加入(Tauri 2 桌面端);P1.5 加入 tools/migrate-v1 迁移 CLI。
 members = [
     "crates/core",
     "apps/desktop",
+    "tools/migrate-v1",
 ]
 
 # 全局包元信息,被所有 members 继承(可单独覆盖)

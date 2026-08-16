@@ -19,6 +19,9 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+# P1.5:`SqliteStore` 从 `apps/desktop` 搬进 core,migrate-v1 也需要。
+# bundled 把 SQLite C 源码编进 binary,无需系统预装 libsqlite3。
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }

@@ -2,15 +2,15 @@
 //!
 //! P1.3:注册 Tauri commands + 启动时初始化 SQLite。
 //! P1.4:init notification / autostart 插件 + 构建系统托盘。
+//! P1.5:`SqliteStore` 已迁入 `pomoflow-core`,桌面端只 re-use。
 
 use log::{error, info};
+use pomoflow_core::store::SqliteStore;
 use tauri_plugin_autostart::MacosLauncher;
 
 use crate::commands::{ensure_parent, store_path, AppState};
-use crate::store_sqlite::SqliteStore;
 
 pub mod commands;
-pub mod store_sqlite;
 pub mod tray;
 
 /// Tauri app 启动入口。

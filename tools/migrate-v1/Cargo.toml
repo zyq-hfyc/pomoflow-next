@@ -1,0 +1,46 @@
+[package]
+name = "migrate-v1"
+version = "0.1.0"
+description = "v1 pomoflow.db → v2 store.db 一键迁移 CLI"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "migrate-v1"
+path = "src/main.rs"
+
+# P1.5:加 lib target,让 tests/integ.rs 能 `use migrate_v1::...` 直接复用
+# 迁移逻辑(避免在测试里重写一遍)。main.rs 留 5 行做 bin 入口。
+[lib]
+name = "migrate_v1"
+path = "src/lib.rs"
+
+[dependencies]
+# 复用 v2 域模型 + Store trait + SqliteStore 实现(都从 core 拿)
+pomoflow-core = { path = "../../crates/core" }
+
+# 时间
+chrono = { workspace = true }
+
+# 序列化
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# 错误
+thiserror = { workspace = true }
+anyhow = "1"
+
+# CLI 参数
+clap = { version = "4", features = ["derive"] }
+
+# 日志
+log = { workspace = true }
+env_logger = { workspace = true }
+
+# v1 用 rusqlite 直读(SQLite → SQLite,无 ORM 依赖)。
+# SqliteStore 的实现已经搬进 pomoflow-core,但 v1 不走 Store trait
+# (它字段差太多、整数 PK 也对不上),所以这里仍直接拉 rusqlite 读老库。
+rusqlite = { version = "0.40", features = ["bundled"] }

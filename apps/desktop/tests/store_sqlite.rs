@@ -2,13 +2,15 @@
 //!
 //! 不引入 v1 / fixtures,每个 case 自造数据,跑完即扔。
 //! 用 `SqliteStore::open_in_memory()` 避免副作用。
+//!
+//! P1.5:`SqliteStore` 已迁入 `pomoflow-core::store::SqliteStore`(不再走
+//! `apps/desktop` 的本地模块),import 路径相应更新。
 
 use pomoflow_core::model::{
     DailyReview, Id, MonthlyReview, PomodoroSession, Priority, Project, Reminder, Repeat, Tag, Task,
     TaskStatus, Timestamp, WeeklyReview,
 };
-use pomoflow_core::store::{Store, TaskQuery};
-use pomoflow_desktop_lib::store_sqlite::SqliteStore;
+use pomoflow_core::store::{SqliteStore, Store, TaskQuery};
 
 fn store() -> SqliteStore {
     SqliteStore::open_in_memory().expect("open in-memory store")

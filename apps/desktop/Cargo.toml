@@ -34,10 +34,6 @@ tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
 tauri-plugin-notification = "2"
 tauri-plugin-autostart = "2"
 
-# SQLite 持久化(P1.2 实现 `crates/core::Store` trait)
-# bundled 把 SQLite C 源码编进 binary,无需系统预装 libsqlite3。
-rusqlite = { version = "0.40", features = ["bundled"] }
-
 # 序列化(commands 桥接需要)
 serde = { workspace = true }
 serde_json = { workspace = true }
