@@ -315,11 +315,19 @@ pub fn stop_pomodoro(
 
     let result = state.store.upsert_pomodoro(session).map_err(map_err)?;
 
-    // 完成且绑定了任务 → 累加 task.completed_pomodoros
+    // 完成且绑定了任务 → 累加 task.completed_pomodoros;达预估自动完成任务
+    // (v1 crud.py:488-490:completed >= estimated 且未完成 → 置 completed+completed_at;
+    //  裸比较 —— estimated=0 时一次专注即完成,v1 原样)
     // 失败仅静默(不影响主返回:PomodoroSession 已成功落库,统计可重算)
     if let Some(task_id) = task_to_bump {
         if let Ok(mut task) = state.store.get_task(&task_id) {
             task.completed_pomodoros = task.completed_pomodoros.saturating_add(1);
+            if task.completed_pomodoros >= task.estimated_pomodoros
+                && task.status != TaskStatus::Completed
+            {
+                task.status = TaskStatus::Completed;
+                task.completed_at = Some(Utc::now());
+            }
             task.updated_at = Timestamp::now();
             let _ = state.store.upsert_task(task);
         }

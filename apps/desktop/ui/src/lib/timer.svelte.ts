@@ -1,140 +1,419 @@
-//! 全局番茄钟状态机 —— Svelte 5 runes 模块态,任意组件共享同一实例。
+//! 全局番茄钟引擎 —— v1 `context/AppContext.tsx` 计时段的 Svelte 5 runes 移植。
 //!
-//! 设计要点:
-//! - 三种模式:`focus` / `short_break` / `long_break`(与后端 Pomodoro mode 无关,
-//!   这里是 UI 端的概念,后端 PomodoroSession 只记 "focus 一次" 的一段时间)。
-//! - `running` 只表示"UI 在 tick",后端 session 已 start 并在数据库占位。
-//! - `pause / resume` 是 UI 行为:不调后端、不改 session.ended_at。
-//!   - 真正的"结束一次番茄"是 `stop(isCompleted)` → 写 `ended_at` + `is_completed`。
-//! - `currentTaskId`:可空。空时 `start()` 会拒绝(UI 层先禁用按钮)。
-//! - 后端调用在 `lib/api.ts` 集中;此处只编排状态。
+//! ## v1 语义(逐条保持)
 //!
-//! Tick:`tick(seconds)` 由 App.svelte 的 `$effect` 在 `running` 为 true 时每秒调用一次。
-//! 这里不直接 setInterval,保持模块纯状态(便于测试 + 路由切换不丢 tick)。
+//! - **挂钟计时**:start 锚定 `startedAtMs + startSeconds`,tick 按真实流逝算
+//!   `max(0, startSeconds - elapsed)` —— 后台/睡眠不漂移;`visibilitychange`
+//!   回前台立即校准;pause 保留会话、resume 重新锚定。
+//! - **空闲回满**:未运行且无会话时,secondsLeft 恒等于当前模式/任务时长
+//!   (切任务/切模式不闪环)。
+//! - **完成检测**:`secondsLeft===0 && !running && sessionId!==null && !triggered`
+//!   → handleComplete(在模块层,路由切换不丢;新会话开始时清标志)。
+//! - **完成链**(focus 结束):模板文案通知 + 弹窗 → stopPomodoro(true) →
+//!   今日统计本地累加(跨天先重置)→ 刷新任务 →
+//!   `!disableBreak && autoStartBreak` → 长短休息判定 `(终身计数+1)%interval===0`
+//!   → 休息会话 task_id=null、project 继承活动任务;
+//!   否则同任务未达预估则留,达预估/已完成 → pickNextAutoTask 接续,
+//!   `autoStartNextPomodoro` 决定是否自动开。休息结束同"留/接续"回 focus。
+//! - **终身专注计数**:localStorage `pomoflow-focus-count`,中断/放弃不清零。
+//! - **候选池**:active + due 在本月 + due 日 ≤ 今天,优先级 high>medium>low>none,
+//!   同级 created_at 升序,取第一;未来任务不自动接续。
+//! - **无任务专注**:允许(taskId=null,时长用全局设置)。
 
 import { getSettings } from "./settings.svelte";
+import { getLang } from "./i18n.svelte";
+import { resolveTemplate, type NotificationText } from "./notificationStyles";
+import * as api from "./api";
+import type { Task } from "./api";
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 
 export type TimerMode = "focus" | "short_break" | "long_break";
+
+const FOCUS_COUNT_KEY = "pomoflow-focus-count";
 
 interface TimerState {
   mode: TimerMode;
   secondsLeft: number;
   running: boolean;
   sessionId: string | null;
-  currentTaskId: string | null;
-  /// 已完成的 focus session 数(用于 long break 决策:每 4 个 → long_break)
-  focusCompletedInCycle: number;
+  /// 当前活动任务(全局;null = 无特定任务专注)
+  activeTask: Task | null;
+  /// 终身已完成专注数(长休判定用;localStorage 持久)
+  focusCompletedCount: number;
+  /// 完成弹窗文案(非 null 时 TimerPage 显示;看完清掉)
+  pendingCompletionMessage: string | null;
+  /// 今日统计(本地即时累加;跨天重置)
+  todayCount: number;
+  todayMinutes: number;
 }
 
 let _state = $state<TimerState>({
   mode: "focus",
-  secondsLeft: 25 * 60,
+  secondsLeft: getSettings().focusDuration * 60,
   running: false,
   sessionId: null,
-  currentTaskId: null,
-  focusCompletedInCycle: 0,
+  activeTask: null,
+  focusCompletedCount: loadFocusCount(),
+  pendingCompletionMessage: null,
+  todayCount: 0,
+  todayMinutes: 0,
 });
+
+/// 挂钟锚点(非响应式;暂停时保留剩余,恢复时重锚)
+let startedAtMs = 0;
+let startSeconds = 0;
+/// 今日统计对应的日期(toDateString 形式,跨天检测)
+let lastStatsDay = new Date().toDateString();
+/// 完成检测一次性标志(防重复触发)
+let completionTriggered = false;
+/// 当前通知模板(启动时拉取;设置页保存后可 refresh)
+let _template: api.NotificationTemplate | null = null;
+
+function loadFocusCount(): number {
+  try {
+    return parseInt(localStorage.getItem(FOCUS_COUNT_KEY) || "0", 10) || 0;
+  } catch {
+    return 0;
+  }
+}
 
 export function getTimerState(): TimerState {
   return _state;
 }
 
-/// 从 settings 重置当前模式对应的秒数(切换模式 / 设置变更时调用)。
-function resetSecondsFor(mode: TimerMode) {
+export function getNotificationTemplate(): api.NotificationTemplate | null {
+  return _template;
+}
+
+/// 拉取通知模板(App 启动 + 设置页保存后调用)。
+export async function refreshNotificationTemplate(): Promise<void> {
+  try {
+    _template = await api.getNotificationTemplate();
+  } catch {
+    // 拉不到 → resolveTemplate 回落 default 预设
+  }
+}
+
+/// 有效专注时长(分钟):活动任务自带 → 否则全局设置(v1 effectiveFocusDuration)
+function effectiveFocusMinutes(): number {
+  return _state.activeTask?.pomodoro_duration ?? getSettings().focusDuration;
+}
+
+function modeSeconds(mode: TimerMode): number {
   const s = getSettings();
-  _state.secondsLeft =
-    mode === "focus"
-      ? s.focusMinutes * 60
-      : mode === "short_break"
-      ? s.shortBreakMinutes * 60
-      : s.longBreakMinutes * 60;
+  return mode === "focus"
+    ? effectiveFocusMinutes() * 60
+    : mode === "short_break"
+      ? s.shortBreakDuration * 60
+      : s.longBreakDuration * 60;
 }
 
-/// 启动一次番茄(必须是 focus 模式;且必须先选任务)。
+/// 空闲(未运行且无会话)时秒数跟随模式/任务时长 —— 圆环回满不闪动。
+function snapIfIdle() {
+  if (!_state.running && _state.sessionId === null) {
+    _state.secondsLeft = modeSeconds(_state.mode);
+  }
+}
+
+/// 启动一次计时(v1 startTimer)。
 ///
-/// 返回本次 backend session id,UI 层用来在 stop 时回写。
-export function start(taskId: string, sessionId: string) {
-  if (_state.running) return; // 已运行 → 忽略
-  _state.mode = "focus";
-  resetSecondsFor("focus");
-  _state.currentTaskId = taskId;
-  _state.sessionId = sessionId;
+/// - focus:`taskId` 可空(无特定任务);时长 override 分钟数或按模式推
+/// - break:taskId 恒空,project 继承活动任务
+export async function start(
+  taskId: string | null,
+  projectId: string | null,
+  overrideDurationMinutes?: number,
+): Promise<void> {
+  const duration =
+    overrideDurationMinutes ?? Math.floor(modeSeconds(_state.mode) / 60);
+  const session = await api.startPomodoro(taskId, projectId, duration);
+  _state.sessionId = session.id;
+  if (overrideDurationMinutes !== undefined) {
+    _state.secondsLeft = overrideDurationMinutes * 60;
+  }
+  startedAtMs = Date.now();
+  startSeconds = _state.secondsLeft;
   _state.running = true;
+  completionTriggered = false;
 }
 
-export function pause() {
+/// 从任务列表一键开始:先停掉进行中的会话(按放弃计),再开新专注(v1 行为)。
+export async function startWithTask(task: Task): Promise<void> {
+  if (_state.sessionId !== null) {
+    await stop(false);
+  }
+  _state.activeTask = task;
+  _state.mode = "focus";
+  snapIfIdle();
+  await start(task.id, task.project_id ?? null, task.pomodoro_duration ?? undefined);
+}
+
+export function pause(): void {
   if (!_state.running) return;
   _state.running = false;
 }
 
-export function resume() {
+export function resume(): void {
   if (_state.running || _state.sessionId === null) return;
+  startedAtMs = Date.now();
+  startSeconds = _state.secondsLeft;
   _state.running = true;
 }
 
-/// 结束本次番茄。
+/// 用户主动停止(completed=false=放弃/跳过)或由完成链调用(true)。
 ///
-/// `completed=true`:UI 跑完秒数 → 算一次完成 focus;按 settings.autoChain 决定
-/// 是进入短休 / 长休 / 下一个 focus,或停在这里等用户手动。
-///
-/// `completed=false`:用户中途手动 stop → 不计入 focusCompleted,模式回到 focus,
-/// 等待下一次 start。
-export function stop(completed: boolean) {
-  const prevMode = _state.mode;
+/// 注意:自然完成走 tick→handleComplete,那里负责通知/接续;这里只收尾状态。
+export async function stop(completed: boolean): Promise<void> {
+  const sessionId = _state.sessionId;
   _state.running = false;
   _state.sessionId = null;
-  _state.currentTaskId = null;
+  if (sessionId !== null) {
+    try {
+      await api.stopPomodoro(sessionId, completed);
+    } catch (e) {
+      console.warn("stop pomodoro failed", e);
+    }
+  }
+  _state.secondsLeft = modeSeconds(_state.mode);
+}
+
+/// 切换模式(手动):停掉一切并回满(v1 switchTimerMode 不写后端)。
+export function switchMode(mode: TimerMode): void {
+  _state.mode = mode;
+  _state.running = false;
+  _state.sessionId = null;
+  _state.secondsLeft = modeSeconds(mode);
+}
+
+/// 挂钟 tick:App.svelte 每秒调用;按真实流逝计算,到 0 触发完成。
+export function tick(): void {
+  if (!_state.running) return;
+  const elapsed = Math.floor((Date.now() - startedAtMs) / 1000);
+  const next = Math.max(0, startSeconds - elapsed);
+  if (next <= 0) {
+    _state.secondsLeft = 0;
+    _state.running = false; // 先停 tick,完成链异步接管
+    if (_state.sessionId !== null && !completionTriggered) {
+      completionTriggered = true;
+      void handleComplete();
+    }
+    return;
+  }
+  _state.secondsLeft = next;
+}
+
+/// 回前台立即校准(v1 visibilitychange;App.svelte 挂载监听)。
+export function recalibrateOnVisible(): void {
+  if (!_state.running) return;
+  const elapsed = Math.floor((Date.now() - startedAtMs) / 1000);
+  const next = Math.max(0, startSeconds - elapsed);
+  if (next <= 0) {
+    _state.secondsLeft = 0;
+    _state.running = false;
+    if (_state.sessionId !== null && !completionTriggered) {
+      completionTriggered = true;
+      void handleComplete();
+    }
+  } else {
+    _state.secondsLeft = next;
+  }
+}
+
+export function clearCompletionMessage(): void {
+  _state.pendingCompletionMessage = null;
+}
+
+export function setActiveTask(task: Task | null): void {
+  _state.activeTask = task;
+  snapIfIdle();
+}
+
+export function applySettingsChange(): void {
+  snapIfIdle();
+}
+
+// === 今日统计 ===
+
+/// 专注完成时的本地即时累加(v1:不依赖后端往返,无任务专注也计入)。
+function bumpTodayStats(minutes: number) {
+  const today = new Date().toDateString();
+  if (today !== lastStatsDay) {
+    lastStatsDay = today;
+    _state.todayCount = 1;
+    _state.todayMinutes = minutes;
+  } else {
+    _state.todayCount += 1;
+    _state.todayMinutes += minutes;
+  }
+}
+
+export function resetTodayStats(count: number, minutes: number): void {
+  _state.todayCount = count;
+  _state.todayMinutes = minutes;
+  lastStatsDay = new Date().toDateString();
+}
+
+// === 完成链(v1 handleTimerComplete) ===
+
+/// 候选池:active + due 本月 + due 日 ≤ 今天;优先级 → created 升序。
+function pickNextAutoTask(list: Task[]): Task | null {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const order: Record<string, number> = { high: 0, medium: 1, low: 2, none: 3 };
+  const pool = list.filter((t) => {
+    if (t.status !== "active" || !t.due_date) return false;
+    const d = new Date(t.due_date);
+    if (isNaN(d.getTime()) || d < monthStart || d > monthEnd) return false;
+    const dueDay = new Date(d);
+    dueDay.setHours(0, 0, 0, 0);
+    return dueDay.getTime() <= now.getTime();
+  });
+  pool.sort((a, b) => {
+    const pa = order[a.priority ?? "none"] ?? 3;
+    const pb = order[b.priority ?? "none"] ?? 3;
+    if (pa !== pb) return pa - pb;
+    return (
+      new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime()
+    );
+  });
+  return pool[0] ?? null;
+}
+
+async function sendSystemNotification(title: string, body: string): Promise<void> {
+  if (!getSettings().desktopNotificationEnabled) return;
+  try {
+    let granted = await isPermissionGranted();
+    if (!granted) {
+      const perm = await requestPermission();
+      granted = perm === "granted";
+    }
+    if (!granted) return;
+    sendNotification({ title, body });
+  } catch (e) {
+    console.warn("notification failed", e);
+  }
+}
+
+async function handleComplete(): Promise<void> {
+  const mode = _state.mode;
+  const totalMinutes = Math.floor((startSeconds || 0) / 60);
+  const task = _state.activeTask;
+
+  // 通知/弹窗文案:模板按当前语言解析(focus/break 用各自字段)
+  const lang = getLang();
+  const tplText: Partial<NotificationText> | null = _template
+    ? {
+        focus_end_title: _template.focus_end_title ?? undefined,
+        focus_end_body: _template.focus_end_body ?? undefined,
+        break_end_title: _template.break_end_title ?? undefined,
+        break_end_body: _template.break_end_body ?? undefined,
+        reminder_title: _template.reminder_title ?? undefined,
+        reminder_body: _template.reminder_body ?? undefined,
+      }
+    : null;
+  const resolved = resolveTemplate(_template?.style, lang, tplText);
+  const title = mode === "focus" ? resolved.focus_end_title : resolved.break_end_title;
+  const body = mode === "focus" ? resolved.focus_end_body : resolved.break_end_body;
+  await sendSystemNotification(title, body);
+  _state.pendingCompletionMessage = body;
+
+  // 收尾会话(is_completed=true;后端顺带完成达预估的任务)
+  const sessionId = _state.sessionId;
+  _state.running = false;
+  _state.sessionId = null;
+  if (sessionId !== null) {
+    try {
+      await api.stopPomodoro(sessionId, true);
+    } catch (e) {
+      console.warn("stop pomodoro failed", e);
+    }
+  }
 
   const s = getSettings();
 
-  if (prevMode === "focus" && completed) {
-    _state.focusCompletedInCycle += 1;
-    const isLong = _state.focusCompletedInCycle % s.longBreakInterval === 0;
-    const nextMode: TimerMode = isLong ? "long_break" : "short_break";
-    _state.mode = nextMode;
-    resetSecondsFor(nextMode);
-    if (s.autoChain) {
-      _state.running = true; // 衔接:休息自动开始
+  if (mode === "focus") {
+    // 终身计数 + 今日统计本地累加
+    _state.focusCompletedCount += 1;
+    try {
+      localStorage.setItem(FOCUS_COUNT_KEY, String(_state.focusCompletedCount));
+    } catch {
+      /* ignore */
     }
-  } else if (prevMode === "focus" && !completed) {
-    // 中途放弃:重置 focus + 计数
-    _state.mode = "focus";
-    _state.focusCompletedInCycle = 0;
-    resetSecondsFor("focus");
-  } else {
-    // 休息结束 → 回到 focus 等待用户
-    _state.mode = "focus";
-    resetSecondsFor("focus");
-    if (s.autoChain) {
-      // autoChain:休息完自动开下一个 focus? 默认 false(用户需要先选任务)。
-      // 这里不强行 autoChain 到 focus,因为还没选任务。
-      _state.running = false;
+    bumpTodayStats(totalMinutes);
+
+    // 刷新任务,拿活动任务最新状态
+    let freshTasks: Task[] = [];
+    try {
+      freshTasks = (await api.listTasks({ status: null, limit: null })) as unknown as Task[];
+    } catch (e) {
+      console.warn("refresh tasks failed", e);
     }
-  }
-}
+    const freshActive = task ? freshTasks.find((t) => t.id === task.id) ?? null : null;
 
-/// 切换模式(UI 按钮直接切,不调后端)。会重置秒数 + 停掉 tick。
-export function switchMode(mode: TimerMode) {
-  if (_state.running) return;
-  _state.mode = mode;
-  resetSecondsFor(mode);
-}
+    // 自动休息链:task_id=null,project 继承活动任务
+    if (!s.disableBreak && s.autoStartBreak) {
+      const newCount = _state.focusCompletedCount;
+      const isLong = newCount % s.longBreakInterval === 0;
+      const breakMode: TimerMode = isLong ? "long_break" : "short_break";
+      const breakMinutes = isLong ? s.longBreakDuration : s.shortBreakDuration;
+      switchMode(breakMode);
+      await start(null, freshActive?.project_id ?? task?.project_id ?? null, breakMinutes);
+      return;
+    }
 
-/// 内部 tick:每秒减 1,跑完自动 stop(true)。
-///
-/// 由 App.svelte 的 `$effect` 调用 —— `$effect(() => { if (running) { interval } })`。
-export function tick() {
-  if (!_state.running) return;
-  if (_state.secondsLeft > 0) {
-    _state.secondsLeft -= 1;
+    // 留在当前任务 or 接续下一个
+    await advanceAfterFocus(freshTasks, freshActive, s.autoStartNextPomodoro);
     return;
   }
-  // 跑完了 → 自动 stop(true)
-  stop(true);
+
+  // 休息结束 → 回 focus:同"留/接续"逻辑
+  let tasks: Task[] = [];
+  try {
+    tasks = (await api.listTasks({ status: null, limit: null })) as unknown as Task[];
+  } catch (e) {
+    console.warn("refresh tasks failed", e);
+  }
+  const freshActive = task ? tasks.find((t) => t.id === task.id) ?? null : null;
+  await advanceAfterFocus(tasks, freshActive, s.autoStartNextPomodoro);
 }
 
-/// 设置变更时重置秒数(用户在 Settings 改了时长 → 当前未跑的秒数同步)。
-export function applySettingsChange() {
-  if (_state.running) return; // 跑动中别打断
-  resetSecondsFor(_state.mode);
+/// focus/休息结束后的"留在当前任务或接续下一个"(v1 同段逻辑)。
+async function advanceAfterFocus(
+  freshTasks: Task[],
+  freshActive: Task | null,
+  autoStartNext: boolean,
+): Promise<void> {
+  const shouldStay =
+    freshActive !== null &&
+    freshActive.status === "active" &&
+    (freshActive.completed_pomodoros ?? 0) < (freshActive.estimated_pomodoros ?? 0);
+
+  if (shouldStay && freshActive) {
+    switchMode("focus");
+    _state.activeTask = freshActive;
+    if (autoStartNext) {
+      await start(
+        freshActive.id,
+        freshActive.project_id ?? null,
+        freshActive.pomodoro_duration ?? undefined,
+      );
+    }
+    return;
+  }
+
+  if (freshActive && freshActive.status === "completed") {
+    _state.activeTask = null;
+  }
+  const next = pickNextAutoTask(freshTasks);
+  _state.activeTask = next;
+  switchMode("focus");
+  if (next && autoStartNext) {
+    await start(next.id, next.project_id ?? null, next.pomodoro_duration ?? undefined);
+  }
 }

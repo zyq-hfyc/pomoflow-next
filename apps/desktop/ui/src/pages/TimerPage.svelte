@@ -21,12 +21,15 @@
   import { onMount } from "svelte";
   import {
     getTimerState,
-    start as timerStart,
+    start as engineStart,
+    startWithTask,
     pause as timerPause,
     resume as timerResume,
-    stop as timerStop,
+    stop as engineStop,
     switchMode,
-    type TimerMode,
+    setActiveTask,
+    clearCompletionMessage,
+    resetTodayStats,
   } from "../lib/timer.svelte";
   import { getSettings } from "../lib/settings.svelte";
   import * as api from "../lib/api";
@@ -37,13 +40,7 @@
     Tag,
     Task,
   } from "../lib/api";
-  import { getDict, getLang, fmt } from "../lib/i18n.svelte";
-  import { resolveTemplate } from "../lib/notificationStyles";
-  import {
-    isPermissionGranted,
-    requestPermission,
-    sendNotification,
-  } from "@tauri-apps/plugin-notification";
+  import { getDict, fmt } from "../lib/i18n.svelte";
   import ReviewTextarea from "../components/Timer/ReviewTextarea.svelte";
   import MottoCard from "../components/Timer/MottoCard.svelte";
   import TimerRightSidebar, {
@@ -61,7 +58,6 @@
   let projects = $state<Project[]>([]);
   let tags = $state<Tag[]>([]);
   let sidebarTasks = $state<TaskWithExtras[]>([]); // 右侧栏任务列表
-  let selectedTaskId = $state<string>("");
   let todayReview = $state<string | null>(null);
   let todayMinutes = $state<number>(0);
   let error = $state<string | null>(null);
@@ -74,24 +70,21 @@
     date: null,
   });
 
-  // === 完成弹窗 ===
-  let modalOpen = $state<boolean>(false);
-  let modalMessage = $state<string>("");
-
-  // === Timer state(订阅) ===
+  // === Timer state(订阅全局引擎) ===
   const timer = $derived(getTimerState());
 
   // === i18n 词典(响应式) ===
   const t = $derived(getDict());
 
   // === 派生 ===
+  // 有效专注时长:活动任务自带 → 否则全局(v1 effectiveFocusDuration)
   const totalSeconds = $derived.by(() => {
     const s = getSettings();
     return timer.mode === "focus"
-      ? s.focusMinutes * 60
+      ? (timer.activeTask?.pomodoro_duration ?? s.focusDuration) * 60
       : timer.mode === "short_break"
-      ? s.shortBreakMinutes * 60
-      : s.longBreakMinutes * 60;
+      ? s.shortBreakDuration * 60
+      : s.longBreakDuration * 60;
   });
 
   const progress = $derived(
@@ -104,16 +97,11 @@
     `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`,
   );
 
-  const selectedTask = $derived(
-    sidebarTasks.find((t) => t.id === selectedTaskId) ?? null,
-  );
+  const selectedTask = $derived(timer.activeTask);
 
+  // v1:开始按钮允许无任务专注(任务选择器有"无特定任务"选项)
   const canStart = $derived(
-    !timer.running &&
-      timer.sessionId === null &&
-      timer.mode === "focus" &&
-      selectedTaskId !== "" &&
-      !starting,
+    !timer.running && timer.sessionId === null && !starting,
   );
 
   const isFocus = $derived(timer.mode === "focus");
@@ -153,44 +141,14 @@
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   }
 
-  // === 副作用:监听 running 变化,完成时弹通知 + 模态 ===
-  let prevRunning = false;
+  // === 完成后刷新 ===
+  // 完成链(通知/弹窗/接续)在 lib/timer.svelte 引擎层处理(v1 AppContext 语义,
+  // 路由切换不丢);这里只监听 todayCount 变化刷新页面数据。
   $effect(() => {
-    if (prevRunning && !timer.running && timer.secondsLeft === 0) {
-      onPomodoroCompleted();
-    }
-    prevRunning = timer.running;
+    void timer.todayCount;
+    void refreshTodayMinutes();
+    void refreshSidebarTasks();
   });
-
-  function onPomodoroCompleted() {
-    // 通知/弹窗文案走 notificationStyles 预设(随界面语言切换)—— v1 resolveTemplate 机制
-    const resolved = resolveTemplate("default", getLang(), null);
-    if (selectedTask) {
-      modalMessage = `${resolved.focus_end_body} —— ${selectedTask.title}`;
-    } else {
-      modalMessage = resolved.focus_end_body;
-    }
-    modalOpen = true;
-    refreshTodayMinutes();
-
-    if (getSettings().desktopNotificationEnabled) {
-      sendNotificationCompat(resolved.focus_end_title, modalMessage);
-    }
-  }
-
-  async function sendNotificationCompat(title: string, body: string) {
-    try {
-      let granted = await isPermissionGranted();
-      if (!granted) {
-        const perm = await requestPermission();
-        granted = perm === "granted";
-      }
-      if (!granted) return;
-      sendNotification({ title, body });
-    } catch (e) {
-      console.warn("notification failed", e);
-    }
-  }
 
   // === 加载 ===
   async function refreshProjects() {
@@ -257,22 +215,45 @@
       refreshSidebarTasks(),
       refreshTodayReview(),
       refreshTodayMinutes(),
+      syncTodayStatsFromOverview(),
     ]);
   });
 
+  /// 启动时从后端总览同步今日统计(v1 refreshTodayStats;之后的即时累加在引擎本地)。
+  async function syncTodayStatsFromOverview() {
+    try {
+      const now = new Date();
+      const dow = now.getDay();
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - (dow === 0 ? 6 : dow - 1));
+      monday.setHours(0, 0, 0, 0);
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const iso = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const s = await api.statsOverview(
+        iso(now),
+        iso(monday),
+        iso(monthStart),
+        -now.getTimezoneOffset(),
+      );
+      resetTodayStats(s.today_sessions, s.today_minutes);
+    } catch (e) {
+      console.warn("sync today stats", e);
+    }
+  }
+
   // === 操作 ===
+  // 开始当前模式(专注可无任务;时长取任务自带或全局,v1 startTimer)
   async function onStart() {
     if (!canStart) return;
     starting = true;
     error = null;
     try {
-      const settings = getSettings();
-      const session = await api.startPomodoro(
-        selectedTaskId,
-        null,
-        settings.focusMinutes,
+      await engineStart(
+        selectedTask?.id ?? null,
+        selectedTask?.project_id ?? null,
+        selectedTask?.pomodoro_duration ?? undefined,
       );
-      timerStart(selectedTaskId, session.id);
     } catch (e) {
       error = String(e);
     } finally {
@@ -280,42 +261,33 @@
     }
   }
 
-  async function onStop(isCompleted: boolean) {
-    if (!timer.sessionId) return;
-    const sessionId = timer.sessionId;
-    timerStop(isCompleted); // UI 先清掉状态
+  // 放弃/跳过:按未完成收尾(自然完成由引擎 tick 处理,不经此入口)
+  async function onAbandon() {
     try {
-      await api.stopPomodoro(sessionId, isCompleted);
+      await engineStop(false);
     } catch (e) {
       error = String(e);
     }
   }
 
-  function onSwitchMode(mode: TimerMode) {
+  function onSwitchMode(mode: "focus" | "short_break" | "long_break") {
     if (timer.running) return;
     switchMode(mode);
   }
 
-  // 右侧栏:点击"开始"按钮 → 切换到 focus 模式 + 选中任务 + 启动
+  // 右侧栏:一键开始任务(引擎先停掉进行中会话再开新专注,v1 行为)
   async function handleStartTask(task: TaskWithExtras) {
-    // 如果当前在跑,先停掉
-    if (timer.running) {
-      await onStop(false);
-    }
-    selectedTaskId = task.id;
-    if (timer.mode !== "focus") {
-      switchMode("focus");
-    }
     try {
-      const session = await api.startPomodoro(
-        task.id,
-        task.project_id ?? null,
-        task.pomodoro_duration ?? getSettings().focusMinutes,
-      );
-      timerStart(task.id, session.id);
+      await startWithTask(task);
     } catch (e) {
       error = String(e);
     }
+  }
+
+  // 任务选择器变化 → 更新全局活动任务("" = 无特定任务)
+  function onPickTask(value: string) {
+    const task = value ? sidebarTasks.find((t) => t.id === value) ?? null : null;
+    setActiveTask(task);
   }
 
   // 右侧栏:勾选/取消子任务(只写库 + 刷新当前列表)
@@ -371,10 +343,6 @@
     } catch (e) {
       console.warn("delete review", e);
     }
-  }
-
-  function closeModal() {
-    modalOpen = false;
   }
 
   // === 圆环几何 ===
@@ -466,10 +434,12 @@
           <label for="task-select">{t.timer.focusOn}</label>
           <select
             id="task-select"
-            bind:value={selectedTaskId}
-            disabled={timer.running}
+            value={selectedTask?.id ?? ""}
+            disabled={timer.running || timer.sessionId !== null}
+            onchange={(e) => onPickTask((e.currentTarget as HTMLSelectElement).value)}
           >
-            <option value="">{t.timer.selectTaskPlaceholder}</option>
+            <!-- v1:显式"无特定任务"选项,允许无任务专注 -->
+            <option value="">{t.timer.noSpecificTask}</option>
             {#each sidebarTasks.filter((task) => task.status === "active") as task (task.id)}
               <option value={task.id}>{task.title}</option>
             {/each}
@@ -484,25 +454,25 @@
       <div class="controls">
         {#if timer.running}
           <button class="btn primary" onclick={timerPause}>{t.timer.pause}</button>
-          <button class="btn danger" onclick={() => onStop(false)}>{t.timer.stop}</button>
+          <button class="btn danger" onclick={onAbandon}>{t.timer.abandon}</button>
         {:else if timer.sessionId}
           <button class="btn primary" onclick={timerResume}>{t.timer.resume}</button>
-          <button class="btn danger" onclick={() => onStop(false)}>{t.timer.stop}</button>
+          <button class="btn danger" onclick={onAbandon}>{t.timer.abandon}</button>
         {:else}
           <button
             class="btn primary"
             onclick={onStart}
             disabled={!canStart}
           >
-            {starting ? t.timer.starting : t.timer.start}
+            {starting ? t.timer.starting : isFocus ? t.timer.start : t.timer.startBreak}
           </button>
         {/if}
       </div>
 
-      <!-- 今日统计 -->
+      <!-- 今日统计(v1:今日完成番茄数 + 长休间隔提示) -->
       <div class="today-stats">
         <span class="dot"></span>
-        {t.timer.todayDone} <b>{timer.focusCompletedInCycle}</b> {t.timer.pomodoroUnit}
+        {t.timer.todayDone} <b>{timer.todayCount}</b> {t.timer.pomodoroUnit}
         {#if isFocus}
           （{fmt(t.timer.longBreakHint, { n: getSettings().longBreakInterval })}）
         {/if}
@@ -537,11 +507,11 @@
     onToggleSubtask={handleToggleSubtask}
   />
 
-  <!-- 完成弹窗 -->
+  <!-- 完成弹窗(文案由引擎完成链产出,v1 handleTimerComplete) -->
   <CompletionModal
-    open={modalOpen}
-    message={modalMessage}
-    onClose={closeModal}
+    open={timer.pendingCompletionMessage !== null}
+    message={timer.pendingCompletionMessage ?? ""}
+    onClose={clearCompletionMessage}
   />
 </div>
 
