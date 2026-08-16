@@ -1212,6 +1212,35 @@ impl Store for SqliteStore {
         Ok(review)
     }
 
+    fn list_daily_reviews_between(
+        &self,
+        start_date: &str,
+        end_date: &str,
+    ) -> CoreResult<Vec<DailyReview>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT * FROM daily_reviews
+                 WHERE date >= ? AND date <= ? ORDER BY date ASC",
+            )
+            .map_err(|e| CoreError::storage(format!("prepare list_daily_reviews_between: {e}")))?;
+        let rows = stmt
+            .query_map(params![start_date, end_date], row_to_daily_review)
+            .map_err(|e| CoreError::storage(format!("query: {e}")))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| CoreError::storage(format!("row: {e}")))?);
+        }
+        Ok(out)
+    }
+
+    fn delete_daily_review(&self, date: &str) -> CoreResult<()> {
+        let conn = self.lock()?;
+        conn.execute("DELETE FROM daily_reviews WHERE date = ?", params![date])
+            .map_err(|e| CoreError::storage(format!("delete_daily_review: {e}")))?;
+        Ok(())
+    }
+
     fn get_weekly_review(&self, week_start: &str) -> CoreResult<Option<WeeklyReview>> {
         let conn = self.lock()?;
         conn.query_row(
@@ -1241,6 +1270,40 @@ impl Store for SqliteStore {
         Ok(review)
     }
 
+    fn list_weekly_reviews_between(
+        &self,
+        start_week: &str,
+        end_week: &str,
+    ) -> CoreResult<Vec<WeeklyReview>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT * FROM weekly_reviews
+                 WHERE week_start >= ? AND week_start <= ? ORDER BY week_start ASC",
+            )
+            .map_err(|e| {
+                CoreError::storage(format!("prepare list_weekly_reviews_between: {e}"))
+            })?;
+        let rows = stmt
+            .query_map(params![start_week, end_week], row_to_weekly_review)
+            .map_err(|e| CoreError::storage(format!("query: {e}")))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| CoreError::storage(format!("row: {e}")))?);
+        }
+        Ok(out)
+    }
+
+    fn delete_weekly_review(&self, week_start: &str) -> CoreResult<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM weekly_reviews WHERE week_start = ?",
+            params![week_start],
+        )
+        .map_err(|e| CoreError::storage(format!("delete_weekly_review: {e}")))?;
+        Ok(())
+    }
+
     fn get_monthly_review(&self, year_month: &str) -> CoreResult<Option<MonthlyReview>> {
         let conn = self.lock()?;
         conn.query_row(
@@ -1268,6 +1331,16 @@ impl Store for SqliteStore {
         )
         .map_err(|e| CoreError::storage(format!("upsert_monthly_review: {e}")))?;
         Ok(review)
+    }
+
+    fn delete_monthly_review(&self, year_month: &str) -> CoreResult<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM monthly_reviews WHERE year_month = ?",
+            params![year_month],
+        )
+        .map_err(|e| CoreError::storage(format!("delete_monthly_review: {e}")))?;
+        Ok(())
     }
 
     fn list_subtasks_for_task(&self, task_id: &Id) -> CoreResult<Vec<SubTask>> {

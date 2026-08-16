@@ -114,14 +114,31 @@ pub trait Store: std::fmt::Debug {
     fn delete_pomodoro(&self, id: &Id) -> CoreResult<()>;
 
     // --- Reviews ---
+    // 注:复盘族三表走**硬删除**(v1 DELETE 语义),与任务族的软删除不同 ——
+    // 复盘以日期为自然键,内容为空即"无复盘",没有同步去重的诉求。
     fn get_daily_review(&self, date: &str) -> CoreResult<Option<DailyReview>>;
     fn upsert_daily_review(&self, review: DailyReview) -> CoreResult<DailyReview>;
+    /// 日期区间查询(v1 GET /daily-reviews?start&end,双端包含 YYYY-MM-DD)。
+    fn list_daily_reviews_between(
+        &self,
+        start_date: &str,
+        end_date: &str,
+    ) -> CoreResult<Vec<DailyReview>>;
+    fn delete_daily_review(&self, date: &str) -> CoreResult<()>;
 
     fn get_weekly_review(&self, week_start: &str) -> CoreResult<Option<WeeklyReview>>;
     fn upsert_weekly_review(&self, review: WeeklyReview) -> CoreResult<WeeklyReview>;
+    /// 周一日期区间查询(v1 GET /weekly-reviews?year&month 展开,双端包含)。
+    fn list_weekly_reviews_between(
+        &self,
+        start_week: &str,
+        end_week: &str,
+    ) -> CoreResult<Vec<WeeklyReview>>;
+    fn delete_weekly_review(&self, week_start: &str) -> CoreResult<()>;
 
     fn get_monthly_review(&self, year_month: &str) -> CoreResult<Option<MonthlyReview>>;
     fn upsert_monthly_review(&self, review: MonthlyReview) -> CoreResult<MonthlyReview>;
+    fn delete_monthly_review(&self, year_month: &str) -> CoreResult<()>;
 
     // --- SubTasks ---
     /// 列出某 Task 下所有未软删的子任务,按 position 升序。
@@ -553,6 +570,34 @@ impl Store for InMemoryStore {
         Ok(stored)
     }
 
+    fn list_daily_reviews_between(
+        &self,
+        start_date: &str,
+        end_date: &str,
+    ) -> CoreResult<Vec<DailyReview>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<DailyReview> = g
+            .daily_reviews
+            .values()
+            .filter(|r| r.date.as_str() >= start_date && r.date.as_str() <= end_date)
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| a.date.cmp(&b.date));
+        Ok(out)
+    }
+
+    fn delete_daily_review(&self, date: &str) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        g.daily_reviews.remove(date);
+        Ok(())
+    }
+
     fn get_weekly_review(&self, week_start: &str) -> CoreResult<Option<WeeklyReview>> {
         let g = self
             .inner
@@ -571,6 +616,34 @@ impl Store for InMemoryStore {
         Ok(stored)
     }
 
+    fn list_weekly_reviews_between(
+        &self,
+        start_week: &str,
+        end_week: &str,
+    ) -> CoreResult<Vec<WeeklyReview>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<WeeklyReview> = g
+            .weekly_reviews
+            .values()
+            .filter(|r| r.week_start.as_str() >= start_week && r.week_start.as_str() <= end_week)
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| a.week_start.cmp(&b.week_start));
+        Ok(out)
+    }
+
+    fn delete_weekly_review(&self, week_start: &str) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        g.weekly_reviews.remove(week_start);
+        Ok(())
+    }
+
     fn get_monthly_review(&self, year_month: &str) -> CoreResult<Option<MonthlyReview>> {
         let g = self
             .inner
@@ -587,6 +660,15 @@ impl Store for InMemoryStore {
         let stored = review.clone();
         g.monthly_reviews.insert(review.year_month.clone(), review);
         Ok(stored)
+    }
+
+    fn delete_monthly_review(&self, year_month: &str) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        g.monthly_reviews.remove(year_month);
+        Ok(())
     }
 
     fn list_subtasks_for_task(&self, task_id: &Id) -> CoreResult<Vec<SubTask>> {
