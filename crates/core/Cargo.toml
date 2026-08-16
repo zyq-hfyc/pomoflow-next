@@ -25,3 +25,4 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+chrono = { workspace = true }
