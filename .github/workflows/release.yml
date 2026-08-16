@@ -83,6 +83,21 @@ jobs:
         working-directory: apps/desktop/ui
         run: npm ci
 
+      # Linux runner 自带镜像缺 webkit2gtk-4.1 / gtk-3 等系统库,
+      # Tauri 2 webview 链接时直接挂。macOS / Windows 不需要此步(自带 SDK / WiX)。
+      # 用 `if: matrix.os == 'ubuntu-latest'` 限定到 Linux 平台。
+      - name: Install Linux system deps(webkit2gtk-4.1 + gtk-3 + tray)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+
       - name: Install tauri-cli(只用于 icon 生成;build 那步 tauri-action 内部自带)
         run: cargo install tauri-cli --version "^2.0" --locked
 
@@ -94,6 +109,10 @@ jobs:
 
       - name: Build Tauri bundles + upload to GitHub Release
         uses: tauri-apps/tauri-action@v0
+        env:
+          # tauri-action 内部走 softprops/action-gh-release,需要显式 token
+          # 才能创建/上传 Release asset。默认 GITHUB_TOKEN 即够(perms 已 grant contents: write)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
