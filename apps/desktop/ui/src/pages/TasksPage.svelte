@@ -30,6 +30,7 @@
     Repeat,
   } from "../lib/api";
   import { currentRoute, navigate } from "../lib/router.svelte";
+  import { getDict, fmt } from "../lib/i18n.svelte";
   import { todayStr, tomorrowStr, datePart, hasTimePart } from "../lib/dueDate";
   import ProjectSidebar from "../components/Tasks/ProjectSidebar.svelte";
   import TaskItem from "../components/Tasks/TaskItem.svelte";
@@ -49,6 +50,9 @@
   let tags = $state<Tag[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
+
+  // === i18n 词典(响应式) ===
+  const t = $derived(getDict());
 
   let selectedProject = $state<string | null>(null);
   let filter = $state<FilterKey>("today");
@@ -240,22 +244,22 @@
   // === filter title ===
   const filterTitle = $derived.by(() => {
     if (searchQuery.trim()) {
-      return `搜索结果 (${filtered.length})`;
+      return `${t.task.searchResult} (${filtered.length})`;
     }
     if (selectedProject !== null) {
       const p = projects.find((pr) => pr.id === selectedProject);
-      return p?.name || "清单";
+      return p?.name || t.task.list;
     }
     const map: Record<FilterKey, string> = {
-      today: "今天",
-      tomorrow: "明天",
-      week: "本周",
-      planned: "已计划",
-      completed: "已完成",
-      journal: "手账",
-      "": "任务",
+      today: t.filter.today,
+      tomorrow: t.filter.tomorrow,
+      week: t.filter.week,
+      planned: t.sidebar.planned,
+      completed: t.sidebar.completed,
+      journal: t.sidebar.journal,
+      "": t.task.task,
     };
-    return map[filter] || "任务";
+    return map[filter] || t.task.task;
   });
 
   // === handlers ===
@@ -305,7 +309,7 @@
   }
 
   async function deleteTask(task: TaskWithTags) {
-    if (!confirm(`删除任务「${task.title}」?`)) return;
+    if (!confirm(fmt(t.task.deleteConfirm, { title: task.title }))) return;
     try {
       await api.deleteTask(task.id);
       if (selectedTask?.id === task.id) selectedTask = null;
@@ -347,7 +351,7 @@
   }
 
   async function deleteProject(id: string) {
-    if (!confirm("删除此清单？子清单会一并删除")) return;
+    if (!confirm(t.sidebar.deleteListConfirm)) return;
     try {
       await api.deleteProject(id);
       if (selectedProject === id) selectedProject = null;
@@ -430,7 +434,15 @@
     // 占位：v1 实际是 .xlsx（exportTasksToExcel）。
     // 这里只导 CSV 用 Blob 下载以满足"导出按钮可用"。
     const rows = filtered;
-    const header = ["标题", "项目", "优先级", "截止", "标签", "番茄数", "状态"];
+    const header = [
+      t.export.title,
+      t.export.project,
+      t.export.priority,
+      t.export.dueDate,
+      t.export.tags,
+      t.export.estimated,
+      t.export.status,
+    ];
     const csvRows = rows.map((t) => [
       t.title,
       projects.find((p) => p.id === t.project_id)?.name ?? "",
@@ -454,7 +466,7 @@
 </script>
 
 <svelte:head>
-  <title>任务 - PomoFlow</title>
+  <title>{t.page.tasks}</title>
 </svelte:head>
 
 <div class="page">
@@ -509,23 +521,23 @@
           <div class="stats-3">
             <StatCard
               icon={Clock as any}
-              label="已专注"
+              label={t.task.statFocused}
               value={stats.focusedMinutes}
-              unit="分钟"
+              unit={t.stats.unitMin}
               accent
             />
             <StatCard
               icon={Target as any}
-              label="已完成番茄"
+              label={t.task.statCompletedPomo}
               value={stats.completedPomodoros}
-              unit="个"
+              unit={t.stats.unitCount}
               accent
             />
             <StatCard
               icon={CircleCheck as any}
-              label="已完成任务"
+              label={t.task.statCompleted}
               value={stats.completedCount}
-              unit="个"
+              unit={t.stats.unitCount}
               accent
             />
           </div>
@@ -533,30 +545,30 @@
           <div class="stats-4">
             <StatCard
               icon={Clock as any}
-              label="预计专注"
+              label={t.task.statEstimated}
               value={stats.estimatedMinutes}
-              unit="分钟"
+              unit={t.stats.unitMin}
               accent
             />
             <StatCard
               icon={Target as any}
-              label="进行中"
+              label={t.task.statActive}
               value={stats.activeCount}
-              unit="个"
+              unit={t.stats.unitCount}
               accent
             />
             <StatCard
               icon={ChartColumn as any}
-              label="已专注"
+              label={t.task.statFocused}
               value={stats.focusedMinutes}
-              unit="分钟"
+              unit={t.stats.unitMin}
               accent
             />
             <StatCard
               icon={CircleCheck as any}
-              label="已完成"
+              label={t.task.statCompleted}
               value={stats.completedCount}
-              unit="个"
+              unit={t.stats.unitCount}
               accent
             />
           </div>
@@ -619,13 +631,13 @@
         {/if}
 
         {#if loading}
-          <p class="loading">加载中...</p>
+          <p class="loading">{t.common.loading}</p>
         {:else if filtered.length === 0}
           <p class="empty">
             {#if tasks.length === 0}
-              暂无任务，添加一个开始吧
+              {t.task.emptyAll}
             {:else}
-              此筛选下没有任务
+              {t.task.emptyFiltered}
             {/if}
           </p>
         {:else if filter === "week" || filter === "planned" || filter === "completed"}

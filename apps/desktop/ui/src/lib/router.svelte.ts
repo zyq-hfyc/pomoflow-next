@@ -49,11 +49,13 @@ export function navigate(path: string) {
 }
 
 /// 已注册路由表(供导航栏渲染与类型约束)。
+/// label 不存展示文案而存 i18n 键(模块级常量无法持有响应式词典),
+/// App.svelte 渲染时用 `t.nav[r.labelKey]` 查词典 —— 语言切换即自动更新。
 export const ROUTES = [
-  { path: "/timer", label: "番茄钟" },
-  { path: "/tasks", label: "任务" },
-  { path: "/stats", label: "统计" },
-  { path: "/settings", label: "设置" },
+  { path: "/timer", labelKey: "timer" },
+  { path: "/tasks", labelKey: "tasks" },
+  { path: "/stats", labelKey: "stats" },
+  { path: "/settings", labelKey: "settings" },
 ] as const;
 
 export type RoutePath = (typeof ROUTES)[number]["path"];

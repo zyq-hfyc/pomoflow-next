@@ -12,7 +12,10 @@
   import { Search, Sun, Sunrise, CalendarDays, CalendarCheck, CircleCheck, CalendarRange, Folder, ChevronDown, ChevronRight, Plus, MoreVertical, Pencil, Trash2 } from "lucide-svelte";
   import type { Component } from "svelte";
   import type { Project, Task } from "../../lib/api";
+  import { getDict } from "../../lib/i18n.svelte";
   import { datePart, todayStr, tomorrowStr } from "../../lib/dueDate";
+
+  const t = $derived(getDict());
 
   type FilterKey = "today" | "tomorrow" | "week" | "planned" | "completed" | "journal" | "";
 
@@ -149,17 +152,19 @@
   const tree = $derived(buildTree(projects));
   const flatTree = $derived(flattenTree(tree, expanded));
 
-  // 6 个时间筛选项
+  // 6 个时间筛选项(label 走词典 → $derived,语言切换即更新)
   // lucide-svelte 1.x 导出的是 Svelte 4 SvelteComponentTyped，与 Svelte 5 Component 类型不兼容。
   // 用 `as any` 在赋值处绕过 — 运行期正常。
-  const timeFilters: { key: FilterKey; icon: Component<any>; label: string }[] = [
-    { key: "today", icon: Sun as any, label: "今天" },
-    { key: "tomorrow", icon: Sunrise as any, label: "明天" },
-    { key: "week", icon: CalendarDays as any, label: "本周" },
-    { key: "planned", icon: CalendarCheck as any, label: "已计划" },
-    { key: "completed", icon: CircleCheck as any, label: "已完成" },
-    { key: "journal", icon: CalendarRange as any, label: "手账" },
-  ];
+  const timeFilters = $derived<
+    { key: FilterKey; icon: Component<any>; label: string }[]
+  >([
+    { key: "today", icon: Sun as any, label: t.filter.today },
+    { key: "tomorrow", icon: Sunrise as any, label: t.filter.tomorrow },
+    { key: "week", icon: CalendarDays as any, label: t.filter.week },
+    { key: "planned", icon: CalendarCheck as any, label: t.sidebar.planned },
+    { key: "completed", icon: CircleCheck as any, label: t.sidebar.completed },
+    { key: "journal", icon: CalendarRange as any, label: t.sidebar.journal },
+  ]);
 
   const activeFilter = $derived(selectedProject === null ? filter : "");
 
@@ -184,7 +189,7 @@
       type="text"
       value={search}
       oninput={(e) => onSearchChange?.((e.currentTarget as HTMLInputElement).value)}
-      placeholder="搜索任务标题..."
+      placeholder={t.sidebar.searchTasksPlaceholder}
       class="search-input"
     />
   </div>
@@ -222,7 +227,7 @@
         onclick={() => (projectOpen = !projectOpen)}
       >
         {#if projectOpen}<ChevronDown size={14} />{:else}<ChevronRight size={14} />{/if}
-        清单
+        {t.task.list}
       </button>
       {#if onCreateProject}
         <button
@@ -232,8 +237,8 @@
             addingParentId = "root";
             newName = "";
           }}
-          aria-label="新增根清单"
-          title="新增清单"
+          aria-label={t.sidebar.addRootAria}
+          title={t.sidebar.addListTitle}
         >
           <Plus size={14} />
         </button>
@@ -268,7 +273,7 @@
                 addingParentId = null;
                 newName = "";
               }}
-              placeholder="清单名称..."
+              placeholder={t.sidebar.listNamePlaceholder}
               class="add-input"
             />
           </div>
@@ -335,7 +340,7 @@
                         e.stopPropagation();
                         toggleExpand(node.id);
                       }}
-                      aria-label={isExpanded ? "收起" : "展开"}
+                      aria-label={isExpanded ? t.form.collapse : t.common.expand}
                     >
                       {#if isExpanded}<ChevronDown size={12} />{:else}<ChevronRight size={12} />{/if}
                     </button>
@@ -353,7 +358,7 @@
                       e.stopPropagation();
                       menuProjectId = isMenuOpen ? null : node.id;
                     }}
-                    aria-label="更多操作"
+                    aria-label={t.sidebar.moreActions}
                   >
                     <MoreVertical size={14} />
                   </button>
@@ -393,7 +398,7 @@
                     next.add(node.id);
                     expanded = next;
                   }}
-                  placeholder={node.depth === 0 ? "子清单名称..." : "孙清单名称..."}
+                  placeholder={node.depth === 0 ? t.settings.list.level2Placeholder : t.settings.list.level3Placeholder}
                   class="add-input"
                 />
               </div>
@@ -413,7 +418,7 @@
                     }}
                   >
                     <Plus size={12} />
-                    新增子清单
+                    {t.settings.list.addChild}
                   </button>
                 {/if}
                 {#if onUpdateProject}
@@ -427,7 +432,7 @@
                     }}
                   >
                     <Pencil size={12} />
-                    重命名
+                    {t.settings.list.edit}
                   </button>
                 {/if}
                 {#if onDeleteProject}
@@ -440,7 +445,7 @@
                     }}
                   >
                     <Trash2 size={12} />
-                    删除
+                    {t.settings.list.del}
                   </button>
                 {/if}
               </div>
@@ -449,7 +454,7 @@
         {/each}
 
         {#if projects.length === 0 && addingParentId !== "root"}
-          <div class="empty-hint">还没有清单,点 + 新建</div>
+          <div class="empty-hint">{t.sidebar.emptyHint}</div>
         {/if}
       </div>
     {/if}

@@ -14,13 +14,16 @@
   // - 总 0 分钟 / 无项目 → 空态文案
 
   import type { ProjectStat } from "../../lib/api";
+  import { getDict } from "../../lib/i18n.svelte";
+
+  const t = $derived(getDict());
 
   interface Props {
     projects: ProjectStat[];
     emptyText?: string;
   }
 
-  let { projects, emptyText = "暂无项目数据" }: Props = $props();
+  let { projects, emptyText }: Props = $props();
 
   const VB = 220;
   const C = 110; // 圆心
@@ -90,11 +93,11 @@
 </script>
 
 {#if segments.length === 0}
-  <div class="empty">{emptyText}</div>
+  <div class="empty">{emptyText ?? t.stats.noProject}</div>
 {:else}
   <div class="donut">
     <div class="chart">
-      <svg viewBox="0 0 {VB} {VB}" role="img" aria-label="项目时间分布环形图">
+      <svg viewBox="0 0 {VB} {VB}" role="img" aria-label={t.stats.donutChartAria}>
         <g transform="rotate(-90 {C} {C})">
           {#each segments as s (s.p.project_id)}
             <circle
@@ -118,7 +121,7 @@
 
       {#if tip}
         <div class="tooltip" style:left={(tip.tipX / VB) * 100 + "%"} style:top={(tip.tipY / VB) * 100 + "%"}>
-          {tip.p.project_name} · {tip.p.total_minutes} 分钟
+          {tip.p.project_name} · {tip.p.total_minutes} {t.stats.unitMin}
         </div>
       {/if}
     </div>
@@ -128,7 +131,7 @@
         <span class="legend-item" class:hovered={hovered === s.i}>
           <i class="dot" style:background={s.color} style:opacity={s.opacity ?? 1}></i>
           <span class="name">{s.p.project_name}</span>
-          <span class="minutes">{s.p.total_minutes} 分钟</span>
+          <span class="minutes">{s.p.total_minutes} {t.stats.unitMin}</span>
         </span>
       {/each}
     </div>

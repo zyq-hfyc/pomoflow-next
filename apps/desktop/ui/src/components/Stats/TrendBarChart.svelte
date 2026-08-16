@@ -13,6 +13,9 @@
 
   import type { RangeTrendPoint, StatsGroup } from "../../lib/api";
   import { currentBucketKey, keyLabel } from "../../lib/statsRanges";
+  import { getDict } from "../../lib/i18n.svelte";
+
+  const t = $derived(getDict());
 
   interface Props {
     data: RangeTrendPoint[];
@@ -20,7 +23,7 @@
     emptyText?: string;
   }
 
-  let { data, group, emptyText = "该维度暂无专注数据" }: Props = $props();
+  let { data, group, emptyText }: Props = $props();
 
   const VB_W = 600;
   const VB_H = 240;
@@ -111,13 +114,13 @@
 </script>
 
 {#if data.length === 0}
-  <div class="empty">{emptyText}</div>
+  <div class="empty">{emptyText ?? t.stats.noData}</div>
 {:else}
   <div class="chart-wrap">
     <svg
       viewBox="0 0 {VB_W} {VB_H}"
       role="img"
-      aria-label="专注趋势柱状图"
+      aria-label={t.stats.trendChartAria}
       onpointerleave={() => (hovered = null)}
     >
       {#each model.gridlines as g}
@@ -163,7 +166,7 @@
         style:left={Math.min(88, Math.max(12, ((hoveredBar.x + hoveredBar.w / 2) / VB_W) * 100)) + "%"}
         style:top={(hoveredBar.y / VB_H) * 100 + "%"}
       >
-        {hoveredBar.label} · {hoveredBar.minutes} 分钟
+        {hoveredBar.label} · {hoveredBar.minutes} {t.stats.unitMin}
       </div>
     {/if}
   </div>

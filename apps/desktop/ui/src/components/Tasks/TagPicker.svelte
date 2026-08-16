@@ -15,6 +15,9 @@
   //   - 无 tags 时显示提示语,不报错。
 
   import type { Tag } from "../../lib/api";
+  import { getDict } from "../../lib/i18n.svelte";
+
+  const t = $derived(getDict());
 
   interface Props {
     tags: Tag[];
@@ -40,21 +43,21 @@
 </script>
 
 {#if tags.length === 0}
-  <div class="empty">还没有标签,在「设置 → 标签」里创建</div>
+  <div class="empty">{t.task.detailNoTagsAvailable}</div>
 {:else}
-  <div class="chips" role="group" aria-label="标签多选">
-    {#each tags as t (t.id)}
-      {@const isOn = selectedSet.has(t.id)}
+  <div class="chips" role="group" aria-label={t.task.tagPickerAria}>
+    {#each tags as tag (tag.id)}
+      {@const isOn = selectedSet.has(tag.id)}
       <button
         type="button"
         class="chip"
         class:on={isOn}
-        style={chipStyle(t.color)}
-        onclick={() => toggle(t.id)}
+        style={chipStyle(tag.color)}
+        onclick={() => toggle(tag.id)}
         aria-pressed={isOn}
       >
         {#if isOn}<span class="check">✓</span>{/if}
-        <span class="name">{t.name}</span>
+        <span class="name">{tag.name}</span>
       </button>
     {/each}
   </div>

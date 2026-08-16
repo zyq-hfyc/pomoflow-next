@@ -2,7 +2,11 @@
   // 完成提示弹窗 —— 番茄钟到点 / 用户主动完成后,弹出居中模态。
   //
   // 与 v1 TimerPage.tsx 末尾的 `pendingCompletionMessage` 模态对齐。
-  // 这里只是 UI 壳子,文案由父组件提供(open + message + onClose)。
+  // 这里只是 UI 壳子,正文由父组件提供(open + message + onClose)。
+
+  import { getDict } from "../../lib/i18n.svelte";
+
+  const t = $derived(getDict());
 
   interface Props {
     open: boolean;
@@ -31,9 +35,9 @@
   >
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div class="icon-wrap">⏰</div>
-      <h3 id="modal-title" class="title">专注完成</h3>
+      <h3 id="modal-title" class="title">{t.timer.focusCompleteTitle}</h3>
       <p class="msg">{message}</p>
-      <button class="btn" onclick={onClose} type="button">确定</button>
+      <button class="btn" onclick={onClose} type="button">{t.common.confirm}</button>
     </div>
   </div>
 {/if}

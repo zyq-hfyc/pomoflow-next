@@ -11,7 +11,10 @@
 
   import * as api from "../../lib/api";
   import type { MonthlyReview, WeeklyReview } from "../../lib/api";
+  import { getDict, fmt } from "../../lib/i18n.svelte";
   import ReviewTextarea from "../Timer/ReviewTextarea.svelte";
+
+  const t = $derived(getDict());
 
   interface Props {
     year: number;
@@ -81,21 +84,21 @@
   }
 </script>
 
-<aside class="panel" aria-label="{year}年{month}月复盘">
-  <h2 class="title">{year}年{month}月 · 复盘</h2>
+<aside class="panel" aria-label={fmt(t.monthPanel.title, { year, month })}>
+  <h2 class="title">{fmt(t.monthPanel.title, { year, month })}</h2>
 
   <!-- 各周周复盘(只读) -->
   <div class="weekly-block">
-    <div class="label">周复盘（只读 · 在手账模式每周区块内编辑）</div>
+    <div class="label">{t.monthPanel.weeklyReadonly}</div>
     {#if sorted.length === 0}
-      <div class="empty">本月暂无周复盘</div>
+      <div class="empty">{t.monthPanel.noWeekly}</div>
     {:else}
       <div class="week-list">
         {#each sorted as w, i (w.week_start)}
           <div class="week-card">
-            <div class="week-head">第 {i + 1} 周（周一起 {w.week_start}）</div>
+            <div class="week-head">{fmt(t.monthPanel.weekRange, { n: i + 1, date: w.week_start })}</div>
             <div class="week-content">
-              {w.content?.trim() ? w.content : "（空）"}
+              {w.content?.trim() ? w.content : t.monthPanel.empty}
             </div>
           </div>
         {/each}
@@ -105,10 +108,10 @@
 
   <!-- 月度复盘(可编辑) -->
   <div class="monthly-block">
-    <div class="label">📋 月度复盘</div>
+    <div class="label">{t.monthPanel.monthlyReview}</div>
     <ReviewTextarea
       value={monthly?.content ?? null}
-      placeholder="本月总结…"
+      placeholder={t.monthPanel.monthlyPlaceholder}
       rows={6}
       onSave={saveMonthly}
       onDelete={removeMonthly}

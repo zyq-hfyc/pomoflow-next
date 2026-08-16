@@ -14,6 +14,7 @@
     resetSettings,
   } from "../lib/settings.svelte";
   import { applySettingsChange } from "../lib/timer.svelte";
+  import { getDict, fmt } from "../lib/i18n.svelte";
   import {
     isPermissionGranted,
     requestPermission,
@@ -22,6 +23,7 @@
   import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
   import { listTasks } from "../lib/api";
 
+  const t = $derived(getDict());
   const settings = $derived(getSettings());
 
   let autostartOn = $state(false);
@@ -89,7 +91,7 @@
         autostartOn = true;
       }
     } catch (e) {
-      error = `自启动切换失败: ${e}`;
+      error = fmt(t.settings.autostartFail, { err: String(e) });
     } finally {
       autostartLoading = false;
     }
@@ -107,26 +109,30 @@
         notificationPermission = "granted";
       }
       if (!granted) {
-        error = "通知权限未授予,无法发送";
+        error = t.settings.notifPermDenied;
         return;
       }
       sendNotification({
-        title: "PomoFlow 测试通知",
-        body: `当前 active 任务数:${activeTaskCount}`,
+        title: t.settings.testNotifTitle,
+        body: fmt(t.settings.testNotifBody, { n: activeTaskCount }),
       });
     } catch (e) {
-      error = `通知失败: ${e}`;
+      error = fmt(t.settings.notifSendFail, { err: String(e) });
     }
   }
 </script>
 
+<svelte:head>
+  <title>{t.page.settings}</title>
+</svelte:head>
+
 <div class="page">
-  <h2>设置</h2>
+  <h2>{t.nav.settings}</h2>
 
   <section class="block">
-    <h3>番茄钟参数</h3>
+    <h3>{t.settings.timerParams}</h3>
     <div class="row">
-      <label for="focus-min">专注时长(分钟)</label>
+      <label for="focus-min">{t.settings.focusDuration}({t.settings.minute})</label>
       <input
         id="focus-min"
         type="number"
@@ -141,7 +147,7 @@
       />
     </div>
     <div class="row">
-      <label for="sb-min">短休息时长(分钟)</label>
+      <label for="sb-min">{t.settings.shortBreakDuration}({t.settings.minute})</label>
       <input
         id="sb-min"
         type="number"
@@ -156,7 +162,7 @@
       />
     </div>
     <div class="row">
-      <label for="lb-min">长休息时长(分钟)</label>
+      <label for="lb-min">{t.settings.longBreakDuration}({t.settings.minute})</label>
       <input
         id="lb-min"
         type="number"
@@ -171,7 +177,7 @@
       />
     </div>
     <div class="row">
-      <label for="lb-int">长休息间隔(每 N 个专注)</label>
+      <label for="lb-int">{t.settings.longBreakIntervalEvery}</label>
       <input
         id="lb-int"
         type="number"
@@ -186,7 +192,7 @@
       />
     </div>
     <div class="row">
-      <label for="auto-chain">专注完成后自动进入休息</label>
+      <label for="auto-chain">{t.settings.autoEnterBreak}</label>
       <input
         id="auto-chain"
         type="checkbox"
@@ -195,7 +201,7 @@
       />
     </div>
     <div class="row">
-      <label for="snd">完成提示音</label>
+      <label for="snd">{t.settings.soundEnabled}</label>
       <input
         id="snd"
         type="checkbox"
@@ -204,7 +210,7 @@
       />
     </div>
     <div class="row">
-      <label for="ntf">系统通知</label>
+      <label for="ntf">{t.settings.systemNotification}</label>
       <input
         id="ntf"
         type="checkbox"
@@ -216,15 +222,15 @@
           )}
       />
     </div>
-    <button class="reset-btn" onclick={() => resetSettings()}>恢复默认</button>
+    <button class="reset-btn" onclick={() => resetSettings()}>{t.settings.reset}</button>
   </section>
 
   <section class="block">
-    <h3>系统能力</h3>
+    <h3>{t.settings.systemSection}</h3>
     <div class="row">
       <div class="row-label">
-        <span class="name">开机自启动</span>
-        <span class="hint">OS 启动时自动运行 PomoFlow(静默启动,常驻托盘)</span>
+        <span class="name">{t.settings.autostart}</span>
+        <span class="hint">{t.settings.autostartHint}</span>
       </div>
       <button
         class="toggle"
@@ -233,18 +239,18 @@
         onclick={toggleAutostart}
         aria-pressed={autostartOn}
       >
-        {autostartLoading ? "..." : autostartOn ? "已开启" : "已关闭"}
+        {autostartLoading ? "..." : autostartOn ? t.settings.on : t.settings.off}
       </button>
     </div>
     <div class="row">
       <div class="row-label">
-        <span class="name">系统通知测试</span>
-        <span class="hint">发送一条测试通知,验证系统通知链路是否通</span>
+        <span class="name">{t.settings.notifTest}</span>
+        <span class="hint">{t.settings.notifTestHint}</span>
       </div>
-      <button class="action" onclick={testNotification}>发送测试</button>
+      <button class="action" onclick={testNotification}>{t.settings.sendTest}</button>
     </div>
     <p class="tray-hint">
-      💡 关闭主窗口时 PomoFlow 会驻留在系统托盘,右键托盘图标可『显示窗口 / 退出』。
+      {t.settings.trayHint}
     </p>
   </section>
 

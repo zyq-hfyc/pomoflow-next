@@ -7,6 +7,9 @@
   //   - 点击 onToggle 切换完成;stopPropagation 避免触发外层选中
 
   import { Check } from "lucide-svelte";
+  import { getDict } from "../../lib/i18n.svelte";
+
+  const t = $derived(getDict());
 
   interface Props {
     completed: boolean;
@@ -24,7 +27,7 @@
     e.stopPropagation();
     onToggle();
   }}
-  aria-label={completed ? "已完成" : "标记完成"}
+  aria-label={completed ? t.common.ariaCompleted : t.common.ariaMarkDone}
 >
   {#if completed}
     <Check size={10} strokeWidth={3} color="#fff" />

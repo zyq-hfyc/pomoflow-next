@@ -11,6 +11,9 @@
   // onConfirm 返回 JSON 字符串,与后端 `Task.repeat_config` 直接对应。
 
   import { X } from "lucide-svelte";
+  import { getDict } from "../../lib/i18n.svelte";
+
+  const t = $derived(getDict());
 
   type RType = "day" | "week" | "month" | "year";
 
@@ -33,8 +36,6 @@
     const d = new Date();
     return `${d.getFullYear()}-12-31T23:59`;
   }
-
-  const WEEK_SHORT = ["一", "二", "三", "四", "五", "六", "日"];
 
   let startDate = $state(nowLocalInput());
   let endDate = $state(endOfYearInput());
@@ -95,8 +96,8 @@
   >
     <div class="dialog">
       <div class="header">
-        <h3>自定义重复</h3>
-        <button type="button" class="close-btn" onclick={onClose} aria-label="关闭">
+        <h3>{t.settings.repeatCustom.title}</h3>
+        <button type="button" class="close-btn" onclick={onClose} aria-label={t.common.close}>
           <X size={18} />
         </button>
       </div>
@@ -104,7 +105,7 @@
       <div class="body">
         <div class="row">
           <div class="field">
-            <label for="rc-start">开始日期</label>
+            <label for="rc-start">{t.settings.repeatCustom.startDate}</label>
             <input
               id="rc-start"
               type="datetime-local"
@@ -113,7 +114,7 @@
             />
           </div>
           <div class="field">
-            <label for="rc-end">结束日期</label>
+            <label for="rc-end">{t.settings.repeatCustom.endDate}</label>
             <input
               id="rc-end"
               type="datetime-local"
@@ -125,7 +126,7 @@
 
         <div class="row">
           <div class="field">
-            <label for="rc-interval">间隔</label>
+            <label for="rc-interval">{t.settings.repeatCustom.interval}</label>
             <input
               id="rc-interval"
               type="number"
@@ -136,21 +137,21 @@
             />
           </div>
           <div class="field">
-            <label for="rc-type">类型</label>
+            <label for="rc-type">{t.settings.repeatCustom.type}</label>
             <select id="rc-type" bind:value={type} class="input">
-              <option value="day">按日</option>
-              <option value="week">按周</option>
-              <option value="month">按月</option>
-              <option value="year">按年</option>
+              <option value="day">{t.settings.repeatCustom.typeDay}</option>
+              <option value="week">{t.settings.repeatCustom.typeWeek}</option>
+              <option value="month">{t.settings.repeatCustom.typeMonth}</option>
+              <option value="year">{t.settings.repeatCustom.typeYear}</option>
             </select>
           </div>
         </div>
 
         {#if type === "week"}
           <div class="field">
-            <span class="lbl-blk">星期</span>
+            <span class="lbl-blk">{t.settings.repeatCustom.weekdays}</span>
             <div class="weekdays">
-              {#each WEEK_SHORT as label, i}
+              {#each t.settings.repeatCustom.weekShort as label, i}
                 {@const v = i + 1}
                 {@const active = weekdays.includes(v)}
                 <button
@@ -168,7 +169,7 @@
 
         {#if type === "month"}
           <div class="field">
-            <span class="lbl-blk">日期</span>
+            <span class="lbl-blk">{t.settings.repeatCustom.monthDays}</span>
             <div class="month-grid">
               {#each Array.from({ length: 31 }, (_, i) => i + 1) as v}
                 {@const active = monthDays.includes(v)}
@@ -187,20 +188,20 @@
 
         {#if needPick}
           <div class="warn">
-            {type === "week" ? "请选择至少一个星期" : "请选择至少一个日期"}
+            {type === "week" ? t.settings.repeatCustom.needPickWeek : t.settings.repeatCustom.needPickDay}
           </div>
         {/if}
       </div>
 
       <div class="footer">
-        <button type="button" class="btn-cancel" onclick={onClose}>取消</button>
+        <button type="button" class="btn-cancel" onclick={onClose}>{t.settings.repeatCustom.cancel}</button>
         <button
           type="button"
           class="btn-confirm"
           disabled={needPick}
           onclick={handleConfirm}
         >
-          确定
+          {t.settings.repeatCustom.confirm}
         </button>
       </div>
     </div>

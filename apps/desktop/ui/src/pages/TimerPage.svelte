@@ -37,6 +37,8 @@
     Tag,
     Task,
   } from "../lib/api";
+  import { getDict, getLang, fmt } from "../lib/i18n.svelte";
+  import { resolveTemplate } from "../lib/notificationStyles";
   import {
     isPermissionGranted,
     requestPermission,
@@ -79,6 +81,9 @@
   // === Timer state(订阅) ===
   const timer = $derived(getTimerState());
 
+  // === i18n 词典(响应式) ===
+  const t = $derived(getDict());
+
   // === 派生 ===
   const totalSeconds = $derived.by(() => {
     const s = getSettings();
@@ -115,10 +120,10 @@
 
   const modeLabel = $derived(
     timer.mode === "focus"
-      ? "专注"
+      ? t.mode.focus
       : timer.mode === "short_break"
-      ? "短休息"
-      : "长休息",
+      ? t.mode.shortBreak
+      : t.mode.longBreak,
   );
 
   // === 今日(本地时区)0 点 / 24 点的 ms ===
@@ -158,16 +163,18 @@
   });
 
   function onPomodoroCompleted() {
+    // 通知/弹窗文案走 notificationStyles 预设(随界面语言切换)—— v1 resolveTemplate 机制
+    const resolved = resolveTemplate("default", getLang(), null);
     if (selectedTask) {
-      modalMessage = `太棒了!休息一下吧 —— ${selectedTask.title}`;
+      modalMessage = `${resolved.focus_end_body} —— ${selectedTask.title}`;
     } else {
-      modalMessage = "太棒了!休息一下吧";
+      modalMessage = resolved.focus_end_body;
     }
     modalOpen = true;
     refreshTodayMinutes();
 
     if (getSettings().desktopNotificationEnabled) {
-      sendNotificationCompat("专注完成", modalMessage);
+      sendNotificationCompat(resolved.focus_end_title, modalMessage);
     }
   }
 
@@ -378,12 +385,16 @@
   const offset = $derived(CIRCUMFERENCE * (1 - progress));
 </script>
 
+<svelte:head>
+  <title>{t.page.timer}</title>
+</svelte:head>
+
 <div class="layout">
   <!-- 左列:计时器主体 -->
   <div class="main">
     <div class="main-inner">
       <!-- 模式切换 -->
-      <div class="mode-tabs" role="tablist" aria-label="计时器模式">
+      <div class="mode-tabs" role="tablist" aria-label={t.timer.modeTabsAria}>
         <button
           class="mode-tab"
           class:active={timer.mode === "focus"}
@@ -391,7 +402,7 @@
           disabled={timer.running}
           role="tab"
           aria-selected={timer.mode === "focus"}
-        >专注</button>
+        >{t.mode.focus}</button>
         <button
           class="mode-tab"
           class:active={timer.mode === "short_break"}
@@ -399,7 +410,7 @@
           disabled={timer.running}
           role="tab"
           aria-selected={timer.mode === "short_break"}
-        >短休息</button>
+        >{t.mode.shortBreak}</button>
         <button
           class="mode-tab"
           class:active={timer.mode === "long_break"}
@@ -407,7 +418,7 @@
           disabled={timer.running}
           role="tab"
           aria-selected={timer.mode === "long_break"}
-        >长休息</button>
+        >{t.mode.longBreak}</button>
       </div>
 
       <!-- 圆环 -->
@@ -452,15 +463,15 @@
 
       {#if isFocus}
         <div class="task-picker">
-          <label for="task-select">本次专注:</label>
+          <label for="task-select">{t.timer.focusOn}</label>
           <select
             id="task-select"
             bind:value={selectedTaskId}
             disabled={timer.running}
           >
-            <option value="">-- 选择任务 --</option>
-            {#each sidebarTasks.filter((t) => t.status === "active") as t (t.id)}
-              <option value={t.id}>{t.title}</option>
+            <option value="">{t.timer.selectTaskPlaceholder}</option>
+            {#each sidebarTasks.filter((task) => task.status === "active") as task (task.id)}
+              <option value={task.id}>{task.title}</option>
             {/each}
           </select>
         </div>
@@ -472,18 +483,18 @@
 
       <div class="controls">
         {#if timer.running}
-          <button class="btn primary" onclick={timerPause}>暂停</button>
-          <button class="btn danger" onclick={() => onStop(false)}>停止</button>
+          <button class="btn primary" onclick={timerPause}>{t.timer.pause}</button>
+          <button class="btn danger" onclick={() => onStop(false)}>{t.timer.stop}</button>
         {:else if timer.sessionId}
-          <button class="btn primary" onclick={timerResume}>继续</button>
-          <button class="btn danger" onclick={() => onStop(false)}>停止</button>
+          <button class="btn primary" onclick={timerResume}>{t.timer.resume}</button>
+          <button class="btn danger" onclick={() => onStop(false)}>{t.timer.stop}</button>
         {:else}
           <button
             class="btn primary"
             onclick={onStart}
             disabled={!canStart}
           >
-            {starting ? "启动中..." : "开始"}
+            {starting ? t.timer.starting : t.timer.start}
           </button>
         {/if}
       </div>
@@ -491,18 +502,18 @@
       <!-- 今日统计 -->
       <div class="today-stats">
         <span class="dot"></span>
-        今日已完成 <b>{timer.focusCompletedInCycle}</b> 个番茄
+        {t.timer.todayDone} <b>{timer.focusCompletedInCycle}</b> {t.timer.pomodoroUnit}
         {#if isFocus}
-          (每 {getSettings().longBreakInterval} 个 → 长休息)
+          （{fmt(t.timer.longBreakHint, { n: getSettings().longBreakInterval })}）
         {/if}
       </div>
 
       <!-- 今日日复盘(与手账模式当天日复盘同步) -->
       <div class="review-card">
-        <div class="review-title">今日日复盘</div>
+        <div class="review-title">{t.timer.reviewTitle}</div>
         <ReviewTextarea
           value={todayReview}
-          placeholder="写下今天的复盘..."
+          placeholder={t.timer.reviewPlaceholder}
           rows={2}
           onSave={handleSaveReview}
           onDelete={handleDeleteReview}
@@ -612,10 +623,10 @@
     height: 280px;
   }
   .ring-track {
-    stroke: var(--color-border, #e5e2dd);
+    stroke: var(--timer-ring-track, var(--color-accent-100, #faebe2));
   }
   .ring-progress {
-    stroke: var(--color-accent, #e74c3c);
+    stroke: var(--timer-ring-progress, var(--color-accent-400, #e29676));
     transition: stroke-dashoffset 1s linear;
   }
   .ring-center {

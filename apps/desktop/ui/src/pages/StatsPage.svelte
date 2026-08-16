@@ -27,6 +27,7 @@
   } from "lucide-svelte";
   import { statsRange } from "../lib/api";
   import type { RangeStats } from "../lib/api";
+  import { getDict, fmt } from "../lib/i18n.svelte";
   import {
     DIMENSIONS,
     getRange,
@@ -38,10 +39,13 @@
   import TrendBarChart from "../components/Stats/TrendBarChart.svelte";
   import DonutChart from "../components/Stats/DonutChart.svelte";
 
+  const t = $derived(getDict());
+
   let dim = $state<StatsDimension>("week");
   let data = $state<RangeStats | null>(null);
   let prevTotal = $state(0);
   let loading = $state(true);
+  /** 原始错误串(渲染时经 t.stats.loadError 包装,避免语言切换重拉数据) */
   let error = $state<string | null>(null);
   /** 请求序号:快速切维度时丢弃过期响应 */
   let loadSeq = 0;
@@ -49,8 +53,18 @@
   const range = $derived(getRange(dim));
   const group = $derived(range.group);
   const groupLabel = $derived(
-    group === "day" ? "按日" : group === "week" ? "按周" : "按月",
+    group === "day" ? t.stats.byDay : group === "week" ? t.stats.byWeek : t.stats.byMonth,
   );
+
+  // 维度 pill 文案(v1 dimLabel 同款映射)
+  const dimLabel = $derived<Record<StatsDimension, string>>({
+    today: t.stats.dimToday,
+    week: t.stats.dimWeek,
+    month: t.stats.dimMonth,
+    quarter: t.stats.dimQuarter,
+    halfyear: t.stats.dimHalf,
+    year: t.stats.dimYear,
+  });
 
   const totalMinutes = $derived(data?.summary.total_minutes ?? 0);
   const sessions = $derived(data?.summary.total_sessions ?? 0);
@@ -125,7 +139,7 @@
       })
       .catch((e: unknown) => {
         if (seq !== loadSeq) return;
-        error = `统计加载失败:${String(e)}`;
+        error = String(e);
         loading = false;
       });
 
@@ -140,11 +154,11 @@
 </script>
 
 <svelte:head>
-  <title>统计 - PomoFlow</title>
+  <title>{t.page.stats}</title>
 </svelte:head>
 
 <div class="page">
-  <h2>统计</h2>
+  <h2>{t.nav.stats}</h2>
 
   <!-- 维度 pill -->
   <div class="dims">
@@ -155,24 +169,24 @@
         aria-pressed={dim === d.key}
         onclick={() => (dim = d.key)}
       >
-        {d.label}
+        {dimLabel[d.key]}
       </button>
     {/each}
   </div>
 
   {#if error}
-    <div class="error" role="alert">⚠ {error}</div>
+    <div class="error" role="alert">⚠ {fmt(t.stats.loadError, { err: error })}</div>
   {/if}
 
   {#if loading}
-    <p class="loading">统计加载中...</p>
+    <p class="loading">{t.stats.loading}</p>
   {:else if data}
     <!-- 通用卡片 -->
     <div class="stats-4">
-      <StatCard icon={Clock as any} label="专注时长" value={totalMinutes} unit="分钟" accent />
-      <StatCard icon={ChartColumn as any} label="番茄数" value={sessions} unit="个" accent />
-      <StatCard icon={Target as any} label="完成任务" value={completed} unit="个" accent />
-      <StatCard icon={TrendingUp as any} label="日均专注" value={avgMinutes} unit="分钟" accent />
+      <StatCard icon={Clock as any} label={t.stats.focusDuration} value={totalMinutes} unit={t.stats.unitMin} accent />
+      <StatCard icon={ChartColumn as any} label={t.stats.sessions} value={sessions} unit={t.stats.unitCount} accent />
+      <StatCard icon={Target as any} label={t.stats.completed} value={completed} unit={t.stats.unitCount} accent />
+      <StatCard icon={TrendingUp as any} label={t.stats.avg} value={avgMinutes} unit={t.stats.unitMin} accent />
     </div>
 
     <!-- 亮点卡片:按维度逐级出现(语义/取数对齐 v1) -->
@@ -180,59 +194,59 @@
       <div class="stats-4">
         <StatCard
           icon={CalendarDays as any}
-          label="活跃天数"
+          label={t.stats.activeDays}
           value={highlights.activeDays}
-          unit="天"
+          unit={t.stats.unitDay}
           accent
         />
         {#if dim === "month" || dim === "quarter" || dim === "halfyear" || dim === "year"}
           <StatCard
             icon={Flame as any}
-            label="最长连续专注"
+            label={t.stats.longestStreak}
             value={highlights.longest}
-            unit="天"
+            unit={t.stats.unitDay}
             accent
           />
         {/if}
         {#if dim === "quarter" || dim === "halfyear" || dim === "year"}
           <StatCard
             icon={TrendingUp as any}
-            label={group === "week" ? "周均专注" : "月均专注"}
+            label={group === "week" ? t.stats.avgWeek : t.stats.avgMonth}
             value={highlights.perPeriod}
-            unit="分钟"
+            unit={t.stats.unitMin}
             accent
           />
         {/if}
         {#if dim === "halfyear" || dim === "year"}
           <StatCard
             icon={Award as any}
-            label={group === "month" ? "高峰月" : "高峰期"}
+            label={group === "month" ? t.stats.peakMonth : t.stats.peakPeriod}
             value={highlights.peak.key ? keyLabel(highlights.peak.key, group) : "—"}
-            unit={highlights.peak.minutes ? `${highlights.peak.minutes} 分钟` : ""}
+            unit={highlights.peak.minutes ? `${highlights.peak.minutes} ${t.stats.unitMin}` : ""}
             accent
           />
         {/if}
         {#if (dim === "halfyear" || dim === "year") && highlights.projects[0]}
           <StatCard
             icon={Award as any}
-            label="最佳项目"
+            label={t.stats.bestProject}
             value={highlights.projects[0].project_name}
-            unit={`${highlights.projects[0].total_minutes} 分钟`}
+            unit={`${highlights.projects[0].total_minutes} ${t.stats.unitMin}`}
             accent
           />
         {/if}
-        <StatCard icon={TrendingUp as any} label="环比上期" value={momText} accent />
+        <StatCard icon={TrendingUp as any} label={t.stats.momRatio} value={momText} accent />
       </div>
     {/if}
 
     <!-- 趋势柱状图 + 项目环形图:本月上下堆叠,其余维度 6.5:3.5 双栏(窄屏退化为堆叠) -->
     <div class="charts" class:split={dim !== "month"}>
       <section class="chart-card">
-        <h3>专注趋势({groupLabel})</h3>
+        <h3>{t.stats.trendTitle}（{groupLabel}）</h3>
         <TrendBarChart data={data.trend} {group} />
       </section>
       <section class="chart-card">
-        <h3>项目时间分布</h3>
+        <h3>{t.stats.projectDist}</h3>
         <DonutChart projects={sortedProjects} />
       </section>
     </div>

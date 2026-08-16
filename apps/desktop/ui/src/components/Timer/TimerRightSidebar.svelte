@@ -14,6 +14,9 @@
 
   import { ChevronDown, ChevronRight, Play } from "lucide-svelte";
   import type { Project, SubTask, Tag, Task } from "../../lib/api";
+  import { getDict } from "../../lib/i18n.svelte";
+
+  const t = $derived(getDict());
 
   // 后端返回的 TaskView 会被拍平 → 字段直接挂在 task 上
   type TaskWithExtras = Task & {
@@ -82,17 +85,17 @@
   );
 
   const priorityKeys: Priority[] = ["high", "medium", "low"];
-  const priorityLabels: Record<Priority, string> = {
-    high: "高",
-    medium: "中",
-    low: "低",
-  };
+  const priorityLabels = $derived<Record<Priority, string>>({
+    high: t.priority.high,
+    medium: t.priority.medium,
+    low: t.priority.low,
+  });
   const dateKeys: DateFilter[] = ["today", "tomorrow", "this_week"];
-  const dateLabels: Record<DateFilter, string> = {
-    today: "今日",
-    tomorrow: "明日",
-    this_week: "本周",
-  };
+  const dateLabels = $derived<Record<DateFilter, string>>({
+    today: t.filter.today,
+    tomorrow: t.filter.tomorrow,
+    this_week: t.filter.thisWeek,
+  });
 
   function projectName(id: string | null | undefined): string {
     if (!id) return "";
@@ -105,21 +108,21 @@
   <div class="top">
     <!-- 今日专注 -->
     <div class="today-focus">
-      <h3 class="focus-label">今日专注</h3>
+      <h3 class="focus-label">{t.timer.todayFocus}</h3>
       <div class="focus-value">
         <span class="num">{todayMinutes}</span>
-        <span class="unit">分钟</span>
+        <span class="unit">{t.timer.minute}</span>
       </div>
     </div>
 
     <!-- 筛选器 -->
     <div class="filters">
-      <h3 class="filter-title">任务列表</h3>
+      <h3 class="filter-title">{t.timer.taskList}</h3>
 
       <!-- 项目 + 标签 并排 -->
       <div class="row-2col">
         <div>
-          <label class="lbl" for="timer-filter-project">项目</label>
+          <label class="lbl" for="timer-filter-project">{t.filter.project}</label>
           <select
             id="timer-filter-project"
             value={filter.project ?? ""}
@@ -128,14 +131,14 @@
                 project: (e.currentTarget as HTMLSelectElement).value || null,
               })}
           >
-            <option value="">全部</option>
+            <option value="">{t.filter.all}</option>
             {#each projects as p (p.id)}
               <option value={p.id}>{p.name}</option>
             {/each}
           </select>
         </div>
         <div>
-          <label class="lbl" for="timer-filter-tag">标签</label>
+          <label class="lbl" for="timer-filter-tag">{t.filter.tag}</label>
           <select
             id="timer-filter-tag"
             value={filter.tag ?? ""}
@@ -144,9 +147,9 @@
                 tag: (e.currentTarget as HTMLSelectElement).value || null,
               })}
           >
-            <option value="">全部</option>
-            {#each tags as t (t.id)}
-              <option value={t.id}>{t.name}</option>
+            <option value="">{t.filter.all}</option>
+            {#each tags as tag (tag.id)}
+              <option value={tag.id}>{tag.name}</option>
             {/each}
           </select>
         </div>
@@ -154,7 +157,7 @@
 
       <!-- 优先级 + 日期 -->
       <div class="filter-grid">
-        <span class="lbl">优先级</span>
+        <span class="lbl">{t.filter.priority}</span>
         <div class="btn-group">
           {#each priorityKeys as p (p)}
             <button
@@ -171,7 +174,7 @@
           {/each}
         </div>
 
-        <span class="lbl">日期</span>
+        <span class="lbl">{t.filter.date}</span>
         <div class="btn-group">
           {#each dateKeys as d (d)}
             <button
@@ -191,7 +194,7 @@
 
       {#if hasFilter}
         <button type="button" class="clear" onclick={clearFilter}>
-          清除筛选
+          {t.timer.clearFilter}
         </button>
       {/if}
     </div>
@@ -200,7 +203,7 @@
   <!-- 下方任务列表(可滚动) -->
   <div class="list">
     {#if tasks.length === 0}
-      <div class="empty">暂无任务</div>
+      <div class="empty">{t.timer.noTask}</div>
     {/if}
     {#each tasks as task (task.id)}
       {@const isCompleted = task.status === "completed"}
@@ -219,7 +222,7 @@
               type="button"
               class="expander"
               onclick={() => toggleExpand(task.id)}
-              aria-label={isExpanded ? "折叠子任务" : "展开子任务"}
+              aria-label={isExpanded ? t.timer.collapseSubtasks : t.timer.expandSubtasks}
             >
               {#if isExpanded}<ChevronDown size={14} />{:else}<ChevronRight size={14} />{/if}
             </button>
@@ -239,7 +242,7 @@
             <div class="title" class:done={isCompleted}>{task.title}</div>
             <div class="meta">
               <span class="meta-item">
-                {task.completed_pomodoros ?? 0}/{task.estimated_pomodoros ?? 0} 番茄
+                {task.completed_pomodoros ?? 0}/{task.estimated_pomodoros ?? 0} {t.timer.pomodoros}
               </span>
               {#if hasSubs}
                 <span class="meta-item">· {completedSubs}/{task.subtasks?.length ?? 0}</span>
@@ -259,8 +262,8 @@
               type="button"
               class="start"
               onclick={() => onStartTask(task)}
-              aria-label="开始专注"
-              title="开始专注"
+              aria-label={t.timer.startTooltip}
+              title={t.timer.startTooltip}
             >
               <Play size={10} color="#fff" fill="#fff" />
             </button>

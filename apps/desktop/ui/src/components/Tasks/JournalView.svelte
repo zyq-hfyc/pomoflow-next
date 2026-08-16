@@ -21,9 +21,12 @@
   import { ChevronLeft, ChevronRight } from "lucide-svelte";
   import * as api from "../../lib/api";
   import type { DailyReview, Task, WeeklyReview } from "../../lib/api";
+  import { getDict, fmt } from "../../lib/i18n.svelte";
   import { datePart } from "../../lib/dueDate";
   import TaskCheckbox from "./TaskCheckbox.svelte";
   import ReviewTextarea from "../Timer/ReviewTextarea.svelte";
+
+  const t = $derived(getDict());
 
   interface Props {
     year: number;
@@ -51,7 +54,6 @@
   // 年份范围:2026 起往后 60 年(含),共 61 项 —— 手账可能回溯/前瞻多年
   const YEAR_OPTIONS = Array.from({ length: 61 }, (_, i) => 2026 + i);
   const MONTH_OPTIONS = Array.from({ length: 12 }, (_, i) => i + 1);
-  const WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 
   let weeklyReviews = $state<WeeklyReview[]>([]);
   let dailyReviews = $state<DailyReview[]>([]);
@@ -111,6 +113,7 @@
   }
 
   const weeks = $derived.by(() => {
+    const weekdayNames = t.journal.weekday;
     return getMondays(year, month).map((monday, i) => {
       const dates = Array.from({ length: 7 }, (_, k) => {
         const d = new Date(monday);
@@ -120,11 +123,17 @@
       const last = dates[6];
       const days: DayCell[] = dates.map((d, k) => ({
         iso: toISO(d),
-        label: `${WEEKDAYS[k]} ${d.getMonth() + 1}/${d.getDate()}`,
+        label: `${weekdayNames[k]} ${d.getMonth() + 1}/${d.getDate()}`,
       }));
       return {
         startISO: toISO(monday),
-        title: `第 ${i + 1} 周（${monday.getMonth() + 1}/${monday.getDate()} ~ ${last.getMonth() + 1}/${last.getDate()}）`,
+        title: fmt(t.journal.weekRange, {
+          n: i + 1,
+          ms: monday.getMonth() + 1,
+          ds: monday.getDate(),
+          me: last.getMonth() + 1,
+          de: last.getDate(),
+        }),
         days,
       } satisfies WeekBlock;
     });
@@ -243,43 +252,43 @@
   <div class="inner">
     <!-- 月份选择 -->
     <div class="head">
-      <h1 class="title">{year} 年 {month} 月</h1>
+      <h1 class="title">{fmt(t.journal.monthTitle, { year, month })}</h1>
       <div class="month-nav">
         <button
           type="button"
           class="nav-btn"
           onclick={prevMonth}
-          title="上一月"
-          aria-label="上一月"
+          title={t.journal.prevMonth}
+          aria-label={t.journal.prevMonth}
         >
           <ChevronLeft size={16} />
         </button>
         <select
           class="select"
-          aria-label="年份"
+          aria-label={t.journal.yearAria}
           value={year}
           onchange={(e) => onYearChange(Number(e.currentTarget.value))}
         >
           {#each YEAR_OPTIONS as y (y)}
-            <option value={y}>{y} 年</option>
+            <option value={y}>{fmt(t.journal.yearOption, { year: y })}</option>
           {/each}
         </select>
         <select
           class="select"
-          aria-label="月份"
+          aria-label={t.journal.monthAria}
           value={month}
           onchange={(e) => onMonthChange(Number(e.currentTarget.value))}
         >
           {#each MONTH_OPTIONS as m (m)}
-            <option value={m}>{m} 月</option>
+            <option value={m}>{fmt(t.journal.monthOption, { month: m })}</option>
           {/each}
         </select>
         <button
           type="button"
           class="nav-btn"
           onclick={nextMonth}
-          title="下一月"
-          aria-label="下一月"
+          title={t.journal.nextMonth}
+          aria-label={t.journal.nextMonth}
         >
           <ChevronRight size={16} />
         </button>
@@ -298,7 +307,7 @@
                   {day.label}
                 </div>
                 {#if (tasksByDay.get(day.iso) ?? []).length === 0}
-                  <div class="no-task">暂无任务</div>
+                  <div class="no-task">{t.common.noData}</div>
                 {:else}
                   {#each tasksByDay.get(day.iso) ?? [] as t (t.id)}
                     <div class="task-row">
@@ -315,7 +324,7 @@
                 <div class="day-divider"></div>
                 <ReviewTextarea
                   value={dailyMap.get(day.iso)?.content ?? null}
-                  placeholder="日复盘"
+                  placeholder={t.journal.dailyReviewPlaceholder}
                   rows={2}
                   onSave={(text) => saveDaily(day.iso, text)}
                   onDelete={() => removeDaily(day.iso)}
@@ -325,10 +334,10 @@
           </div>
           <!-- 周复盘(整行) -->
           <div class="weekly-block">
-            <div class="weekly-label">📋 周复盘</div>
+            <div class="weekly-label">{t.journal.weeklyReview}</div>
             <ReviewTextarea
               value={weeklyMap.get(week.startISO)?.content ?? null}
-              placeholder="本周复盘"
+              placeholder={t.journal.weeklyReviewPlaceholder}
               rows={5}
               onSave={(text) => saveWeekly(week.startISO, text)}
               onDelete={() => removeWeekly(week.startISO)}

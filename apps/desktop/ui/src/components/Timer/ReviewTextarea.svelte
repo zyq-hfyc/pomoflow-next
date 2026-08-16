@@ -8,6 +8,9 @@
   //   - 与 v1 `frontend/src/components/Tasks/ReviewTextarea.tsx` 行为一致
 
   import { untrack } from "svelte";
+  import { getDict } from "../../lib/i18n.svelte";
+
+  const t = $derived(getDict());
 
   interface Props {
     value: string | null;
@@ -50,8 +53,8 @@
 <textarea
   bind:value={text}
   onblur={handleBlur}
-  placeholder={placeholder ?? "写下今天的复盘..."}
-  aria-label={ariaLabel ?? placeholder ?? "复盘内容"}
+  placeholder={placeholder ?? t.common.reviewPlaceholder}
+  aria-label={ariaLabel ?? placeholder ?? t.common.reviewPlaceholder}
   {rows}
   class="review-textarea"
 ></textarea>

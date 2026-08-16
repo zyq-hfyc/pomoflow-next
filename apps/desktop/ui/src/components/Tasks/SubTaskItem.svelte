@@ -9,6 +9,9 @@
 
   import { untrack } from "svelte";
   import type { SubTask } from "../../lib/api";
+  import { getDict } from "../../lib/i18n.svelte";
+
+  const t = $derived(getDict());
 
   interface Props {
     subtask: SubTask;
@@ -71,7 +74,7 @@
     type="checkbox"
     checked={subtask.is_completed}
     onchange={toggle}
-    aria-label="切换子任务完成"
+    aria-label={t.task.toggleSubtaskAria}
   />
 
   {#if editing}
@@ -82,14 +85,14 @@
       bind:this={inputEl}
       onblur={commit}
       onkeydown={onKey}
-      aria-label="编辑子任务"
+      aria-label={t.task.editSubtask}
     />
   {:else}
     <button
       type="button"
       class="title-btn"
       ondblclick={startEdit}
-      title="双击编辑"
+      title={t.task.dblclickToEdit}
     >{subtask.title}</button>
   {/if}
 
@@ -97,7 +100,7 @@
     type="button"
     class="del"
     onclick={() => onDelete(subtask.id)}
-    aria-label="删除子任务"
+    aria-label={t.task.deleteSubtask}
   >×</button>
 </li>
 

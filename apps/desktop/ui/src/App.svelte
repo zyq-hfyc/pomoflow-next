@@ -12,11 +12,19 @@
   // 这样 timer 状态在所有页面共享,路由切换不丢进度。
 
   import { currentRoute, navigate, ROUTES } from "./lib/router.svelte";
+  import { getDict } from "./lib/i18n.svelte";
   import { getTimerState, tick as timerTick } from "./lib/timer.svelte";
+  import { initTheme } from "./lib/theme.svelte";
   import TimerPage from "./pages/TimerPage.svelte";
   import TasksPage from "./pages/TasksPage.svelte";
   import StatsPage from "./pages/StatsPage.svelte";
   import SettingsPage from "./pages/SettingsPage.svelte";
+
+  // === i18n 词典(响应式;setLang 后整棵导航栏重渲染) ===
+  const t = $derived(getDict());
+
+  // 主题:恢复 localStorage 配置并应用到 <html data-theme> / --bg-page
+  initTheme();
 
   // === 全局 timer tick ===
   // `$effect` 在 setup 函数返回的 cleanup 里清掉 interval,组件销毁时不会泄漏。
@@ -37,7 +45,7 @@
       <span class="logo" aria-hidden="true">🍅</span>
       <h1>PomoFlow</h1>
     </div>
-    <nav class="nav" aria-label="主导航">
+    <nav class="nav" aria-label={t.nav.mainNav}>
       {#each ROUTES as r (r.path)}
         <button
           class="nav-item"
@@ -45,7 +53,7 @@
           onclick={() => navigate(r.path)}
           aria-current={route === r.path ? "page" : undefined}
         >
-          {r.label}
+          {t.nav[r.labelKey]}
         </button>
       {/each}
     </nav>

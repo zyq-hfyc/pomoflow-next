@@ -11,6 +11,9 @@
   import { BUILTIN_MOTTOS, randomBuiltin, type Motto as BuiltinMotto } from "../../lib/mottos";
   import * as api from "../../lib/api";
   import type { Motto as ApiMotto } from "../../lib/api";
+  import { getDict } from "../../lib/i18n.svelte";
+
+  const t = $derived(getDict());
 
   let custom = $state<ApiMotto[]>([]);
   let playedIds = $state<Set<string>>(new Set());
@@ -35,7 +38,7 @@
       const m = custom[0];
       current = {
         text: m.text,
-        author: m.author?.trim() ? m.author : "佚名",
+        author: m.author?.trim() ? m.author : t.settings.motto.defaultAuthor,
       };
       const next = new Set(playedIds);
       next.add(m.id);
@@ -56,7 +59,7 @@
       const m = unplayed[0];
       current = {
         text: m.text,
-        author: m.author?.trim() ? m.author : "佚名",
+        author: m.author?.trim() ? m.author : t.settings.motto.defaultAuthor,
       };
       const next = new Set(playedIds);
       next.add(m.id);
@@ -79,8 +82,8 @@
         type="button"
         class="refresh"
         onclick={next}
-        aria-label="换一条"
-        title="换一条"
+        aria-label={t.timer.mottoRefresh}
+        title={t.timer.mottoRefresh}
       >
         <RefreshCw size={14} />
       </button>

@@ -11,7 +11,10 @@
 
   import { Check, Play } from "lucide-svelte";
   import type { Task, Tag } from "../../lib/api";
+  import { getDict } from "../../lib/i18n.svelte";
   import { datePart } from "../../lib/dueDate";
+
+  const t = $derived(getDict());
 
   interface Props {
     task: Task & { tags?: Tag[] };
@@ -33,7 +36,9 @@
     none: "var(--color-priority-low, #9ca3af)",
   }[task.priority || "none"]);
   const priorityLabel = $derived(
-    { high: "高", medium: "中", low: "低", none: "" }[task.priority || "none"],
+    { high: t.priority.high, medium: t.priority.medium, low: t.priority.low, none: "" }[
+      task.priority || "none"
+    ],
   );
   const dueLabel = $derived(task.due_date ? datePart(task.due_date) : "");
 </script>
@@ -62,7 +67,7 @@
       e.stopPropagation();
       onToggle(task.id);
     }}
-    aria-label={isCompleted ? "标记为未完成" : "标记为完成"}
+    aria-label={isCompleted ? t.common.ariaMarkUndone : t.common.ariaMarkDone}
   >
     {#if isCompleted}
       <Check size={12} strokeWidth={3} color="#fff" />
@@ -105,7 +110,7 @@
               ></span>
             {/each}
           </span>
-          <span class="count">{completedCount}/{estimated} 番茄</span>
+          <span class="count">{completedCount}/{estimated} {t.timer.pomodoros}</span>
         </span>
       {/if}
       {#if dueLabel}
@@ -123,8 +128,8 @@
         e.stopPropagation();
         onStart?.(task);
       }}
-      aria-label="开始专注"
-      title="开始专注"
+      aria-label={t.task.startTooltip}
+      title={t.task.startTooltip}
     >
       <Play size={13} color="#fff" fill="#fff" />
     </button>

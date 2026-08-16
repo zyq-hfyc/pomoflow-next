@@ -9,6 +9,9 @@
 
   import { Download } from "lucide-svelte";
   import type { Project, Tag } from "../../lib/api";
+  import { getDict } from "../../lib/i18n.svelte";
+
+  const t = $derived(getDict());
 
   type Preset = "week" | "month" | null;
   type Priority = "high" | "medium" | "low" | "none";
@@ -78,11 +81,11 @@
       }}
       title={filterProject !== null
         ? projects.find((p) => p.id === filterProject)?.name
-        : "全部项目"}
+        : t.filter.allProject}
       class="select"
-      aria-label="项目筛选"
+      aria-label={t.filter.projectAria}
     >
-      <option value="">全部项目</option>
+      <option value="">{t.filter.allProject}</option>
       {#each projects as p (p.id)}
         <option value={p.id}>{p.name}</option>
       {/each}
@@ -96,13 +99,13 @@
       }}
       title={filterTag !== null
         ? tags.find((x) => x.id === filterTag)?.name
-        : "全部标签"}
+        : t.filter.allTag}
       class="select"
-      aria-label="标签筛选"
+      aria-label={t.filter.tagAria}
     >
-      <option value="">全部标签</option>
-      {#each tags as t (t.id)}
-        <option value={t.id}>{t.name}</option>
+      <option value="">{t.filter.allTag}</option>
+      {#each tags as tag (tag.id)}
+        <option value={tag.id}>{tag.name}</option>
       {/each}
     </select>
 
@@ -113,13 +116,13 @@
         setFilterPriority((v || null) as Priority | null);
       }}
       class="select"
-      aria-label="优先级筛选"
+      aria-label={t.filter.priorityAria}
     >
-      <option value="">全部优先级</option>
-      <option value="high">高</option>
-      <option value="medium">中</option>
-      <option value="low">低</option>
-      <option value="none">无</option>
+      <option value="">{t.filter.allPriority}</option>
+      <option value="high">{t.priority.high}</option>
+      <option value="medium">{t.priority.medium}</option>
+      <option value="low">{t.priority.low}</option>
+      <option value="none">{t.priority.none}</option>
     </select>
 
     <button
@@ -128,7 +131,7 @@
       class:on={filterPreset === "week"}
       onclick={() => setFilterPreset(filterPreset === "week" ? null : "week")}
     >
-      本周
+      {t.filter.week}
     </button>
     <button
       type="button"
@@ -136,7 +139,7 @@
       class:on={filterPreset === "month"}
       onclick={() => setFilterPreset(filterPreset === "month" ? null : "month")}
     >
-      本月
+      {t.filter.month}
     </button>
 
     {#if hasFilter}
@@ -145,27 +148,27 @@
         class="clear-btn"
         onclick={clearAll}
       >
-        清除筛选
+        {t.timer.clearFilter}
       </button>
     {/if}
   </div>
 
   <div class="row-2">
-    <span class="hint">到期日</span>
+    <span class="hint">{t.filter.dueDate}</span>
     <input
       type="date"
       value={filterStartDate}
       onchange={(e) => setFilterStartDate((e.currentTarget as HTMLInputElement).value)}
       class="date"
-      aria-label="起始日期"
+      aria-label={t.filter.startDate}
     />
-    <span class="hint">至</span>
+    <span class="hint">{t.filter.to}</span>
     <input
       type="date"
       value={filterEndDate}
       onchange={(e) => setFilterEndDate((e.currentTarget as HTMLInputElement).value)}
       class="date"
-      aria-label="结束日期"
+      aria-label={t.filter.endDate}
     />
 
     {#if onExport}
@@ -175,7 +178,7 @@
         onclick={onExport}
       >
         <Download size={14} />
-        导出
+        {t.filter.export}
       </button>
     {/if}
   </div>

@@ -27,8 +27,12 @@
     Tag,
     Task as ApiTask,
   } from "../../lib/api";
+  import { getDict, fmt } from "../../lib/i18n.svelte";
+  import type { Dict } from "../../lib/i18n";
   import TagPicker from "./TagPicker.svelte";
   import SubTaskItem from "./SubTaskItem.svelte";
+
+  const t = $derived(getDict());
 
   interface Props {
     task: ApiTask;
@@ -94,7 +98,7 @@
       onChanged();
     } catch (e) {
       console.error("patch task failed", e);
-      alert(`保存失败:${e}`);
+      alert(fmt(t.task.saveFailed, { err: String(e) }));
     }
   }
 
@@ -144,7 +148,7 @@
       onChanged();
     } catch (e) {
       selectedTagIds = prev;
-      alert(`设置标签失败:${e}`);
+      alert(fmt(t.task.setTagsFailed, { err: String(e) }));
     }
   }
 
@@ -182,7 +186,7 @@
       subtasks = [...subtasks, saved];
       onChanged();
     } catch (e) {
-      alert(`添加子任务失败:${e}`);
+      alert(fmt(t.task.addSubtaskFailed, { err: String(e) }));
     }
   }
 
@@ -196,7 +200,7 @@
       if (prev) {
         subtasks = subtasks.map((s) => (s.id === prev.id ? prev : s));
       }
-      alert(`更新子任务失败:${e}`);
+      alert(fmt(t.task.updateSubtaskFailed, { err: String(e) }));
     }
   }
 
@@ -208,42 +212,89 @@
       onChanged();
     } catch (e) {
       subtasks = prev;
-      alert(`删除子任务失败:${e}`);
+      alert(fmt(t.task.deleteSubtaskFailed, { err: String(e) }));
+    }
+  }
+
+  // === 删除任务(v1 TaskDetailPanel 底部按钮) ===
+  async function deleteTask() {
+    try {
+      await api.deleteTask(task.id);
+      onClose();
+      onChanged();
+    } catch (e) {
+      alert(fmt(t.task.saveFailed, { err: String(e) }));
     }
   }
 
   // === reminder / repeat 标签 ===
-  // value 与 Rust `Reminder` serde(snake_case)输出一致(Minutes5 → "minutes5")
+  // value 与 Rust `Reminder` serde(snake_case)输出一致(Minutes5 → "minutes5");
+  // 展示文案查 v1 词典 enum(键形如 '' / '5m' / 'weekday'),做一层值映射
   const REMINDER_OPTIONS = [
-    { value: "none", label: "不提醒" },
-    { value: "on_time", label: "准时" },
-    { value: "minutes5", label: "提前 5 分钟" },
-    { value: "minutes30", label: "提前 30 分钟" },
-    { value: "hour1", label: "提前 1 小时" },
-    { value: "day1", label: "提前 1 天" },
-    { value: "days2", label: "提前 2 天" },
+    { value: "none" },
+    { value: "on_time" },
+    { value: "minutes5" },
+    { value: "minutes30" },
+    { value: "hour1" },
+    { value: "day1" },
+    { value: "days2" },
   ] as const;
 
   const REPEAT_OPTIONS = [
-    { value: "none", label: "不重复" },
-    { value: "daily", label: "每天" },
-    { value: "weekdays", label: "工作日" },
-    { value: "weekly", label: "每周" },
-    { value: "monthly", label: "每月" },
-    { value: "yearly", label: "每年" },
+    { value: "none" },
+    { value: "daily" },
+    { value: "weekdays" },
+    { value: "weekly" },
+    { value: "monthly" },
+    { value: "yearly" },
   ] as const;
 
+  const REMINDER_DICT_KEY: Record<
+    (typeof REMINDER_OPTIONS)[number]["value"],
+    keyof Dict["enum"]["reminder"]
+  > = {
+    none: "",
+    on_time: "on_time",
+    minutes5: "5m",
+    minutes30: "30m",
+    hour1: "1h",
+    day1: "1d",
+    days2: "2d",
+  };
+  const REPEAT_DICT_KEY: Record<
+    (typeof REPEAT_OPTIONS)[number]["value"],
+    keyof Dict["enum"]["repeat"]
+  > = {
+    none: "",
+    daily: "daily",
+    weekdays: "weekday",
+    weekly: "weekly",
+    monthly: "monthly",
+    yearly: "yearly",
+  };
+
+  function reminderLabel(v: (typeof REMINDER_OPTIONS)[number]["value"]): string {
+    return t.enum.reminder[REMINDER_DICT_KEY[v]];
+  }
+  function repeatLabel(v: (typeof REPEAT_OPTIONS)[number]["value"]): string {
+    return t.enum.repeat[REPEAT_DICT_KEY[v]];
+  }
+
   function projectName(id: string | null | undefined): string {
-    if (!id) return "无项目";
-    return projects.find((p) => p.id === id)?.name ?? "未知";
+    if (!id) return t.task.detailNoProject;
+    return projects.find((p) => p.id === id)?.name ?? t.task.unknownProject;
   }
 
   function priorityLabel(p: Priority | null | undefined): string {
-    return { high: "高", medium: "中", low: "低", none: "" }[p ?? "none"] ?? "";
+    return (
+      { high: t.priority.high, medium: t.priority.medium, low: t.priority.low, none: "" }[
+        p ?? "none"
+      ] ?? ""
+    );
   }
 </script>
 
-<aside class="panel" aria-label="任务详情">
+<aside class="panel" aria-label={t.task.detailPanelAria}>
   <header class="head">
     <div class="meta">
       <span class="proj">{projectName(task.project_id)}</span>
@@ -251,7 +302,7 @@
         <span class="pri pri-{task.priority}">{priorityLabel(task.priority)}</span>
       {/if}
     </div>
-    <button class="close" onclick={onClose} aria-label="关闭">×</button>
+    <button class="close" onclick={onClose} aria-label={t.common.close}>×</button>
   </header>
 
   <input
@@ -264,24 +315,24 @@
         (e.currentTarget as HTMLInputElement).blur();
       }
     }}
-    aria-label="标题"
+    aria-label={t.task.titleAria}
   />
 
   <section class="block">
-    <label class="lbl" for="desc">描述</label>
+    <label class="lbl" for="desc">{t.task.detailDescription}</label>
     <textarea
       id="desc"
       class="desc"
       bind:value={descDraft}
       onblur={commitDescription}
       rows="4"
-      placeholder="补充细节..."
+      placeholder={t.task.detailDescPlaceholder}
     ></textarea>
   </section>
 
   <section class="block row">
     <div class="col">
-      <label class="lbl" for="proj">清单</label>
+      <label class="lbl" for="proj">{t.task.detailProject}</label>
       <select
         id="proj"
         value={task.project_id ?? ""}
@@ -290,14 +341,14 @@
           void patchTask({ project_id: v || null });
         }}
       >
-        <option value="">无项目</option>
+        <option value="">{t.task.detailNoProject}</option>
         {#each projects as p (p.id)}
           <option value={p.id}>{p.name}</option>
         {/each}
       </select>
     </div>
     <div class="col">
-      <label class="lbl" for="pri">优先级</label>
+      <label class="lbl" for="pri">{t.task.detailPriority}</label>
       <select
         id="pri"
         value={task.priority}
@@ -306,16 +357,16 @@
           void patchTask({ priority: v });
         }}
       >
-        <option value="none">无</option>
-        <option value="high">高</option>
-        <option value="medium">中</option>
-        <option value="low">低</option>
+        <option value="none">{t.priority.none}</option>
+        <option value="high">{t.priority.high}</option>
+        <option value="medium">{t.priority.medium}</option>
+        <option value="low">{t.priority.low}</option>
       </select>
     </div>
   </section>
 
   <section class="block">
-    <label class="lbl" for="due">截止日期</label>
+    <label class="lbl" for="due">{t.task.detailDueDate}</label>
     <div class="row-inline">
       <input
         id="due"
@@ -324,14 +375,14 @@
         onblur={commitDueDate}
       />
       {#if dueDraft}
-        <button type="button" class="link" onclick={clearDueDate}>清除</button>
+        <button type="button" class="link" onclick={clearDueDate}>{t.common.clear}</button>
       {/if}
     </div>
   </section>
 
   <section class="block row">
     <div class="col">
-      <label class="lbl" for="reminder">提醒</label>
+      <label class="lbl" for="reminder">{t.task.detailReminder}</label>
       <select
         id="reminder"
         value={task.reminder ?? "none"}
@@ -341,12 +392,12 @@
         }}
       >
         {#each REMINDER_OPTIONS as o (o.value)}
-          <option value={o.value}>{o.label}</option>
+          <option value={o.value}>{reminderLabel(o.value)}</option>
         {/each}
       </select>
     </div>
     <div class="col">
-      <label class="lbl" for="repeat">重复</label>
+      <label class="lbl" for="repeat">{t.task.detailRepeat}</label>
       <select
         id="repeat"
         value={task.repeat ?? "none"}
@@ -356,19 +407,19 @@
         }}
       >
         {#each REPEAT_OPTIONS as o (o.value)}
-          <option value={o.value}>{o.label}</option>
+          <option value={o.value}>{repeatLabel(o.value)}</option>
         {/each}
       </select>
     </div>
   </section>
 
   <section class="block">
-    <span class="lbl">标签</span>
+    <span class="lbl">{t.filter.tag}</span>
     <TagPicker tags={allTags} selected={selectedTagIds} onChange={onTagsChange} />
   </section>
 
   <section class="block">
-    <span class="lbl">子任务</span>
+    <span class="lbl">{t.task.detailSubtasks}</span>
     <ul class="sub-list">
       {#each subtasks as s (s.id)}
         <SubTaskItem
@@ -388,11 +439,25 @@
       <input
         type="text"
         bind:value={newSubtask}
-        placeholder="添加子任务..."
-        aria-label="新子任务"
+        placeholder={t.task.detailAddSubtask}
+        aria-label={t.task.newSubtaskAria}
       />
-      <button type="submit" disabled={!newSubtask.trim()}>添加</button>
+      <button type="submit" disabled={!newSubtask.trim()}>{t.common.add}</button>
     </form>
+  </section>
+
+  <!-- 删除任务(v1 TaskDetailPanel 底部同款) -->
+  <section class="block">
+    <button
+      class="delete"
+      onclick={() => {
+        if (confirm(fmt(t.task.deleteConfirm, { title: task.title }))) {
+          void deleteTask();
+        }
+      }}
+    >
+      {t.task.detailDelete}
+    </button>
   </section>
 </aside>
 
@@ -438,6 +503,22 @@
   .pri-high { background: #fee2e2; color: #991b1b; }
   .pri-medium { background: #fef3c7; color: #92400e; }
   .pri-low { background: #dbeafe; color: #1e40af; }
+
+  .delete {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid var(--color-error, #c97b6e);
+    border-radius: var(--radius-md, 8px);
+    background: transparent;
+    color: var(--color-error, #c97b6e);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .delete:hover {
+    background: var(--color-error, #c97b6e);
+    color: #fff;
+  }
 
   .close {
     background: transparent;

@@ -19,8 +19,11 @@
 
   import { ChevronDown, ChevronRight } from "lucide-svelte";
   import type { Task, Tag } from "../../lib/api";
+  import { getDict, fmt } from "../../lib/i18n.svelte";
   import { datePart } from "../../lib/dueDate";
   import TaskItem from "./TaskItem.svelte";
+
+  const t = $derived(getDict());
 
   type TaskWithTags = Task & { tags?: Tag[] };
 
@@ -39,15 +42,17 @@
 
   let collapsed = $state<Set<string>>(new Set());
 
-  const WEEKDAY = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-
   function formatHeader(dateStr: string, groupTasks: TaskWithTags[]): string {
     const d = new Date(dateStr + "T00:00:00");
     const totalMinutes = groupTasks.reduce(
       (s, x) => s + (x.estimated_pomodoros || 0) * (x.pomodoro_duration || 25),
       0,
     );
-    return `${dateStr}（${WEEKDAY[d.getDay()]}）| ${totalMinutes} 分钟`;
+    return fmt(t.task.groupHeader, {
+      date: dateStr,
+      weekday: t.enum.weekday[d.getDay()],
+      n: totalMinutes,
+    });
   }
 
   function toggleGroup(key: string) {
@@ -93,7 +98,7 @@
         onclick={() => toggleGroup(dateStr)}
         aria-expanded={!isCollapsed}
       >
-        <span>{dateStr === UNSCHEDULED ? "未排期" : formatHeader(dateStr, groupTasks)}</span>
+        <span>{dateStr === UNSCHEDULED ? t.task.unscheduled : formatHeader(dateStr, groupTasks)}</span>
         <span class="chev">
           {#if isCollapsed}<ChevronRight size={16} />{:else}<ChevronDown size={16} />{/if}
         </span>

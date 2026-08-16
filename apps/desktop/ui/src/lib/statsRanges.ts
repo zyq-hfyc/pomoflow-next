@@ -28,21 +28,20 @@ export type StatsDimension =
   | "halfyear"
   | "year";
 
-/** 维度元数据:中文 pill 标签 + 趋势聚合粒度 */
+/** 维度元数据:趋势聚合粒度(pill 展示文案由 StatsPage 查词典 t.stats.dimXXX,本 lib 不含 UI 文案) */
 export interface DimensionSpec {
   key: StatsDimension;
-  label: string;
   group: StatsGroup;
 }
 
-/** 6 维度定义(顺序即 pill 顺序;粒度映射 v1 原样;标签为 v1 zh.ts 文案) */
+/** 6 维度定义(顺序即 pill 顺序;粒度映射 v1 原样) */
 export const DIMENSIONS: DimensionSpec[] = [
-  { key: "today", label: "今日", group: "day" },
-  { key: "week", label: "本周", group: "day" },
-  { key: "month", label: "本月", group: "day" },
-  { key: "quarter", label: "季度", group: "week" },
-  { key: "halfyear", label: "半年", group: "month" },
-  { key: "year", label: "年", group: "month" },
+  { key: "today", group: "day" },
+  { key: "week", group: "day" },
+  { key: "month", group: "day" },
+  { key: "quarter", group: "week" },
+  { key: "halfyear", group: "month" },
+  { key: "year", group: "month" },
 ];
 
 /** 一个维度的完整区间描述(日期均为本地 YYYY-MM-DD,双端包含) */

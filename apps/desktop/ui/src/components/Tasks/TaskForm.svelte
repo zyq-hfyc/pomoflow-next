@@ -18,29 +18,66 @@
   import RepeatCustomDialog from "./RepeatCustomDialog.svelte";
   import { todayStr, hasTimePart, fillCurrentTime } from "../../lib/dueDate";
   import { getSettings } from "../../lib/settings.svelte";
+  import { getDict } from "../../lib/i18n.svelte";
+  import type { Dict } from "../../lib/i18n";
   import type { Project, Tag, Priority, Reminder, Repeat } from "../../lib/api";
+
+  const t = $derived(getDict());
 
   // value 与 Rust `Reminder` serde(snake_case)输出一一对应:
   // Minutes5 → "minutes5"(无下划线),以此类推
   const REMINDER_OPTIONS = [
-    { value: "none", label: "不提醒" },
-    { value: "on_time", label: "准时" },
-    { value: "minutes5", label: "提前 5 分钟" },
-    { value: "minutes30", label: "提前 30 分钟" },
-    { value: "hour1", label: "提前 1 小时" },
-    { value: "day1", label: "提前 1 天" },
-    { value: "days2", label: "提前 2 天" },
+    { value: "none" },
+    { value: "on_time" },
+    { value: "minutes5" },
+    { value: "minutes30" },
+    { value: "hour1" },
+    { value: "day1" },
+    { value: "days2" },
   ] as const;
 
   const REPEAT_OPTIONS = [
-    { value: "none", label: "不重复" },
-    { value: "daily", label: "每天" },
-    { value: "weekdays", label: "工作日" },
-    { value: "weekly", label: "每周" },
-    { value: "monthly", label: "每月" },
-    { value: "yearly", label: "每年" },
-    { value: "custom", label: "自定义..." },
+    { value: "none" },
+    { value: "daily" },
+    { value: "weekdays" },
+    { value: "weekly" },
+    { value: "monthly" },
+    { value: "yearly" },
+    { value: "custom" },
   ] as const;
+
+  // v2 Rust serde 值 → v1 词典 enum 键(v1 词典键形如 '' / '5m' / 'weekday')
+  const REMINDER_DICT_KEY: Record<
+    (typeof REMINDER_OPTIONS)[number]["value"],
+    keyof Dict["enum"]["reminder"]
+  > = {
+    none: "",
+    on_time: "on_time",
+    minutes5: "5m",
+    minutes30: "30m",
+    hour1: "1h",
+    day1: "1d",
+    days2: "2d",
+  };
+  const REPEAT_DICT_KEY: Record<
+    (typeof REPEAT_OPTIONS)[number]["value"],
+    keyof Dict["enum"]["repeat"]
+  > = {
+    none: "",
+    daily: "daily",
+    weekdays: "weekday",
+    weekly: "weekly",
+    monthly: "monthly",
+    yearly: "yearly",
+    custom: "custom",
+  };
+
+  function reminderLabel(v: (typeof REMINDER_OPTIONS)[number]["value"]): string {
+    return t.enum.reminder[REMINDER_DICT_KEY[v]];
+  }
+  function repeatLabel(v: (typeof REPEAT_OPTIONS)[number]["value"]): string {
+    return t.enum.repeat[REPEAT_DICT_KEY[v]];
+  }
 
   type ReminderValue = (typeof REMINDER_OPTIONS)[number]["value"];
   type RepeatValue = (typeof REPEAT_OPTIONS)[number]["value"];
@@ -130,7 +167,7 @@
   async function submit() {
     const trimmed = title.trim();
     if (!trimmed) {
-      error = "请输入任务标题";
+      error = t.form.needTitle;
       return;
     }
     let finalDue = dueDate || todayStr();
@@ -138,7 +175,7 @@
       if (!hasTimePart(finalDue)) {
         if (!timeWarning) {
           timeWarning = true;
-          error = "提醒任务需要具体时间,请补充时分";
+          error = t.form.needTimeForReminder;
           return;
         }
         finalDue = fillCurrentTime(finalDue);
@@ -195,17 +232,17 @@
     <input
       type="text"
       bind:value={title}
-      placeholder="任务标题..."
+      placeholder={t.form.titlePlaceholder}
       class="title-input"
     />
-    <div class="tomatoes" role="group" aria-label="预计番茄数">
+    <div class="tomatoes" role="group" aria-label={t.form.pomodoroIcons}>
       {#each Array.from({ length: 6 }, (_, i) => i + 1) as n}
         {@const filled = estimated >= n}
         <button
           type="button"
           class="tomato-btn"
           class:filled
-          aria-label={`${n} 个番茄`}
+          aria-label={`${n} ${t.form.pomodoroUnit}`}
           aria-pressed={filled}
           onclick={() => (estimated = n)}
         >
@@ -214,7 +251,7 @@
       {/each}
     </div>
     <button type="button" class="more-btn" onclick={toggleShowDetails}>
-      {showDetails ? "收起" : "更多"}
+      {showDetails ? t.form.collapse : t.form.more}
     </button>
   </div>
 
@@ -225,7 +262,7 @@
   {#if showDetails}
     <div class="details">
       <div class="field">
-        <label for="tf-proj">清单</label>
+        <label for="tf-proj">{t.filter.project}</label>
         <select
           id="tf-proj"
           value={projectId ?? ""}
@@ -234,7 +271,7 @@
             projectId = v || null;
           }}
         >
-          <option value="">无项目</option>
+          <option value="">{t.task.detailNoProject}</option>
           {#each projectTreeOptions() as opt (opt.id)}
             <option value={opt.id} disabled={opt.disabled}>
               {"　".repeat(opt.depth)}{opt.name}
@@ -244,7 +281,7 @@
       </div>
 
       <div class="field">
-        <label for="tf-pri">优先级</label>
+        <label for="tf-pri">{t.filter.priority}</label>
         <select
           id="tf-pri"
           value={priority}
@@ -252,15 +289,15 @@
             priority = (e.currentTarget as HTMLSelectElement).value as Priority;
           }}
         >
-          <option value="high">高</option>
-          <option value="medium">中</option>
-          <option value="low">低</option>
-          <option value="none">无</option>
+          <option value="high">{t.priority.high}</option>
+          <option value="medium">{t.priority.medium}</option>
+          <option value="low">{t.priority.low}</option>
+          <option value="none">{t.priority.none}</option>
         </select>
       </div>
 
       <div class="field">
-        <label for="tf-due">截止日期</label>
+        <label for="tf-due">{t.filter.dueDate}</label>
         <input
           id="tf-due"
           type="datetime-local"
@@ -275,7 +312,7 @@
       </div>
 
       <div class="field">
-        <label for="tf-est">预计番茄</label>
+        <label for="tf-est">{t.form.estimatedPomo}</label>
         <input
           id="tf-est"
           type="number"
@@ -286,20 +323,20 @@
       </div>
 
       <div class="field">
-        <label for="tf-remind">提醒</label>
+        <label for="tf-remind">{t.task.detailReminder}</label>
         <select
           id="tf-remind"
           bind:value={reminder}
           onchange={() => (timeWarning = false)}
         >
           {#each REMINDER_OPTIONS as opt (opt.value)}
-            <option value={opt.value}>{opt.label}</option>
+            <option value={opt.value}>{reminderLabel(opt.value)}</option>
           {/each}
         </select>
       </div>
 
       <div class="field">
-        <label for="tf-repeat">重复</label>
+        <label for="tf-repeat">{t.task.detailRepeat}</label>
         <select
           id="tf-repeat"
           bind:value={repeat}
@@ -313,17 +350,17 @@
           }}
         >
           {#each REPEAT_OPTIONS as opt (opt.value)}
-            <option value={opt.value}>{opt.label}</option>
+            <option value={opt.value}>{repeatLabel(opt.value)}</option>
           {/each}
         </select>
       </div>
 
       {#if tags.length > 0}
         <div class="field full">
-          <span class="lbl-blk">标签</span>
+          <span class="lbl-blk">{t.filter.tag}</span>
           <div class="tag-chips">
-            {#each tags as t (t.id)}
-              {@const isOn = selectedTags.includes(t.id)}
+            {#each tags as tag (tag.id)}
+              {@const isOn = selectedTags.includes(tag.id)}
               <button
                 type="button"
                 class="chip"
@@ -331,10 +368,10 @@
                 aria-pressed={isOn}
                 onclick={() =>
                   (selectedTags = isOn
-                    ? selectedTags.filter((id) => id !== t.id)
-                    : [...selectedTags, t.id])}
+                    ? selectedTags.filter((id) => id !== tag.id)
+                    : [...selectedTags, tag.id])}
               >
-                {t.name}
+                {tag.name}
               </button>
             {/each}
           </div>
@@ -342,7 +379,7 @@
       {/if}
 
       <div class="actions">
-        <button type="button" class="submit-btn" onclick={submit}>添加</button>
+        <button type="button" class="submit-btn" onclick={submit}>{t.form.submit}</button>
       </div>
     </div>
   {/if}
