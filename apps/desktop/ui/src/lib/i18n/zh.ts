@@ -22,6 +22,7 @@ export const zh = {
     clear: '清除',
     add: '添加',
     expand: '展开',
+    collapse: '收起',
   },
   timer: {
     start: '开始专注',
@@ -297,6 +298,9 @@ export const zh = {
       empty: '暂未添加自定义名言。番茄钟页面将轮播内置名言。',
       builtInBadge: '内置',
       defaultAuthor: '自定义',
+      textRequired: '请输入名言内容',
+      textTooLong: '名言不能超过 500 字',
+      authorTooLong: '作者不能超过 64 字',
     },
     notification: {
       title: '通知文案',

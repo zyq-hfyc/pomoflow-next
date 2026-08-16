@@ -1,4 +1,4 @@
-//! 用户设置 —— 番茄钟参数 + 行为开关。localStorage 持久化,Svelte 5 runes。
+//! 用户设置 —— v1 `TimerSettings` 字段集 + v2 增强开关。localStorage 持久化,Svelte 5 runes。
 //!
 //! 设计要点:
 //! - 单一 `Settings` 对象,集中所有可配置项(便于后续加项)。
@@ -7,51 +7,99 @@
 //! - 设置变更会被 timer 模块感知(`applySettingsChange`),但此处不主动通知;
 //!   组件层用 `$effect` 监听需要的字段即可。
 //!
-//! v1 同款字段:
-//! - `focusMinutes / shortBreakMinutes / longBreakMinutes / longBreakInterval`
-//! - `autoChain`:专注完成后是否自动进休息
-//! - `autoStartBreak`:休息完成后是否自动进下一个 focus(v1 拆为两开关,这里合并)
-//! - `soundEnabled / desktopNotificationEnabled`
+//! v1 同款字段(pomoflow/frontend/src/types/index.ts:TimerSettings):
+//! - `focusDuration / shortBreakDuration / longBreakDuration / longBreakInterval`
+//! - `autoStartNextPomodoro`:休息结束后自动开始下一个番茄
+//! - `autoStartBreak`:番茄完成后自动进入休息
+//! - `disableBreak`:跳过所有休息(开启时强制关掉 autoStartBreak)
 //!
-//! 默认值对齐 v1 pomoflow:25 / 5 / 15 / 4。
+//! v2 增强字段:
+//! - `soundEnabled / desktopNotificationEnabled`(完成提示音 / 系统通知)
+//!
+//! 存储键 `pomoflow:settings:v2`;旧键 `pomoflow:settings:v1`(v2 早期
+//! focusMinutes 字段集)存在时自动迁移,迁移后旧键保留不删。
 
-const STORAGE_KEY = "pomoflow:settings:v1";
+const STORAGE_KEY = "pomoflow:settings:v2";
+const LEGACY_KEY = "pomoflow:settings:v1";
 
 export interface Settings {
-  focusMinutes: number;
-  shortBreakMinutes: number;
-  longBreakMinutes: number;
+  focusDuration: number;
+  shortBreakDuration: number;
+  longBreakDuration: number;
   longBreakInterval: number;
-  autoChain: boolean;
+  autoStartNextPomodoro: boolean;
+  autoStartBreak: boolean;
+  disableBreak: boolean;
   soundEnabled: boolean;
   desktopNotificationEnabled: boolean;
 }
 
 const DEFAULTS: Settings = {
-  focusMinutes: 25,
-  shortBreakMinutes: 5,
-  longBreakMinutes: 15,
+  focusDuration: 25,
+  shortBreakDuration: 5,
+  longBreakDuration: 15,
   longBreakInterval: 4,
-  autoChain: true,
+  autoStartNextPomodoro: false,
+  autoStartBreak: false,
+  disableBreak: false,
   soundEnabled: true,
   desktopNotificationEnabled: true,
 };
 
-function load(): Settings {
-  if (typeof localStorage === "undefined") return { ...DEFAULTS };
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return { ...DEFAULTS };
+/// v2 早期字段集(focusMinutes / autoChain)→ v1 字段集迁移映射。
+/// 只做类型安全的逐字段搬运;无法识别的字段忽略(回落默认值)。
+function migrateLegacy(raw: string): Partial<Settings> | null {
   try {
-    const parsed = JSON.parse(raw) as Partial<Settings>;
-    return { ...DEFAULTS, ...parsed };
+    const legacy = JSON.parse(raw) as Record<string, unknown>;
+    const out: Partial<Settings> = {};
+    if (typeof legacy.focusMinutes === "number")
+      out.focusDuration = legacy.focusMinutes;
+    if (typeof legacy.shortBreakMinutes === "number")
+      out.shortBreakDuration = legacy.shortBreakMinutes;
+    if (typeof legacy.longBreakMinutes === "number")
+      out.longBreakDuration = legacy.longBreakMinutes;
+    if (typeof legacy.longBreakInterval === "number")
+      out.longBreakInterval = legacy.longBreakInterval;
+    // autoChain(专注完成后自动进休息)语义等价于 autoStartBreak
+    if (typeof legacy.autoChain === "boolean")
+      out.autoStartBreak = legacy.autoChain;
+    if (typeof legacy.soundEnabled === "boolean")
+      out.soundEnabled = legacy.soundEnabled;
+    if (typeof legacy.desktopNotificationEnabled === "boolean")
+      out.desktopNotificationEnabled = legacy.desktopNotificationEnabled;
+    return Object.keys(out).length > 0 ? out : null;
   } catch {
-    return { ...DEFAULTS };
+    return null;
   }
 }
 
 function save(s: Settings) {
   if (typeof localStorage === "undefined") return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+}
+
+function load(): Settings {
+  if (typeof localStorage === "undefined") return { ...DEFAULTS };
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as Partial<Settings>;
+      return { ...DEFAULTS, ...parsed };
+    } catch {
+      return { ...DEFAULTS };
+    }
+  }
+  // 新键不存在 → 尝试从旧键迁移(迁移即落盘新键;旧键保留,不删)
+  const legacyRaw = localStorage.getItem(LEGACY_KEY);
+  if (legacyRaw) {
+    const migrated = migrateLegacy(legacyRaw);
+    if (migrated) {
+      const s = { ...DEFAULTS, ...migrated };
+      save(s);
+      return s;
+    }
+  }
+  return { ...DEFAULTS };
 }
 
 let _settings = $state<Settings>(load());
@@ -63,7 +111,7 @@ export function getSettings(): Settings {
 /// 局部更新 + 落盘。
 ///
 /// ```ts
-/// update({ focusMinutes: 30 });
+/// update({ focusDuration: 30 });
 /// ```
 export function update(patch: Partial<Settings>) {
   _settings = { ..._settings, ...patch };

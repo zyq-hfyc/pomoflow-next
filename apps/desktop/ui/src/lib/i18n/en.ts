@@ -23,6 +23,7 @@ export const en: Dict = {
     clear: 'Clear',
     add: 'Add',
     expand: 'Expand',
+    collapse: 'Collapse',
   },
   timer: {
     start: 'Start Focus',
@@ -298,6 +299,9 @@ export const en: Dict = {
       empty: 'No custom mottos yet. The timer page will cycle through built-in mottos.',
       builtInBadge: 'Built-in',
       defaultAuthor: 'Custom',
+      textRequired: 'Please enter the motto text',
+      textTooLong: 'Motto text must be at most 500 characters',
+      authorTooLong: 'Author must be at most 64 characters',
     },
     notification: {
       title: 'Notifications',

@@ -110,7 +110,7 @@
 
   let { projects, tags, defaultProjectId, defaultDueDate, onAdd }: Props = $props();
 
-  let settings = getSettings();
+  let settings = $derived(getSettings());
 
   let title = $state("");
   let projectId = $state<string | null>(untrack(() => defaultProjectId ?? null));
@@ -190,7 +190,7 @@
         priority,
         due_date: finalDue,
         estimated_pomodoros: estimated > 0 ? estimated : 1,
-        pomodoro_duration: settings.focusMinutes,
+        pomodoro_duration: settings.focusDuration,
         reminder: reminder === "none" ? null : reminder,
         repeat: repeat === "none" ? null : repeat,
         repeat_config: repeat === "custom" ? repeatConfig : null,
