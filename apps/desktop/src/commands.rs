@@ -15,10 +15,11 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use pomoflow_core::model::{
-    DailyReview, Id, MonthlyReview, Motto, PomodoroSession, Project, SubTask, Tag, Task,
-    TaskStatus, TaskView, Timestamp, WeeklyReview,
+    DailyReview, Id, MonthlyReview, Motto, NotificationTemplate, PomodoroSession, Project, SubTask,
+    Tag, Task, TaskStatus, TaskView, Timestamp, WeeklyReview,
 };
 use pomoflow_core::store::{SqliteStore, Store, TaskQuery};
+use pomoflow_core::validate;
 use tauri::State;
 
 /// 全局应用状态 —— Tauri `manage()` 注入,每个 command 拿 `State<AppState>`。
@@ -106,6 +107,10 @@ fn embed_views(state: &AppState, tasks: Vec<Task>) -> Result<Vec<TaskView>, Stri
 
 #[tauri::command]
 pub fn upsert_task(task: Task, state: State<'_, AppState>) -> Result<TaskView, String> {
+    // v1 TaskUpdate 的保护字段语义(status/completed_pomodoros/completed_at 只经
+    // complete/reopen/番茄钟逻辑变更)在 v2 由前端约定保证 —— 内部命令
+    // complete_task / stop_pomodoro 也走本入口,无法在 IPC 层强制区分。
+    validate::validate_task(&task).map_err(map_err)?;
     let saved = state.store.upsert_task(task).map_err(map_err)?;
     embed_views(&state, vec![saved]).map(|mut v| v.pop().unwrap())
 }
@@ -125,6 +130,7 @@ pub fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>, String>
 
 #[tauri::command]
 pub fn upsert_project(project: Project, state: State<'_, AppState>) -> Result<Project, String> {
+    validate::validate_project(&project).map_err(map_err)?;
     state.store.upsert_project(project).map_err(map_err)
 }
 
@@ -143,6 +149,7 @@ pub fn list_tags(state: State<'_, AppState>) -> Result<Vec<Tag>, String> {
 
 #[tauri::command]
 pub fn upsert_tag(tag: Tag, state: State<'_, AppState>) -> Result<Tag, String> {
+    validate::validate_tag(&tag).map_err(map_err)?;
     state.store.upsert_tag(tag).map_err(map_err)
 }
 
@@ -194,6 +201,7 @@ pub fn start_pomodoro(
     duration: u32,
     state: State<'_, AppState>,
 ) -> Result<PomodoroSession, String> {
+    validate::validate_session_duration(duration).map_err(map_err)?;
     let task_id = match task_id {
         Some(s) => Some(Id::parse(&s).ok_or_else(|| format!("invalid task_id: {s}"))?),
         None => None,
@@ -201,6 +209,16 @@ pub fn start_pomodoro(
     let project_id = match project_id {
         Some(s) => Some(Id::parse(&s).ok_or_else(|| format!("invalid project_id: {s}"))?),
         None => None,
+    };
+    // v1 语义:给了 task_id 而没给 project_id → 从任务上派生
+    let project_id = match (task_id.as_ref(), project_id) {
+        (Some(tid), None) => state
+            .store
+            .get_task(tid)
+            .map_err(map_err)?
+            .project_id
+            .clone(),
+        (_, pid) => pid,
     };
     let session = PomodoroSession::new(task_id, project_id, duration);
     state.store.upsert_pomodoro(session).map_err(map_err)
@@ -343,6 +361,7 @@ pub fn list_subtasks_for_task(
 
 #[tauri::command]
 pub fn upsert_subtask(subtask: SubTask, state: State<'_, AppState>) -> Result<SubTask, String> {
+    validate::validate_subtask(&subtask).map_err(map_err)?;
     // 写入前 bump updated_at + revision —— 业务规则集中在 command 层,Store 不感知
     let mut s = subtask;
     s.updated_at = Timestamp::now();
@@ -365,6 +384,7 @@ pub fn list_mottos(state: State<'_, AppState>) -> Result<Vec<Motto>, String> {
 
 #[tauri::command]
 pub fn upsert_motto(motto: Motto, state: State<'_, AppState>) -> Result<Motto, String> {
+    validate::validate_motto(&motto).map_err(map_err)?;
     // 写入前 bump updated_at + revision
     let mut m = motto;
     m.updated_at = Timestamp::now();
@@ -376,6 +396,33 @@ pub fn upsert_motto(motto: Motto, state: State<'_, AppState>) -> Result<Motto, S
 pub fn delete_motto(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     state.store.delete_motto(&id).map_err(map_err)
+}
+
+// === NotificationTemplate commands(通知文案模板,单行配置) ===
+
+/// 读模板;表为空返回默认行(v1 `_DEFAULTS` 语义:文案由前端预设表按语言解析)。
+#[tauri::command]
+pub fn get_notification_template(
+    state: State<'_, AppState>,
+) -> Result<NotificationTemplate, String> {
+    let template = state
+        .store
+        .get_notification_template()
+        .map_err(map_err)?
+        .unwrap_or_else(NotificationTemplate::default_row);
+    Ok(template)
+}
+
+#[tauri::command]
+pub fn upsert_notification_template(
+    template: NotificationTemplate,
+    state: State<'_, AppState>,
+) -> Result<NotificationTemplate, String> {
+    let mut t = template;
+    // 固定单行 id = "1"(防御:前端传错 id 也归一)
+    t.id = Id("1".to_string());
+    t.updated_at = Timestamp::now();
+    state.store.upsert_notification_template(t).map_err(map_err)
 }
 
 // === Stats helpers ===
