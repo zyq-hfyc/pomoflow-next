@@ -2,12 +2,17 @@ name: ci
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    tags:
+      - "v*"
 
-# CI 目标(P0 阶段):验证 crates/core 可编译 + 测试通过 + clippy 零警告。
-# P1 阶段会在 jobs 末尾追加 Tauri 桌面端的构建(Windows / macOS / Linux 三平台 matrix)。
+# CI 触发策略:**只在我主动打 `v*` tag 时跑 CI**,push / PR 不再自动触发。
+#
+# 理由:本地用 `cargo check / test / clippy / fmt` 自我把关就够了,
+# CI 留给发布闸 —— tag push 时同时跑本文件(crates/core 单元闸)与
+# `release.yml`(Tauri 三平台打包占位 / P1.6 实装)。
+#
+# 阶段目标(P0):验证 crates/core 可编译 + 测试通过 + clippy 零警告。
+# P1.6 阶段会在 release.yml 实装 Tauri 桌面端的 Windows / macOS / Linux matrix。
 
 env:
   CARGO_TERM_COLOR: always
