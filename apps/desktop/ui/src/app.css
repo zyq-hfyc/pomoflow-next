@@ -1,17 +1,202 @@
-/* PomoFlow UI 全局样式 —— P1.1 阶段最小集 */
+/* =============================================================
+   PomoFlow Design Tokens —— v1 frontend/src/index.css 全套移植
+   (去 Tailwind 化,由本仓库手写 CSS 直接使用)
+
+   三层分离:页面背景(随主题) / 组件白底(不变) / 内容 accent(随主题)
+   主题通过 <html data-theme="..."> 切换,共 8 套;共享中性/语义/尺度 token
+   不随主题变。
+
+   兼容层:v2 早期组件用的扁平 token(--color-accent 等)在文件末尾
+   映射为十阶 accent 的别名,改主题即全站生效。
+   ============================================================= */
+
+:root,
+html[data-theme="default"] {
+  /* 页面背景 */
+  --bg-page: linear-gradient(160deg, #faf8f5 0%, #f4f1ec 60%, #ede4d8 100%);
+  /* 主色 Accent(柔雾番茄) */
+  --color-accent-50: #fdf6f2;
+  --color-accent-100: #faebe2;
+  --color-accent-200: #f4d5c4;
+  --color-accent-300: #ecb89d;
+  --color-accent-400: #e29676;
+  --color-accent-500: #d17b5c;
+  --color-accent-600: #b86649;
+  --color-accent-700: #9a523b;
+  --color-accent-800: #7a4130;
+  --color-accent-900: #5c3125;
+  --timer-ring-track: #faebe2;
+  --timer-ring-progress: #e29676;
+}
+
+html[data-theme="sunny"] {
+  --bg-page: linear-gradient(160deg, #fffbf5 0%, #fff0dc 60%, #fde4c2 100%);
+  --color-accent-50: #fff8f2;
+  --color-accent-100: #ffecd8;
+  --color-accent-200: #fdd9b4;
+  --color-accent-300: #f5c08a;
+  --color-accent-400: #e8a568;
+  --color-accent-500: #d4945c;
+  --color-accent-600: #b87a48;
+  --color-accent-700: #9c6238;
+  --color-accent-800: #7c4c2c;
+  --color-accent-900: #5e3820;
+  --timer-ring-track: #ffecd8;
+  --timer-ring-progress: #e8a568;
+}
+
+html[data-theme="ocean"] {
+  --bg-page: linear-gradient(160deg, #f2f7fb 0%, #deeaf5 60%, #c8dcf0 100%);
+  --color-accent-50: #f2f7fa;
+  --color-accent-100: #dfecf2;
+  --color-accent-200: #bcd5e0;
+  --color-accent-300: #8fb8cc;
+  --color-accent-400: #709eb5;
+  --color-accent-500: #5c8fad;
+  --color-accent-600: #4a7a96;
+  --color-accent-700: #3c647a;
+  --color-accent-800: #2f4e60;
+  --color-accent-900: #233b48;
+  --timer-ring-track: #dfecf2;
+  --timer-ring-progress: #709eb5;
+}
+
+html[data-theme="forest"] {
+  --bg-page: linear-gradient(160deg, #f3f7f1 0%, #e2eddd 60%, #cde0c6 100%);
+  --color-accent-50: #f2f7f0;
+  --color-accent-100: #e2edde;
+  --color-accent-200: #c5dcc0;
+  --color-accent-300: #9ec498;
+  --color-accent-400: #7eaa78;
+  --color-accent-500: #6b9b68;
+  --color-accent-600: #588456;
+  --color-accent-700: #466a44;
+  --color-accent-800: #365134;
+  --color-accent-900: #293d28;
+  --timer-ring-track: #e2edde;
+  --timer-ring-progress: #7eaa78;
+}
+
+html[data-theme="dusk"] {
+  --bg-page: linear-gradient(160deg, #fdf7f1 0%, #f5e4d4 60%, #edd0bc 100%);
+  --color-accent-50: #fdf6f0;
+  --color-accent-100: #fae8d8;
+  --color-accent-200: #f4d2b5;
+  --color-accent-300: #e9b38a;
+  --color-accent-400: #d9996a;
+  --color-accent-500: #c4825c;
+  --color-accent-600: #a96e4c;
+  --color-accent-700: #8d593e;
+  --color-accent-800: #6f4430;
+  --color-accent-900: #533324;
+  --timer-ring-track: #fae8d8;
+  --timer-ring-progress: #d9996a;
+}
+
+html[data-theme="lavender"] {
+  --bg-page: linear-gradient(160deg, #f8f5fb 0%, #ede2f5 60%, #dcc8ed 100%);
+  --color-accent-50: #f7f4fa;
+  --color-accent-100: #ede4f4;
+  --color-accent-200: #d8c8e8;
+  --color-accent-300: #bba0d4;
+  --color-accent-400: #a084c0;
+  --color-accent-500: #8b7baf;
+  --color-accent-600: #756598;
+  --color-accent-700: #5f527c;
+  --color-accent-800: #494062;
+  --color-accent-900: #37304a;
+  --timer-ring-track: #ede4f4;
+  --timer-ring-progress: #a084c0;
+}
+
+html[data-theme="evening"] {
+  --bg-page: linear-gradient(160deg, #f6f3f0 0%, #e8ded6 60%, #d8cbbe 100%);
+  --color-accent-50: #f5f2ef;
+  --color-accent-100: #eae2da;
+  --color-accent-200: #d8cabd;
+  --color-accent-300: #bfa898;
+  --color-accent-400: #a68b78;
+  --color-accent-500: #8b6f5c;
+  --color-accent-600: #755d4c;
+  --color-accent-700: #5f4a3d;
+  --color-accent-800: #493a30;
+  --color-accent-900: #372c24;
+  --timer-ring-track: #eae2da;
+  --timer-ring-progress: #a68b78;
+}
+
+html[data-theme="teal"] {
+  --bg-page: linear-gradient(160deg, #f3f7f6 0%, #deeae7 60%, #c4dad5 100%);
+  --color-accent-50: #f2f7f6;
+  --color-accent-100: #dfede9;
+  --color-accent-200: #bbd8d0;
+  --color-accent-300: #8fbdb2;
+  --color-accent-400: #70a598;
+  --color-accent-500: #5c8b84;
+  --color-accent-600: #4b756e;
+  --color-accent-700: #3c5e58;
+  --color-accent-800: #2e4844;
+  --color-accent-900: #233633;
+  --timer-ring-track: #dfede9;
+  --timer-ring-progress: #70a598;
+}
+
+/* 中性色 / 语义色 / 优先级 / 尺度(所有主题共享) */
 :root {
-  --color-bg: #fafaf7;
-  --color-surface: #ffffff;
-  --color-text: #1f1d1b;
-  --color-text-muted: #6b6864;
-  --color-accent: #e74c3c;
-  --color-accent-hover: #c0392b;
-  --color-border: #e5e2dd;
+  --color-neutral-0: #ffffff;
+  --color-neutral-50: #fbfaf8;
+  --color-neutral-100: #f5f3f0;
+  --color-neutral-200: #e8e5e0;
+  --color-neutral-300: #d2ccc2;
+  --color-neutral-400: #a8a298;
+  --color-neutral-500: #78716c;
+  --color-neutral-600: #57534e;
+  --color-neutral-700: #3f3b36;
+  --color-neutral-800: #26221e;
+  --color-neutral-900: #1a1714;
+
+  --color-success: #7fa086;
+  --color-warning: #d4a574;
+  --color-error: #c97b6e;
+  --color-info: #8aa0b5;
+
+  /* 优先级指示(莫兰迪) */
+  --color-priority-high: #c97b6e;
+  --color-priority-medium: #d4a574;
+  --color-priority-low: #a8a298;
+
+  /* 字体:Inter/JetBrains Mono/Noto Sans SC 离线自托管(main.ts 引入
+     @fontsource),楷体(名言卡)走系统字体 */
+  --font-family-sans: "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei",
+    "Hiragino Sans GB", system-ui, -apple-system, sans-serif;
+  --font-family-num: "Inter", "JetBrains Mono", "DIN Alternate", system-ui,
+    -apple-system, sans-serif;
+  --font-family-kai: "STXingkai", "STKaiti", "KaiTi", "楷体", serif;
+
+  --radius-sm: 4px;
   --radius-md: 8px;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
-    Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 24px;
+
+  --shadow-xs: 0 1px 2px rgba(89, 47, 34, 0.04);
+  --shadow-sm: 0 2px 4px rgba(89, 47, 34, 0.04), 0 1px 2px rgba(89, 47, 34, 0.06);
+  --shadow-md: 0 4px 12px rgba(89, 47, 34, 0.06), 0 2px 4px rgba(89, 47, 34, 0.04);
+  --shadow-lg: 0 12px 24px rgba(89, 47, 34, 0.08), 0 4px 8px rgba(89, 47, 34, 0.04);
+  --shadow-xl: 0 24px 48px rgba(89, 47, 34, 0.1), 0 8px 16px rgba(89, 47, 34, 0.06);
+  --shadow-focus: 0 0 0 3px
+    color-mix(in srgb, var(--color-accent-500) 22%, transparent);
+
+  /* === v2 兼容别名(扁平 token → 十阶 accent / 中性阶) ===
+     旧组件不改动即可获得主题能力;新代码优先用上面的完整 token */
+  --color-accent: var(--color-accent-500);
+  --color-accent-hover: var(--color-accent-700);
+  --color-bg: var(--color-neutral-50);
+  --color-surface: var(--color-neutral-0);
+  --color-text: var(--color-neutral-800);
+  --color-text-muted: var(--color-neutral-500);
+  --color-border: var(--color-neutral-200);
+  --font-sans: var(--font-family-sans);
 }
 
 * {
@@ -23,17 +208,81 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: var(--color-bg);
   color: var(--color-text);
-  font-family: var(--font-sans);
+  font-family: var(--font-family-sans);
   font-size: 14px;
   line-height: 1.5;
+  letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* 应用外壳:铺当前主题的页面背景。
+   --bg-page 既可来自主题预设渐变,也可被自定义背景图(theme store 注入)覆盖 */
+.app-bg {
+  min-height: 100vh;
+  background: var(--bg-page);
+  background-size: cover;
+  background-attachment: fixed;
+}
+
+body {
+  background: var(--bg-page);
+  background-size: cover;
+  background-attachment: fixed;
+}
+
+/* 等宽对齐数字(计时器/统计) */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-family-num);
+}
+
+.timer-gradient {
+  background: linear-gradient(
+    135deg,
+    var(--color-accent-400),
+    var(--color-accent-600)
+  );
+}
+
+/* accent 主色聚焦光晕 */
+.focus-accent:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* 表单输入框 focus:accent 描边 + 光晕 */
+.input-focus:focus {
+  outline: none;
+  border-color: var(--color-accent-400);
+  box-shadow: var(--shadow-focus);
+}
+
+/* 页面内容蒙层:统一半透明覆盖,避免自定义背景图穿透刺眼;
+   调 alpha 即可全局调整所有页面透明度 */
+.page-veil {
+  background-color: color-mix(in srgb, var(--color-neutral-50) 70%, transparent);
+}
+
+/* 名言卡楷体 */
+.font-kai {
+  font-family: var(--font-family-kai);
 }
 
 #app {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
 }
