@@ -92,12 +92,18 @@ pub trait Store: std::fmt::Debug {
     fn get_project(&self, id: &Id) -> CoreResult<Project>;
     fn upsert_project(&self, project: Project) -> CoreResult<Project>;
     fn delete_project(&self, id: &Id) -> CoreResult<()>;
+    /// 拖拽排序(v1 POST /projects/reorder):全量校验(id 存在/无自指/无环/
+    /// 深度 <3,校验图含未涉及节点)后单事务更新 parent_id + display_order,
+    /// 失败整体回滚。标签无层级,见 [`Store::reorder_tags`]。
+    fn reorder_projects(&self, items: &[crate::reorder::ReorderItem]) -> CoreResult<()>;
 
     // --- Tags ---
     fn list_tags(&self) -> CoreResult<Vec<Tag>>;
     fn get_tag(&self, id: &Id) -> CoreResult<Tag>;
     fn upsert_tag(&self, tag: Tag) -> CoreResult<Tag>;
     fn delete_tag(&self, id: &Id) -> CoreResult<()>;
+    /// 标签拖拽排序:只更新 display_order(无层级),id 存在性校验 + 事务。
+    fn reorder_tags(&self, items: &[crate::reorder::ReorderItem]) -> CoreResult<()>;
 
     // --- Task ↔ Tag links ---
     fn list_tags_for_task(&self, task_id: &Id) -> CoreResult<Vec<Tag>>;
@@ -390,6 +396,32 @@ impl Store for InMemoryStore {
         Ok(())
     }
 
+    fn reorder_projects(&self, items: &[crate::reorder::ReorderItem]) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let existing: Vec<(Id, Option<Id>)> = g
+            .projects
+            .values()
+            .filter(|p| p.deleted_at.is_none())
+            .map(|p| (p.id.clone(), p.parent_id.clone()))
+            .collect();
+        let existing_ids: std::collections::HashSet<Id> =
+            existing.iter().map(|(id, _)| id.clone()).collect();
+        crate::reorder::validate_ids_exist(items, &existing_ids)?;
+        crate::reorder::validate_project_reorder(&crate::reorder::merge_graph(items, &existing))?;
+        for it in items {
+            if let Some(p) = g.projects.get_mut(&it.id) {
+                p.parent_id = it.parent_id.clone();
+                p.display_order = it.display_order;
+                p.updated_at = crate::model::Timestamp::now();
+                p.revision = p.revision.saturating_add(1);
+            }
+        }
+        Ok(())
+    }
+
     fn list_tags(&self) -> CoreResult<Vec<Tag>> {
         let g = self
             .inner
@@ -448,6 +480,28 @@ impl Store for InMemoryStore {
             .map_err(|e| CoreError::storage(e.to_string()))?;
         if let Some(t) = g.tags.get_mut(id) {
             t.deleted_at = Some(crate::model::Timestamp::now());
+        }
+        Ok(())
+    }
+
+    fn reorder_tags(&self, items: &[crate::reorder::ReorderItem]) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let existing_ids: std::collections::HashSet<Id> = g
+            .tags
+            .values()
+            .filter(|t| t.deleted_at.is_none())
+            .map(|t| t.id.clone())
+            .collect();
+        crate::reorder::validate_ids_exist(items, &existing_ids)?;
+        for it in items {
+            if let Some(t) = g.tags.get_mut(&it.id) {
+                t.display_order = it.display_order;
+                t.updated_at = crate::model::Timestamp::now();
+                t.revision = t.revision.saturating_add(1);
+            }
         }
         Ok(())
     }

@@ -931,6 +931,56 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    fn reorder_projects(&self, items: &[crate::reorder::ReorderItem]) -> CoreResult<()> {
+        let conn = self.lock()?;
+        // 取全图(未软删):提交项新 parent 覆盖,未涉及节点原状参与环/深度校验
+        let mut stmt = conn
+            .prepare("SELECT id, parent_id FROM projects WHERE deleted_at_ms IS NULL")
+            .map_err(|e| CoreError::storage(format!("prepare reorder_projects: {e}")))?;
+        let existing: Vec<(String, Option<String>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| CoreError::storage(format!("query: {e}")))?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt);
+
+        let parse_pair = |(id_s, parent_s): &(String, Option<String>)| -> Option<(Id, Option<Id>)> {
+            let id = Id::parse(id_s)?;
+            let parent = match parent_s {
+                Some(s) => Some(Id::parse(s)?),
+                None => None,
+            };
+            Some((id, parent))
+        };
+        let existing: Vec<(Id, Option<Id>)> =
+            existing.iter().filter_map(parse_pair).collect();
+        let existing_ids: std::collections::HashSet<Id> =
+            existing.iter().map(|(id, _)| id.clone()).collect();
+        crate::reorder::validate_ids_exist(items, &existing_ids)?;
+        crate::reorder::validate_project_reorder(&crate::reorder::merge_graph(items, &existing))?;
+
+        // 校验通过后单事务更新;任何一步失败整体回滚(v1 行为)
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| CoreError::storage(format!("begin tx: {e}")))?;
+        for it in items {
+            tx.execute(
+                "UPDATE projects
+                 SET parent_id = ?, display_order = ?, updated_at_ms = ?, revision = revision + 1
+                 WHERE id = ?",
+                params![
+                    it.parent_id.as_ref().map(|p| p.as_str().to_string()),
+                    it.display_order as i64,
+                    now_ms(),
+                    it.id.as_str()
+                ],
+            )
+            .map_err(|e| CoreError::storage(format!("reorder_projects update: {e}")))?;
+        }
+        tx.commit()
+            .map_err(|e| CoreError::storage(format!("reorder_projects commit: {e}")))
+    }
+
     fn list_tags(&self) -> CoreResult<Vec<Tag>> {
         let conn = self.lock()?;
         let mut stmt = conn
@@ -1023,6 +1073,35 @@ impl Store for SqliteStore {
         )
         .map_err(|e| CoreError::storage(format!("cleanup task_tags: {e}")))?;
         Ok(())
+    }
+
+    fn reorder_tags(&self, items: &[crate::reorder::ReorderItem]) -> CoreResult<()> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare("SELECT id FROM tags WHERE deleted_at_ms IS NULL")
+            .map_err(|e| CoreError::storage(format!("prepare reorder_tags: {e}")))?;
+        let existing_ids: std::collections::HashSet<Id> = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| CoreError::storage(format!("query: {e}")))?
+            .filter_map(|r| r.ok())
+            .filter_map(|s| Id::parse(&s))
+            .collect();
+        drop(stmt);
+        crate::reorder::validate_ids_exist(items, &existing_ids)?;
+
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| CoreError::storage(format!("begin tx: {e}")))?;
+        for it in items {
+            tx.execute(
+                "UPDATE tags SET display_order = ?, updated_at_ms = ?, revision = revision + 1
+                 WHERE id = ?",
+                params![it.display_order as i64, now_ms(), it.id.as_str()],
+            )
+            .map_err(|e| CoreError::storage(format!("reorder_tags update: {e}")))?;
+        }
+        tx.commit()
+            .map_err(|e| CoreError::storage(format!("reorder_tags commit: {e}")))
     }
 
     fn list_tags_for_task(&self, task_id: &Id) -> CoreResult<Vec<Tag>> {

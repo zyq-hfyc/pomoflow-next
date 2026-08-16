@@ -141,6 +141,15 @@ pub fn delete_project(id: String, state: State<'_, AppState>) -> Result<(), Stri
     state.store.delete_project(&id).map_err(map_err)
 }
 
+/// 项目树拖拽排序(v1 POST /projects/reorder):全量校验后事务更新。
+#[tauri::command]
+pub fn reorder_projects(
+    items: Vec<pomoflow_core::reorder::ReorderItem>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.store.reorder_projects(&items).map_err(map_err)
+}
+
 // === Tag commands ===
 
 #[tauri::command]
@@ -158,6 +167,15 @@ pub fn upsert_tag(tag: Tag, state: State<'_, AppState>) -> Result<Tag, String> {
 pub fn delete_tag(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     state.store.delete_tag(&id).map_err(map_err)
+}
+
+/// 标签拖拽排序(只更新 display_order)。
+#[tauri::command]
+pub fn reorder_tags(
+    items: Vec<pomoflow_core::reorder::ReorderItem>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.store.reorder_tags(&items).map_err(map_err)
 }
 
 // === Task ↔ Tag 关联 ===
