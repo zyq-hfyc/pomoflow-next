@@ -22,9 +22,9 @@ pub enum TaskStatus {
 #[serde(rename_all = "lowercase")]
 pub enum Priority {
     High,
+    #[default]
     Medium,
     Low,
-    #[default]
     None,
 }
 

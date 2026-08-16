@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   project_id TEXT,
-  priority TEXT NOT NULL DEFAULT 'none',
+  priority TEXT NOT NULL DEFAULT 'medium',
   status TEXT NOT NULL DEFAULT 'active',
   due_date_ms INTEGER,
   estimated_pomodoros INTEGER NOT NULL DEFAULT 0,
