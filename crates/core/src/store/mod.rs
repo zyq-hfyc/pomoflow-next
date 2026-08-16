@@ -45,8 +45,9 @@ pub struct TagLink {
 /// - `priority`:高/中/低 三档过滤
 /// - `date`:`today` / `tomorrow` / `this_week` / `month` 由后端展开为 due_date 范围
 ///   (实现统一在 sqlite impl 里处理)。
+/// - serde **snake_case**(与 api.ts 的 TaskQuery 字段名一致;早期误加 camelCase
+///   rename 导致 month_start_ms 等多词键被静默丢弃,筛选失效)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TaskQuery {
     pub project_id: Option<Id>,
     pub tag_id: Option<Id>,
@@ -397,8 +398,36 @@ impl Store for InMemoryStore {
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        if let Some(p) = g.projects.get_mut(id) {
-            p.deleted_at = Some(crate::model::Timestamp::now());
+        // v1 FK 语义:整棵子树级联软删 + tasks/pomodoros 的 project_id 置空
+        let mut subtree: Vec<Id> = vec![id.clone()];
+        let mut i = 0;
+        while i < subtree.len() {
+            let cur = subtree[i].clone();
+            for p in g.projects.values() {
+                if p.deleted_at.is_none()
+                    && p.parent_id.as_ref() == Some(&cur)
+                    && !subtree.contains(&p.id)
+                {
+                    subtree.push(p.id.clone());
+                }
+            }
+            i += 1;
+        }
+        let now = crate::model::Timestamp::now();
+        for pid in &subtree {
+            if let Some(p) = g.projects.get_mut(pid) {
+                p.deleted_at = Some(now);
+            }
+            for t in g.tasks.values_mut() {
+                if t.project_id.as_ref() == Some(pid) {
+                    t.project_id = None;
+                }
+            }
+            for s in g.pomodoros.values_mut() {
+                if s.project_id.as_ref() == Some(pid) {
+                    s.project_id = None;
+                }
+            }
         }
         Ok(())
     }

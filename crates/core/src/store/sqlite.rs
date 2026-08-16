@@ -927,12 +927,52 @@ impl Store for SqliteStore {
 
     fn delete_project(&self, id: &Id) -> CoreResult<()> {
         let conn = self.lock()?;
-        conn.execute(
-            "UPDATE projects SET deleted_at_ms = ?, updated_at_ms = ? WHERE id = ?",
-            params![now_ms(), now_ms(), id.as_str()],
-        )
-        .map_err(|e| CoreError::storage(format!("delete_project: {e}")))?;
-        Ok(())
+        // v1 FK 语义:删除项目 → 整棵子树级联删 + 相关 tasks/pomodoros 的
+        // project_id 置空(ON DELETE CASCADE / SET NULL)
+        let mut stmt = conn
+            .prepare("SELECT id, parent_id FROM projects WHERE deleted_at_ms IS NULL")
+            .map_err(|e| CoreError::storage(format!("prepare delete_project: {e}")))?;
+        let rows: Vec<(String, Option<String>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| CoreError::storage(format!("query: {e}")))?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt);
+
+        // BFS 收集子树
+        let mut subtree = vec![id.as_str().to_string()];
+        let mut frontier = vec![id.as_str().to_string()];
+        while let Some(cur) = frontier.pop() {
+            for (pid, parent) in &rows {
+                if parent.as_deref() == Some(cur.as_str()) && !subtree.contains(pid) {
+                    subtree.push(pid.clone());
+                    frontier.push(pid.clone());
+                }
+            }
+        }
+
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| CoreError::storage(format!("begin tx: {e}")))?;
+        for pid in &subtree {
+            tx.execute(
+                "UPDATE projects SET deleted_at_ms = ?, updated_at_ms = ? WHERE id = ?",
+                params![now_ms(), now_ms(), pid],
+            )
+            .map_err(|e| CoreError::storage(format!("cascade delete project: {e}")))?;
+            tx.execute(
+                "UPDATE tasks SET project_id = NULL, updated_at_ms = ? WHERE project_id = ?",
+                params![now_ms(), pid],
+            )
+            .map_err(|e| CoreError::storage(format!("detach tasks: {e}")))?;
+            tx.execute(
+                "UPDATE pomodoros SET project_id = NULL, updated_at_ms = ? WHERE project_id = ?",
+                params![now_ms(), pid],
+            )
+            .map_err(|e| CoreError::storage(format!("detach pomodoros: {e}")))?;
+        }
+        tx.commit()
+            .map_err(|e| CoreError::storage(format!("delete_project commit: {e}")))
     }
 
     fn reorder_projects(&self, items: &[crate::reorder::ReorderItem]) -> CoreResult<()> {
