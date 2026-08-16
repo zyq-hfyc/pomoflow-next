@@ -15,6 +15,7 @@
 //! - **同步 trait(非 async)**:当前不引入 Tokio 依赖;P1 真需要异步再权衡
 //!   (rusqlite 本身是同步 API)
 
+pub mod migrate;
 pub mod sqlite;
 
 use std::collections::HashMap;
@@ -25,8 +26,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, CoreResult};
 use crate::model::{
-    DailyReview, Id, MonthlyReview, Motto, PomodoroSession, Priority, Project, SubTask, Tag, Task,
-    WeeklyReview,
+    DailyReview, Id, MonthlyReview, Motto, NotificationTemplate, PomodoroSession, Priority,
+    Project, SubTask, Tag, Task, WeeklyReview,
 };
 
 pub use sqlite::SqliteStore;
@@ -129,6 +130,14 @@ pub trait Store: std::fmt::Debug {
     fn upsert_motto(&self, motto: Motto) -> CoreResult<Motto>;
     fn delete_motto(&self, id: &Id) -> CoreResult<()>;
 
+    // --- NotificationTemplate(全库单行配置,id 固定 "1") ---
+    /// 读通知文案模板;表为空返回 None(调用方回落 `default_row()`)。
+    fn get_notification_template(&self) -> CoreResult<Option<NotificationTemplate>>;
+    fn upsert_notification_template(
+        &self,
+        template: NotificationTemplate,
+    ) -> CoreResult<NotificationTemplate>;
+
     // --- Pomodoro stats(番茄钟页"今日专注分钟"用) ---
     /// 返回今日完成的番茄分钟数(把所有 is_completed=1 且 ended_at 在当天区间内的
     /// session 的 duration_minutes 求和)。后端按本地"今天 00:00 ~ 次日 00:00 UTC"
@@ -157,6 +166,7 @@ struct Inner {
     weekly_reviews: HashMap<String, WeeklyReview>,
     monthly_reviews: HashMap<String, MonthlyReview>,
     mottos: HashMap<Id, Motto>,
+    notification_template: Option<NotificationTemplate>,
 }
 
 impl InMemoryStore {
@@ -191,8 +201,7 @@ impl Store for InMemoryStore {
                     return false;
                 };
                 let ms = due.timestamp_millis();
-                q.month_start_ms.is_none_or(|s| ms >= s)
-                    && q.month_end_ms.is_none_or(|e| ms <= e)
+                q.month_start_ms.is_none_or(|s| ms >= s) && q.month_end_ms.is_none_or(|e| ms <= e)
             })
             .filter(|t| match q.date {
                 None => true,
@@ -200,24 +209,26 @@ impl Store for InMemoryStore {
                     let now = chrono::Utc::now();
                     let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
                     let today_end = today_start + chrono::Duration::days(1);
-                    t.due_date.is_some_and(|d| d >= today_start && d < today_end)
+                    t.due_date
+                        .is_some_and(|d| d >= today_start && d < today_end)
                 }
                 Some(TaskDateFilter::Tomorrow) => {
                     let now = chrono::Utc::now();
                     let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
                     let tomorrow_start = today_start + chrono::Duration::days(1);
                     let tomorrow_end = tomorrow_start + chrono::Duration::days(1);
-                    t.due_date.is_some_and(|d| d >= tomorrow_start && d < tomorrow_end)
+                    t.due_date
+                        .is_some_and(|d| d >= tomorrow_start && d < tomorrow_end)
                 }
                 Some(TaskDateFilter::ThisWeek) => {
                     // 周一到周日(本地化,这里按 UTC 周一算)
                     let now = chrono::Utc::now();
                     let weekday = now.date_naive().weekday().num_days_from_monday();
-                    let week_start = now.date_naive()
-                        - chrono::Duration::days(weekday as i64);
+                    let week_start = now.date_naive() - chrono::Duration::days(weekday as i64);
                     let week_start_dt = week_start.and_hms_opt(0, 0, 0).unwrap().and_utc();
                     let week_end_dt = week_start_dt + chrono::Duration::days(7);
-                    t.due_date.is_some_and(|d| d >= week_start_dt && d < week_end_dt)
+                    t.due_date
+                        .is_some_and(|d| d >= week_start_dt && d < week_end_dt)
                 }
             })
             .cloned()
@@ -229,10 +240,14 @@ impl Store for InMemoryStore {
                     .is_some_and(|tags| tags.contains(tag_id))
             });
         }
-        out.sort_by_key(|t| std::cmp::Reverse(t.updated_at.0));
-        if let Some(limit) = q.limit {
-            out.truncate(limit);
-        }
+        // v1 排序:created_date DESC(新建在前);id 兜底保证稳定
+        out.sort_by(|a, b| {
+            b.created_at
+                .0
+                .cmp(&a.created_at.0)
+                .then_with(|| a.id.as_str().cmp(b.id.as_str()))
+        });
+        out.truncate(crate::validate::clamp_limit(q.limit));
         Ok(out)
     }
 
@@ -274,11 +289,25 @@ impl Store for InMemoryStore {
             .inner
             .read()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        Ok(g.projects
+        let mut out: Vec<Project> = g
+            .projects
             .values()
             .filter(|p| p.deleted_at.is_none())
             .cloned()
-            .collect())
+            .collect();
+        // v1 排序:(parent_id, display_order, id);None(顶层)排在 Some 之前
+        out.sort_by(|a, b| {
+            let order = match (a.parent_id.as_ref(), b.parent_id.as_ref()) {
+                (None, None) => std::cmp::Ordering::Equal,
+                (None, Some(_)) => std::cmp::Ordering::Less,
+                (Some(_), None) => std::cmp::Ordering::Greater,
+                (Some(pa), Some(pb)) => pa.as_str().cmp(pb.as_str()),
+            };
+            order
+                .then_with(|| a.display_order.cmp(&b.display_order))
+                .then_with(|| a.id.as_str().cmp(b.id.as_str()))
+        });
+        Ok(out)
     }
 
     fn get_project(&self, id: &Id) -> CoreResult<Project> {
@@ -321,11 +350,19 @@ impl Store for InMemoryStore {
             .inner
             .read()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        Ok(g.tags
+        let mut out: Vec<Tag> = g
+            .tags
             .values()
             .filter(|t| t.deleted_at.is_none())
             .cloned()
-            .collect())
+            .collect();
+        // v1 排序:(display_order, id)
+        out.sort_by(|a, b| {
+            a.display_order
+                .cmp(&b.display_order)
+                .then_with(|| a.id.as_str().cmp(b.id.as_str()))
+        });
+        Ok(out)
     }
 
     fn get_tag(&self, id: &Id) -> CoreResult<Tag> {
@@ -592,6 +629,26 @@ impl Store for InMemoryStore {
             m.deleted_at = Some(crate::model::Timestamp::now());
         }
         Ok(())
+    }
+
+    fn get_notification_template(&self) -> CoreResult<Option<NotificationTemplate>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        Ok(g.notification_template.clone())
+    }
+
+    fn upsert_notification_template(
+        &self,
+        template: NotificationTemplate,
+    ) -> CoreResult<NotificationTemplate> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        g.notification_template = Some(template.clone());
+        Ok(template)
     }
 
     fn today_completed_minutes(&self, start_ms: i64, end_ms: i64) -> CoreResult<u32> {

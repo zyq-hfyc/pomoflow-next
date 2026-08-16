@@ -16,6 +16,12 @@ pub struct Project {
     pub color: String,
     /// 父项目 ID;顶层为 None
     pub parent_id: Option<Id>,
+    /// 同级排序权重(小在前;v1 display_order,拖拽排序用)
+    #[serde(default)]
+    pub display_order: u32,
+    /// 创建时间(v1 created_date)
+    #[serde(default)]
+    pub created_at: Timestamp,
 
     #[serde(default)]
     pub revision: u64,
@@ -32,6 +38,8 @@ impl Project {
             name: name.into(),
             color: String::new(),
             parent_id: None,
+            display_order: 0,
+            created_at: Timestamp::now(),
             revision: 1,
             deleted_at: None,
             updated_at: Timestamp::now(),

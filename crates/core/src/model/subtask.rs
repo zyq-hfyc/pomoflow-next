@@ -24,6 +24,9 @@ pub struct SubTask {
     /// 排序权重(同 task 内升序);前端 UI 拖拽时更新。
     #[serde(default)]
     pub position: u32,
+    /// 创建时间(v1 created_date)
+    #[serde(default)]
+    pub created_at: Timestamp,
 
     // === sync 元数据 ===
     #[serde(default)]
@@ -43,6 +46,7 @@ impl SubTask {
             title: title.into(),
             is_completed: false,
             position: 0,
+            created_at: Timestamp::now(),
             revision: 1,
             deleted_at: None,
             updated_at: Timestamp::now(),

@@ -35,8 +35,8 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::error::{CoreError, CoreResult};
 use crate::model::{
-    DailyReview, Id, MonthlyReview, Motto, PomodoroSession, Priority, Project, Reminder, Repeat,
-    SubTask, Tag, Task, TaskStatus, Timestamp, WeeklyReview,
+    DailyReview, Id, MonthlyReview, Motto, NotificationTemplate, PomodoroSession, Priority,
+    Project, Reminder, Repeat, SubTask, Tag, Task, TaskStatus, Timestamp, WeeklyReview,
 };
 use crate::store::{Store, TaskDateFilter, TaskQuery};
 
@@ -61,23 +61,12 @@ impl SqliteStore {
         conn.execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(|e| CoreError::storage(format!("pragma foreign_keys: {e}")))?;
 
+        // 新库一次建成最新结构;旧库的表已存在,由版本化迁移补齐(幂等)。
+        // 迁移前备份由调用方(桌面端 / migrate-v1)用 migrate::needs_migration 判断。
         conn.execute_batch(SCHEMA_SQL)
             .map_err(|e| CoreError::storage(format!("apply schema: {e}")))?;
-
-        // 轻量字段迁移:P0 → P1.8.6b 加了 tasks.repeat_config,旧库需要 ALTER TABLE。
-        // PRAGMA table_info 不能放在同一 execute_batch 里(IF NOT EXISTS 不支持 column 级),
-        // 单独跑一次检查。
-        let has_repeat_config: bool = conn
-            .prepare("PRAGMA table_info(tasks)")
-            .map_err(|e| CoreError::storage(format!("pragma table_info: {e}")))?
-            .query_map([], |row| row.get::<_, String>(1))
-            .map_err(|e| CoreError::storage(format!("query pragma: {e}")))?
-            .filter_map(|r| r.ok())
-            .any(|name| name == "repeat_config");
-        if !has_repeat_config {
-            conn.execute_batch("ALTER TABLE tasks ADD COLUMN repeat_config TEXT;")
-                .map_err(|e| CoreError::storage(format!("migrate add repeat_config: {e}")))?;
-        }
+        super::migrate::run_migrations(&conn)
+            .map_err(|e| CoreError::storage(format!("run migrations: {e}")))?;
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -96,6 +85,8 @@ impl SqliteStore {
             .map_err(|e| CoreError::storage(format!("pragma foreign_keys: {e}")))?;
         conn.execute_batch(SCHEMA_SQL)
             .map_err(|e| CoreError::storage(format!("apply schema: {e}")))?;
+        super::migrate::run_migrations(&conn)
+            .map_err(|e| CoreError::storage(format!("run migrations: {e}")))?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -108,26 +99,34 @@ impl SqliteStore {
     }
 }
 
-/// SQLite schema —— 8 张表,所有时间戳 ms INTEGER,所有枚举 TEXT。
+/// SQLite schema —— 9 张表,所有时间戳 ms INTEGER,所有枚举 TEXT。
 ///
-/// 加字段时手动 append(无迁移系统,P2+ 加)。
-const SCHEMA_SQL: &str = r#"
+/// 这里永远是**最新结构**(新库一次建成);旧库升级走 `migrate.rs` 的版本化迁移
+/// (迁移函数里同步补一份新列,保持两边一致)。
+pub(crate) const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
   color TEXT NOT NULL DEFAULT '',
   parent_id TEXT,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  created_at_ms INTEGER NOT NULL DEFAULT 0,
   revision INTEGER NOT NULL DEFAULT 1,
   deleted_at_ms INTEGER,
   updated_at_ms INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_parent ON projects(parent_id);
+-- 注意:引用"迁移 1 新增列"的索引(idx_projects/tags_display_order、
+-- idx_tasks_repeat_parent、idx_tasks_created)不放这里 —— 旧库的老表还没这些列,
+-- SCHEMA_SQL 先于迁移执行会炸;统一放 migrate.rs 的 migration_001 里。
 
 CREATE TABLE IF NOT EXISTS tags (
   id TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
   color TEXT NOT NULL DEFAULT '',
+  display_order INTEGER NOT NULL DEFAULT 0,
+  created_at_ms INTEGER NOT NULL DEFAULT 0,
   revision INTEGER NOT NULL DEFAULT 1,
   deleted_at_ms INTEGER,
   updated_at_ms INTEGER NOT NULL
@@ -152,7 +151,10 @@ CREATE TABLE IF NOT EXISTS tasks (
   reminder TEXT NOT NULL DEFAULT 'none',
   repeat_kind TEXT NOT NULL DEFAULT 'none',
   repeat_config TEXT,
+  repeat_parent_id TEXT,
+  repeat_end_date_ms INTEGER,
   completed_at_ms INTEGER,
+  created_at_ms INTEGER NOT NULL DEFAULT 0,
   revision INTEGER NOT NULL DEFAULT 1,
   deleted_at_ms INTEGER,
   updated_at_ms INTEGER NOT NULL
@@ -178,6 +180,7 @@ CREATE TABLE IF NOT EXISTS pomodoros (
   started_at_ms INTEGER NOT NULL,
   ended_at_ms INTEGER NOT NULL,
   is_completed INTEGER NOT NULL DEFAULT 0,
+  created_at_ms INTEGER NOT NULL DEFAULT 0,
   revision INTEGER NOT NULL DEFAULT 1,
   deleted_at_ms INTEGER,
   updated_at_ms INTEGER NOT NULL
@@ -213,6 +216,7 @@ CREATE TABLE IF NOT EXISTS subtasks (
   title TEXT NOT NULL,
   is_completed INTEGER NOT NULL DEFAULT 0,
   position INTEGER NOT NULL DEFAULT 0,
+  created_at_ms INTEGER NOT NULL DEFAULT 0,
   revision INTEGER NOT NULL DEFAULT 1,
   deleted_at_ms INTEGER,
   updated_at_ms INTEGER NOT NULL
@@ -222,6 +226,7 @@ CREATE TABLE IF NOT EXISTS mottos (
   id TEXT PRIMARY KEY NOT NULL,
   text TEXT NOT NULL DEFAULT '',
   author TEXT,
+  created_at_ms INTEGER NOT NULL DEFAULT 0,
   revision INTEGER NOT NULL DEFAULT 1,
   deleted_at_ms INTEGER,
   updated_at_ms INTEGER NOT NULL
@@ -230,6 +235,20 @@ CREATE TABLE IF NOT EXISTS mottos (
 CREATE INDEX IF NOT EXISTS idx_mottos_updated ON mottos(updated_at_ms DESC);
 
 CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);
+
+-- 通知文案模板:全库单行(id 固定 '1')
+CREATE TABLE IF NOT EXISTS notification_templates (
+  id TEXT PRIMARY KEY NOT NULL,
+  style TEXT NOT NULL DEFAULT 'default',
+  style_description TEXT,
+  focus_end_title TEXT,
+  focus_end_body TEXT,
+  break_end_title TEXT,
+  break_end_body TEXT,
+  reminder_title TEXT,
+  reminder_body TEXT,
+  updated_at_ms INTEGER NOT NULL
+);
 "#;
 
 // === 时间转换 helper ===
@@ -350,11 +369,7 @@ fn repeat_parse(s: &str) -> CoreResult<Repeat> {
 /// 与 v1 TimerPage 行为对齐(UTC 今日 0 点起 + 24h / +48h / 周一起一周)。
 fn date_filter_range(f: TaskDateFilter) -> (i64, i64) {
     let now = Utc::now();
-    let today_start = now
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc();
+    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
     match f {
         TaskDateFilter::Today => {
             let end = today_start + chrono::Duration::days(1);
@@ -403,6 +418,7 @@ fn row_to_task(row: &Row<'_>) -> rusqlite::Result<Task> {
     let updated_at_ms: i64 = row.get("updated_at_ms")?;
     let due_date_ms: Option<i64> = row.get("due_date_ms")?;
     let completed_at_ms: Option<i64> = row.get("completed_at_ms")?;
+    let repeat_end_date_ms: Option<i64> = row.get("repeat_end_date_ms")?;
     let pomodoro_duration: Option<i64> = row.get("pomodoro_duration")?;
 
     let project_id_s: Option<String> = row.get("project_id")?;
@@ -411,6 +427,13 @@ fn row_to_task(row: &Row<'_>) -> rusqlite::Result<Task> {
             Id::parse(&s)
                 .ok_or_else(|| core_err(CoreError::storage(format!("invalid project_id: {s}"))))?,
         ),
+        None => None,
+    };
+    let repeat_parent_s: Option<String> = row.get("repeat_parent_id")?;
+    let repeat_parent_id = match repeat_parent_s {
+        Some(s) => Some(Id::parse(&s).ok_or_else(|| {
+            core_err(CoreError::storage(format!("invalid repeat_parent_id: {s}")))
+        })?),
         None => None,
     };
 
@@ -434,10 +457,16 @@ fn row_to_task(row: &Row<'_>) -> rusqlite::Result<Task> {
             reminder: reminder_parse(&reminder_s).map_err(core_err)?,
             repeat: repeat_parse(&repeat_kind_s).map_err(core_err)?,
             repeat_config: row.get("repeat_config")?,
+            repeat_parent_id: repeat_parent_id.clone(),
+            repeat_end_date: repeat_end_date_ms
+                .map(dt_from_ms)
+                .transpose()
+                .map_err(core_err)?,
             completed_at: completed_at_ms
                 .map(dt_from_ms)
                 .transpose()
                 .map_err(core_err)?,
+            created_at: ts_from_ms(row.get("created_at_ms")?).map_err(core_err)?,
             revision: row.get::<_, i64>("revision")? as u64,
             deleted_at: deleted_at_ms
                 .map(ts_from_ms)
@@ -468,6 +497,8 @@ fn row_to_project(row: &Row<'_>) -> rusqlite::Result<Project> {
         name: row.get("name")?,
         color: row.get("color")?,
         parent_id,
+        display_order: row.get::<_, i64>("display_order")? as u32,
+        created_at: ts_from_ms(row.get("created_at_ms")?).map_err(core_err)?,
         revision: row.get::<_, i64>("revision")? as u64,
         deleted_at: row
             .get::<_, Option<i64>>("deleted_at_ms")?
@@ -487,6 +518,8 @@ fn row_to_tag(row: &Row<'_>) -> rusqlite::Result<Tag> {
         id,
         name: row.get("name")?,
         color: row.get("color")?,
+        display_order: row.get::<_, i64>("display_order")? as u32,
+        created_at: ts_from_ms(row.get("created_at_ms")?).map_err(core_err)?,
         revision: row.get::<_, i64>("revision")? as u64,
         deleted_at: row
             .get::<_, Option<i64>>("deleted_at_ms")?
@@ -527,6 +560,7 @@ fn row_to_pomodoro(row: &Row<'_>) -> rusqlite::Result<PomodoroSession> {
         started_at: dt_from_ms(row.get("started_at_ms")?).map_err(core_err)?,
         ended_at: dt_from_ms(row.get("ended_at_ms")?).map_err(core_err)?,
         is_completed: row.get::<_, i64>("is_completed")? != 0,
+        created_at: ts_from_ms(row.get("created_at_ms")?).map_err(core_err)?,
         revision: row.get::<_, i64>("revision")? as u64,
         deleted_at: row
             .get::<_, Option<i64>>("deleted_at_ms")?
@@ -609,6 +643,7 @@ fn row_to_subtask(row: &Row<'_>) -> rusqlite::Result<SubTask> {
         title: row.get("title")?,
         is_completed: row.get::<_, i64>("is_completed")? != 0,
         position: row.get::<_, i64>("position")? as u32,
+        created_at: ts_from_ms(row.get("created_at_ms")?).map_err(core_err)?,
         revision: row.get::<_, i64>("revision")? as u64,
         deleted_at: row
             .get::<_, Option<i64>>("deleted_at_ms")?
@@ -628,12 +663,29 @@ fn row_to_motto(row: &Row<'_>) -> rusqlite::Result<Motto> {
         id,
         text: row.get("text")?,
         author: row.get::<_, Option<String>>("author")?,
+        created_at: ts_from_ms(row.get("created_at_ms")?).map_err(core_err)?,
         revision: row.get::<_, i64>("revision")? as u64,
         deleted_at: row
             .get::<_, Option<i64>>("deleted_at_ms")?
             .map(ts_from_ms)
             .transpose()
             .map_err(core_err)?,
+        updated_at: ts_from_ms(row.get("updated_at_ms")?).map_err(core_err)?,
+    }))
+}
+
+fn row_to_notification_template(row: &Row<'_>) -> rusqlite::Result<NotificationTemplate> {
+    // id 固定 '1',不是 UUID —— 直接读字符串,不走 Id::parse
+    core_try(Ok(NotificationTemplate {
+        id: Id(row.get::<_, String>("id")?),
+        style: row.get("style")?,
+        style_description: row.get::<_, Option<String>>("style_description")?,
+        focus_end_title: row.get::<_, Option<String>>("focus_end_title")?,
+        focus_end_body: row.get::<_, Option<String>>("focus_end_body")?,
+        break_end_title: row.get::<_, Option<String>>("break_end_title")?,
+        break_end_body: row.get::<_, Option<String>>("break_end_body")?,
+        reminder_title: row.get::<_, Option<String>>("reminder_title")?,
+        reminder_body: row.get::<_, Option<String>>("reminder_body")?,
         updated_at: ts_from_ms(row.get("updated_at_ms")?).map_err(core_err)?,
     }))
 }
@@ -686,10 +738,9 @@ impl Store for SqliteStore {
             args.push(Box::new(end));
         }
 
-        sql.push_str(" ORDER BY t.updated_at_ms DESC");
-        if let Some(limit) = q.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
-        }
+        sql.push_str(" ORDER BY t.created_at_ms DESC, t.id");
+        // v1:limit 1–5000,缺省 1000
+        sql.push_str(&format!(" LIMIT {}", crate::validate::clamp_limit(q.limit)));
 
         let mut stmt = conn
             .prepare(&sql)
@@ -729,9 +780,10 @@ impl Store for SqliteStore {
             "INSERT INTO tasks (
                 id, title, description, project_id, priority, status,
                 due_date_ms, estimated_pomodoros, completed_pomodoros, pomodoro_duration,
-                reminder, repeat_kind, repeat_config, completed_at_ms,
+                reminder, repeat_kind, repeat_config, repeat_parent_id, repeat_end_date_ms,
+                completed_at_ms, created_at_ms,
                 revision, deleted_at_ms, updated_at_ms
-             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title,
                 description=excluded.description,
@@ -745,7 +797,10 @@ impl Store for SqliteStore {
                 reminder=excluded.reminder,
                 repeat_kind=excluded.repeat_kind,
                 repeat_config=excluded.repeat_config,
+                repeat_parent_id=excluded.repeat_parent_id,
+                repeat_end_date_ms=excluded.repeat_end_date_ms,
                 completed_at_ms=excluded.completed_at_ms,
+                created_at_ms=excluded.created_at_ms,
                 revision=excluded.revision,
                 deleted_at_ms=excluded.deleted_at_ms,
                 updated_at_ms=excluded.updated_at_ms",
@@ -763,7 +818,12 @@ impl Store for SqliteStore {
                 reminder_str(task.reminder),
                 repeat_str(task.repeat),
                 task.repeat_config,
+                task.repeat_parent_id
+                    .as_ref()
+                    .map(|p| p.as_str().to_string()),
+                task.repeat_end_date.map(dt_to_ms),
                 task.completed_at.map(dt_to_ms),
+                ts_to_ms(task.created_at),
                 task.revision as i64,
                 task.deleted_at.map(ts_to_ms),
                 ts_to_ms(task.updated_at),
@@ -787,7 +847,9 @@ impl Store for SqliteStore {
         let conn = self.lock()?;
         let mut stmt = conn
             .prepare(
-                "SELECT * FROM projects WHERE deleted_at_ms IS NULL ORDER BY updated_at_ms DESC",
+                // v1 排序:(parent_id, display_order, id);SQLite ASC 下 NULL parent 排最前
+                "SELECT * FROM projects WHERE deleted_at_ms IS NULL
+                 ORDER BY parent_id ASC, display_order ASC, id ASC",
             )
             .map_err(|e| CoreError::storage(format!("prepare list_projects: {e}")))?;
         let rows = stmt
@@ -815,10 +877,13 @@ impl Store for SqliteStore {
     fn upsert_project(&self, project: Project) -> CoreResult<Project> {
         let conn = self.lock()?;
         conn.execute(
-            "INSERT INTO projects (id, name, color, parent_id, revision, deleted_at_ms, updated_at_ms)
-             VALUES (?,?,?,?,?,?,?)
+            "INSERT INTO projects
+                (id, name, color, parent_id, display_order, created_at_ms,
+                 revision, deleted_at_ms, updated_at_ms)
+             VALUES (?,?,?,?,?,?,?,?,?)
              ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, color=excluded.color, parent_id=excluded.parent_id,
+                display_order=excluded.display_order, created_at_ms=excluded.created_at_ms,
                 revision=excluded.revision, deleted_at_ms=excluded.deleted_at_ms,
                 updated_at_ms=excluded.updated_at_ms",
             params![
@@ -826,6 +891,8 @@ impl Store for SqliteStore {
                 project.name,
                 project.color,
                 project.parent_id.as_ref().map(|p| p.as_str().to_string()),
+                project.display_order as i64,
+                ts_to_ms(project.created_at),
                 project.revision as i64,
                 project.deleted_at.map(ts_to_ms),
                 ts_to_ms(project.updated_at),
@@ -848,7 +915,10 @@ impl Store for SqliteStore {
     fn list_tags(&self) -> CoreResult<Vec<Tag>> {
         let conn = self.lock()?;
         let mut stmt = conn
-            .prepare("SELECT * FROM tags WHERE deleted_at_ms IS NULL ORDER BY name")
+            .prepare(
+                // v1 排序:(display_order, id) —— 用户拖拽顺序优先
+                "SELECT * FROM tags WHERE deleted_at_ms IS NULL ORDER BY display_order ASC, id ASC",
+            )
             .map_err(|e| CoreError::storage(format!("prepare list_tags: {e}")))?;
         let rows = stmt
             .query_map([], row_to_tag)
@@ -896,15 +966,21 @@ impl Store for SqliteStore {
         }
 
         conn.execute(
-            "INSERT INTO tags (id, name, color, revision, deleted_at_ms, updated_at_ms)
-             VALUES (?,?,?,?,?,?)
+            "INSERT INTO tags
+                (id, name, color, display_order, created_at_ms,
+                 revision, deleted_at_ms, updated_at_ms)
+             VALUES (?,?,?,?,?,?,?,?)
              ON CONFLICT(id) DO UPDATE SET
-                name=excluded.name, color=excluded.color, revision=excluded.revision,
+                name=excluded.name, color=excluded.color,
+                display_order=excluded.display_order, created_at_ms=excluded.created_at_ms,
+                revision=excluded.revision,
                 deleted_at_ms=excluded.deleted_at_ms, updated_at_ms=excluded.updated_at_ms",
             params![
                 tag.id.as_str(),
                 tag.name,
                 tag.color,
+                tag.display_order as i64,
+                ts_to_ms(tag.created_at),
                 tag.revision as i64,
                 tag.deleted_at.map(ts_to_ms),
                 ts_to_ms(tag.updated_at),
@@ -968,7 +1044,7 @@ impl Store for SqliteStore {
             .map_err(|e| CoreError::storage(format!("prepare list_tags_for_tasks: {e}")))?;
         let mut rows = stmt
             .query(rusqlite::params_from_iter(
-                task_ids.iter().map(|i| i.as_str())
+                task_ids.iter().map(|i| i.as_str()),
             ))
             .map_err(|e| CoreError::storage(format!("query: {e}")))?;
         while let Some(row) = rows
@@ -978,7 +1054,8 @@ impl Store for SqliteStore {
             let task_id_s: String = row
                 .get::<_, String>(0)
                 .map_err(|e| CoreError::storage(format!("row.task_id: {e}")))?;
-            let tag = row_to_tag(row).map_err(|e| CoreError::storage(format!("row_to_tag: {e}")))?;
+            let tag =
+                row_to_tag(row).map_err(|e| CoreError::storage(format!("row_to_tag: {e}")))?;
             out.entry(Id(task_id_s)).or_default().push(tag);
         }
         Ok(out)
@@ -1025,14 +1102,14 @@ impl Store for SqliteStore {
         conn.execute(
             "INSERT INTO pomodoros (
                 id, task_id, project_id, duration_minutes,
-                started_at_ms, ended_at_ms, is_completed,
+                started_at_ms, ended_at_ms, is_completed, created_at_ms,
                 revision, deleted_at_ms, updated_at_ms
-             ) VALUES (?,?,?,?,?,?,?,?,?,?)
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(id) DO UPDATE SET
                 task_id=excluded.task_id, project_id=excluded.project_id,
                 duration_minutes=excluded.duration_minutes,
                 started_at_ms=excluded.started_at_ms, ended_at_ms=excluded.ended_at_ms,
-                is_completed=excluded.is_completed,
+                is_completed=excluded.is_completed, created_at_ms=excluded.created_at_ms,
                 revision=excluded.revision, deleted_at_ms=excluded.deleted_at_ms,
                 updated_at_ms=excluded.updated_at_ms",
             params![
@@ -1043,6 +1120,7 @@ impl Store for SqliteStore {
                 dt_to_ms(session.started_at),
                 dt_to_ms(session.ended_at),
                 session.is_completed as i64,
+                ts_to_ms(session.created_at),
                 session.revision as i64,
                 session.deleted_at.map(ts_to_ms),
                 ts_to_ms(session.updated_at),
@@ -1187,7 +1265,7 @@ impl Store for SqliteStore {
             .map_err(|e| CoreError::storage(format!("prepare list_subtasks_for_tasks: {e}")))?;
         let mut rows = stmt
             .query(rusqlite::params_from_iter(
-                task_ids.iter().map(|i| i.as_str())
+                task_ids.iter().map(|i| i.as_str()),
             ))
             .map_err(|e| CoreError::storage(format!("query: {e}")))?;
         while let Some(row) = rows
@@ -1209,13 +1287,15 @@ impl Store for SqliteStore {
         // upsert by primary key;revision / deleted_at 在客户端控制(Store trait 不感知)
         conn.execute(
             "INSERT INTO subtasks
-              (id, task_id, title, is_completed, position, revision, deleted_at_ms, updated_at_ms)
-             VALUES (?,?,?,?,?,?,?,?)
+              (id, task_id, title, is_completed, position, created_at_ms,
+               revision, deleted_at_ms, updated_at_ms)
+             VALUES (?,?,?,?,?,?,?,?,?)
              ON CONFLICT(id) DO UPDATE SET
                 task_id=excluded.task_id,
                 title=excluded.title,
                 is_completed=excluded.is_completed,
                 position=excluded.position,
+                created_at_ms=excluded.created_at_ms,
                 revision=excluded.revision,
                 deleted_at_ms=excluded.deleted_at_ms,
                 updated_at_ms=excluded.updated_at_ms",
@@ -1225,6 +1305,7 @@ impl Store for SqliteStore {
                 subtask.title,
                 subtask.is_completed as i64,
                 subtask.position as i64,
+                ts_to_ms(subtask.created_at),
                 subtask.revision as i64,
                 subtask.deleted_at.map(ts_to_ms),
                 ts_to_ms(subtask.updated_at),
@@ -1251,9 +1332,7 @@ impl Store for SqliteStore {
     fn list_mottos(&self) -> CoreResult<Vec<Motto>> {
         let conn = self.lock()?;
         let mut stmt = conn
-            .prepare(
-                "SELECT * FROM mottos WHERE deleted_at_ms IS NULL ORDER BY updated_at_ms DESC",
-            )
+            .prepare("SELECT * FROM mottos WHERE deleted_at_ms IS NULL ORDER BY updated_at_ms DESC")
             .map_err(|e| CoreError::storage(format!("prepare list_mottos: {e}")))?;
         let rows = stmt
             .query_map([], row_to_motto)
@@ -1268,11 +1347,13 @@ impl Store for SqliteStore {
     fn upsert_motto(&self, motto: Motto) -> CoreResult<Motto> {
         let conn = self.lock()?;
         conn.execute(
-            "INSERT INTO mottos (id, text, author, revision, deleted_at_ms, updated_at_ms)
-             VALUES (?,?,?,?,?,?)
+            "INSERT INTO mottos
+              (id, text, author, created_at_ms, revision, deleted_at_ms, updated_at_ms)
+             VALUES (?,?,?,?,?,?,?)
              ON CONFLICT(id) DO UPDATE SET
                 text=excluded.text,
                 author=excluded.author,
+                created_at_ms=excluded.created_at_ms,
                 revision=excluded.revision,
                 deleted_at_ms=excluded.deleted_at_ms,
                 updated_at_ms=excluded.updated_at_ms",
@@ -1280,6 +1361,7 @@ impl Store for SqliteStore {
                 motto.id.as_str(),
                 motto.text,
                 motto.author,
+                ts_to_ms(motto.created_at),
                 motto.revision as i64,
                 motto.deleted_at.map(ts_to_ms),
                 ts_to_ms(motto.updated_at),
@@ -1313,6 +1395,53 @@ impl Store for SqliteStore {
             )
             .map_err(|e| CoreError::storage(format!("today_completed_minutes: {e}")))?;
         u32::try_from(total).map_err(|_| CoreError::storage("today minutes overflow"))
+    }
+
+    // --- NotificationTemplate(单行配置) ---
+
+    fn get_notification_template(&self) -> CoreResult<Option<NotificationTemplate>> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT * FROM notification_templates WHERE id = '1'",
+            [],
+            row_to_notification_template,
+        )
+        .optional()
+        .map_err(|e| CoreError::storage(format!("get_notification_template: {e}")))
+    }
+
+    fn upsert_notification_template(
+        &self,
+        template: NotificationTemplate,
+    ) -> CoreResult<NotificationTemplate> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO notification_templates
+                (id, style, style_description,
+                 focus_end_title, focus_end_body, break_end_title, break_end_body,
+                 reminder_title, reminder_body, updated_at_ms)
+             VALUES (?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET
+                style=excluded.style, style_description=excluded.style_description,
+                focus_end_title=excluded.focus_end_title, focus_end_body=excluded.focus_end_body,
+                break_end_title=excluded.break_end_title, break_end_body=excluded.break_end_body,
+                reminder_title=excluded.reminder_title, reminder_body=excluded.reminder_body,
+                updated_at_ms=excluded.updated_at_ms",
+            params![
+                template.id.as_str(),
+                template.style,
+                template.style_description,
+                template.focus_end_title,
+                template.focus_end_body,
+                template.break_end_title,
+                template.break_end_body,
+                template.reminder_title,
+                template.reminder_body,
+                ts_to_ms(template.updated_at),
+            ],
+        )
+        .map_err(|e| CoreError::storage(format!("upsert_notification_template: {e}")))?;
+        Ok(template)
     }
 }
 

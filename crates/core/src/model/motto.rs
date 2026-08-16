@@ -16,6 +16,9 @@ pub struct Motto {
     /// 作者可空(匿名 / 自创)
     #[serde(default)]
     pub author: Option<String>,
+    /// 创建时间(v1 created_date)
+    #[serde(default)]
+    pub created_at: Timestamp,
 
     #[serde(default)]
     pub revision: u64,
@@ -32,6 +35,7 @@ impl Motto {
             id: Id::new(),
             text: text.into(),
             author,
+            created_at: Timestamp::now(),
             revision: 1,
             deleted_at: None,
             updated_at: Timestamp::now(),

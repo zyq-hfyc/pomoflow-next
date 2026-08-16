@@ -97,8 +97,17 @@ pub struct Task {
     /// v1 用 string 列存,我们直接以 `String`  透传,具体 schema 由前端 dialog 决定。
     #[serde(default)]
     pub repeat_config: Option<String>,
+    /// 重复模板 ID;重复实例指向模板任务,模板本身为 None(v1 repeat_parent_id)。
+    #[serde(default)]
+    pub repeat_parent_id: Option<Id>,
+    /// 重复终止时间(模板任务上按规则计算;v1 repeat_end_date)。
+    #[serde(default)]
+    pub repeat_end_date: Option<DateTime<Utc>>,
 
     pub completed_at: Option<DateTime<Utc>>,
+    /// 创建时间(v1 created_date;列表排序 & 自动接续任务排序用)。
+    #[serde(default)]
+    pub created_at: Timestamp,
 
     // === sync 元数据 ===
     /// LWW 合并用的单调递增版本号,本地写入分配
@@ -129,7 +138,10 @@ impl Task {
             reminder: Reminder::default(),
             repeat: Repeat::default(),
             repeat_config: None,
+            repeat_parent_id: None,
+            repeat_end_date: None,
             completed_at: None,
+            created_at: Timestamp::now(),
             revision: 1,
             deleted_at: None,
             updated_at: Timestamp::now(),

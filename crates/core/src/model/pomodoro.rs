@@ -18,6 +18,9 @@ pub struct PomodoroSession {
     pub ended_at: DateTime<Utc>,
     /// true = 自然结束到时;false = 用户中途手动停止
     pub is_completed: bool,
+    /// 创建时间(v1 created_date)
+    #[serde(default)]
+    pub created_at: Timestamp,
 
     #[serde(default)]
     pub revision: u64,
@@ -38,6 +41,7 @@ impl PomodoroSession {
             started_at: now,
             ended_at: now,
             is_completed: false,
+            created_at: Timestamp::now(),
             revision: 1,
             deleted_at: None,
             updated_at: Timestamp::now(),

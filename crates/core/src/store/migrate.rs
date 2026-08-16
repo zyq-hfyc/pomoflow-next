@@ -1,0 +1,305 @@
+//! SQLite 版本化迁移 —— `PRAGMA user_version` 驱动。
+//!
+//! ## 设计(对齐 v1 `database.py::migrate_db` 的语义,机制升级为版本化)
+//!
+//! - `SCHEMA_SQL`(sqlite.rs)永远是**最新结构**:`CREATE TABLE IF NOT EXISTS`
+//!   对新库一次建成;旧库的表已存在,IF NOT EXISTS 不动它们。
+//! - 每个迁移函数负责把**旧一版结构**推进一版:内部用 `has_column` /
+//!   `has_table` 做幂等检查(SQLite 的 `ADD COLUMN` 不支持 IF NOT EXISTS),
+//!   所以"新库跑全部迁移"是安全的 no-op。
+//! - 每个迁移在事务里执行,成功后 `user_version = 迁移序号`;失败回滚。
+//! - **迁移前备份**由调用方(桌面端 / migrate-v1)负责:先查
+//!   [`needs_migration`],为真则把 db 文件复制为 `*.bak` 再 open —— 文件复制
+//!   留在应用层,core 保持只碰 rusqlite。
+//!
+//! ## 加新迁移的步骤
+//!
+//! 1. 把新列 / 新表直接写进 `SCHEMA_SQL`(新库一次到位)。
+//! 2. 在 `MIGRATIONS` 末尾 append 一个 `migration_00N_*` 函数:幂等 ALTER +
+//!    数据回填。
+//! 3. 老库升级路径:`user_version` 只会落在已跑过的版本上,新函数自动补跑。
+
+use std::path::Path;
+
+use rusqlite::Connection;
+
+use crate::error::{CoreError, CoreResult};
+
+type MigrationFn = fn(&Connection) -> CoreResult<()>;
+
+/// 有序迁移列表 —— `MIGRATIONS[i]` 把库从版本 i 推进到 i+1。
+const MIGRATIONS: &[MigrationFn] = &[migration_001_repeat_meta_and_audit];
+
+/// 当前代码支持的最新 schema 版号(= 已应用迁移数)。
+pub fn latest_version() -> usize {
+    MIGRATIONS.len()
+}
+
+/// 读取库的 `user_version`(未迁移的新库为 0)。
+pub fn current_version(conn: &Connection) -> CoreResult<usize> {
+    let v: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|e| CoreError::storage(format!("read user_version: {e}")))?;
+    usize::try_from(v).map_err(|_| CoreError::storage(format!("user_version 越界: {v}")))
+}
+
+/// 从版本 0 起依次应用未跑过的迁移,返回最终版本。
+///
+/// 每个迁移一个事务;任何一步失败即回滚并返回错误,库停留在上一个完整版本。
+pub fn run_migrations(conn: &Connection) -> CoreResult<usize> {
+    let mut version = current_version(conn)?;
+    for (i, migration) in MIGRATIONS.iter().enumerate() {
+        if i < version {
+            continue;
+        }
+        conn.execute_batch("BEGIN")
+            .map_err(|e| CoreError::storage(format!("begin migration {}: {e}", i + 1)))?;
+        match migration(conn) {
+            Ok(()) => {
+                // PRAGMA 不能用绑定参数,版本号来自常量长度,无注入面
+                conn.execute_batch(&format!("PRAGMA user_version = {};", i + 1))
+                    .map_err(|e| CoreError::storage(format!("set user_version: {e}")))?;
+                conn.execute_batch("COMMIT")
+                    .map_err(|e| CoreError::storage(format!("commit migration {}: {e}", i + 1)))?;
+                version = i + 1;
+            }
+            Err(e) => {
+                // 回滚失败只能放弃(连接即将被丢弃/重建),错误仍以迁移失败为准
+                let _ = conn.execute_batch("ROLLBACK");
+                return Err(CoreError::storage(format!(
+                    "migration {} 失败(已回滚): {e}",
+                    i + 1
+                )));
+            }
+        }
+    }
+    Ok(version)
+}
+
+/// 判断路径上的库是否需要迁移(桌面端 / 迁移工具据此决定是否先做 `.bak` 备份)。
+///
+/// 文件不存在 → `false`(open 时自然会建新库,无需备份);
+/// 只读打开失败 / 读 version 失败 → 按需要迁移处理(保守:宁可多备份一次)。
+pub fn needs_migration(path: impl AsRef<Path>) -> bool {
+    let path = path.as_ref();
+    if !path.exists() {
+        return false;
+    }
+    let Ok(conn) = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+    else {
+        return true;
+    };
+    match current_version(&conn) {
+        Ok(v) => v < latest_version(),
+        Err(_) => true,
+    }
+}
+
+// === 幂等 DDL helper ========================================================
+//
+// 表名 / 列名全部来自本文件常量,不接受外部输入,format! 拼 DDL 无注入面。
+
+fn has_table(conn: &Connection, table: &str) -> CoreResult<bool> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+            [table],
+            |row| row.get(0),
+        )
+        .map_err(|e| CoreError::storage(format!("has_table {table}: {e}")))?;
+    Ok(count > 0)
+}
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> CoreResult<bool> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|e| CoreError::storage(format!("pragma table_info({table}): {e}")))?;
+    let mut rows = stmt
+        .query([])
+        .map_err(|e| CoreError::storage(format!("query table_info({table}): {e}")))?;
+    while let Some(row) = rows
+        .next()
+        .map_err(|e| CoreError::storage(format!("row table_info({table}): {e}")))?
+    {
+        let name: String = row
+            .get(1)
+            .map_err(|e| CoreError::storage(format!("column name: {e}")))?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn add_column(conn: &Connection, table: &str, column: &str, ddl: &str) -> CoreResult<()> {
+    // 表不存在 → 说明是 SCHEMA_SQL 刚建的最新结构(或空库),跳过;
+    // 真实 open() 流程里 SCHEMA_SQL 先跑,此处只是防御。
+    if !has_table(conn, table)? || has_column(conn, table, column)? {
+        return Ok(());
+    }
+    conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {ddl};"))
+        .map_err(|e| CoreError::storage(format!("add {table}.{column}: {e}")))
+}
+
+/// `created_at_ms` 回填:旧库没有创建时间,用最近更新时间近似(v1 语义:
+/// created_date 在 INSERT 时落,历史数据缺失时用 updated_date 兜底)。
+fn backfill_created_at(conn: &Connection, table: &str) -> CoreResult<()> {
+    conn.execute_batch(&format!(
+        "UPDATE {table} SET created_at_ms = updated_at_ms WHERE created_at_ms = 0;"
+    ))
+    .map_err(|e| CoreError::storage(format!("backfill {table}.created_at_ms: {e}")))
+}
+
+// === 迁移 1:重复任务元数据 + 排序列 + 审计时间 + 通知模板表 ==================
+
+/// v0(无 user_version 的旧库,含 P1.8.6b 的 ad-hoc repeat_config)→ v1:
+///
+/// - `tasks`:repeat_config / repeat_parent_id / repeat_end_date_ms / created_at_ms
+/// - `projects` / `tags`:display_order / created_at_ms
+/// - `pomodoros` / `subtasks` / `mottos`:created_at_ms
+/// - 新表 `notification_templates`(单行配置)
+///
+/// 幂等:每一步都先查列/表是否存在,新库(SCHEMA_SQL 已建最新结构)全 no-op。
+fn migration_001_repeat_meta_and_audit(conn: &Connection) -> CoreResult<()> {
+    // --- tasks ---
+    add_column(conn, "tasks", "repeat_config", "TEXT")?;
+    add_column(conn, "tasks", "repeat_parent_id", "TEXT")?;
+    add_column(conn, "tasks", "repeat_end_date_ms", "INTEGER")?;
+    add_column(conn, "tasks", "created_at_ms", "INTEGER NOT NULL DEFAULT 0")?;
+    backfill_created_at(conn, "tasks")?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_repeat_parent ON tasks(repeat_parent_id);
+         CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at_ms DESC);",
+    )
+    .map_err(|e| CoreError::storage(format!("tasks indexes: {e}")))?;
+
+    // --- projects / tags ---
+    for table in ["projects", "tags"] {
+        add_column(conn, table, "display_order", "INTEGER NOT NULL DEFAULT 0")?;
+        add_column(conn, table, "created_at_ms", "INTEGER NOT NULL DEFAULT 0")?;
+        backfill_created_at(conn, table)?;
+        conn.execute_batch(&format!(
+            "CREATE INDEX IF NOT EXISTS idx_{table}_display_order ON {table}(display_order);"
+        ))
+        .map_err(|e| CoreError::storage(format!("{table} display_order index: {e}")))?;
+    }
+
+    // --- pomodoros / subtasks / mottos ---
+    for table in ["pomodoros", "subtasks", "mottos"] {
+        add_column(conn, table, "created_at_ms", "INTEGER NOT NULL DEFAULT 0")?;
+        backfill_created_at(conn, table)?;
+    }
+
+    // --- notification_templates(新表) ---
+    if !has_table(conn, "notification_templates")? {
+        conn.execute_batch(
+            "CREATE TABLE notification_templates (
+               id TEXT PRIMARY KEY NOT NULL,
+               style TEXT NOT NULL DEFAULT 'default',
+               style_description TEXT,
+               focus_end_title TEXT,
+               focus_end_body TEXT,
+               break_end_title TEXT,
+               break_end_body TEXT,
+               reminder_title TEXT,
+               reminder_body TEXT,
+               updated_at_ms INTEGER NOT NULL
+             );",
+        )
+        .map_err(|e| CoreError::storage(format!("create notification_templates: {e}")))?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 模拟"旧结构库":手写 v0 时代的 tasks/projects 表(无新列、无 user_version),
+    /// 按 `SqliteStore::open` 的真实流程先跑 SCHEMA_SQL(旧表 IF NOT EXISTS 不动,
+    /// 缺的表按最新结构补建),再跑迁移,旧表应被补齐全部列并写入版本号。
+    #[test]
+    fn migrates_legacy_db_to_latest() {
+        let conn = Connection::open_in_memory().unwrap();
+        // v0 时代的 tasks / projects(与 migration 1 之前的老 SCHEMA_SQL 一致,
+        // 不含 repeat_config / display_order / created_at_ms 等新列)
+        conn.execute_batch(
+            "CREATE TABLE tasks (
+               id TEXT PRIMARY KEY NOT NULL,
+               title TEXT NOT NULL,
+               description TEXT NOT NULL DEFAULT '',
+               project_id TEXT,
+               priority TEXT NOT NULL DEFAULT 'none',
+               status TEXT NOT NULL DEFAULT 'active',
+               due_date_ms INTEGER,
+               estimated_pomodoros INTEGER NOT NULL DEFAULT 0,
+               completed_pomodoros INTEGER NOT NULL DEFAULT 0,
+               pomodoro_duration INTEGER,
+               reminder TEXT NOT NULL DEFAULT 'none',
+               repeat_kind TEXT NOT NULL DEFAULT 'none',
+               completed_at_ms INTEGER,
+               revision INTEGER NOT NULL DEFAULT 1,
+               deleted_at_ms INTEGER,
+               updated_at_ms INTEGER NOT NULL
+             );
+             INSERT INTO tasks (id, title, updated_at_ms)
+             VALUES ('a', '旧任务', 1700000000000);
+             CREATE TABLE projects (
+               id TEXT PRIMARY KEY NOT NULL,
+               name TEXT NOT NULL,
+               color TEXT NOT NULL DEFAULT '',
+               parent_id TEXT,
+               revision INTEGER NOT NULL DEFAULT 1,
+               deleted_at_ms INTEGER,
+               updated_at_ms INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_projects_parent ON projects(parent_id);",
+        )
+        .unwrap();
+        conn.execute_batch(crate::store::sqlite::SCHEMA_SQL)
+            .unwrap();
+
+        let version = run_migrations(&conn).unwrap();
+        assert_eq!(version, latest_version());
+
+        // tasks 补齐新列,created_at 回填为 updated_at
+        assert!(has_column(&conn, "tasks", "repeat_parent_id").unwrap());
+        assert!(has_column(&conn, "tasks", "repeat_end_date_ms").unwrap());
+        assert!(has_column(&conn, "tasks", "created_at_ms").unwrap());
+        let (created, repeat_parent): (i64, Option<String>) = conn
+            .query_row(
+                "SELECT created_at_ms, repeat_parent_id FROM tasks WHERE id = 'a'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(created, 1700000000000);
+        assert!(repeat_parent.is_none());
+
+        // projects / tags / pomodoros / subtasks / mottos 补齐
+        for table in ["projects", "tags", "pomodoros", "subtasks", "mottos"] {
+            assert!(
+                has_column(&conn, table, "created_at_ms").unwrap(),
+                "{table} 应有 created_at_ms"
+            );
+        }
+        assert!(has_column(&conn, "projects", "display_order").unwrap());
+        assert!(has_column(&conn, "tags", "display_order").unwrap());
+        assert!(has_table(&conn, "notification_templates").unwrap());
+
+        // 版本号落库;再跑一次是 no-op
+        assert_eq!(current_version(&conn).unwrap(), latest_version());
+        assert_eq!(run_migrations(&conn).unwrap(), latest_version());
+    }
+
+    /// 新库(最新 SCHEMA_SQL 建成)跑迁移应是纯 no-op 且版本到位。
+    #[test]
+    fn fresh_schema_migrations_are_noop() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::store::sqlite::SCHEMA_SQL)
+            .unwrap();
+        let version = run_migrations(&conn).unwrap();
+        assert_eq!(version, latest_version());
+    }
+}

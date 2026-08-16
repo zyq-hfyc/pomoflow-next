@@ -14,6 +14,12 @@ pub struct Tag {
     pub name: String,
     #[serde(default)]
     pub color: String,
+    /// 全局排序权重(小在前;v1 display_order,拖拽排序用)
+    #[serde(default)]
+    pub display_order: u32,
+    /// 创建时间(v1 created_date)
+    #[serde(default)]
+    pub created_at: Timestamp,
 
     #[serde(default)]
     pub revision: u64,
@@ -29,6 +35,8 @@ impl Tag {
             id: Id::new(),
             name: name.into(),
             color: String::new(),
+            display_order: 0,
+            created_at: Timestamp::now(),
             revision: 1,
             deleted_at: None,
             updated_at: Timestamp::now(),

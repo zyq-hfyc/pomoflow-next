@@ -16,6 +16,7 @@
 //! 字段集合按 v1 `models.py` 一一对应。**业务方法(如"完成一个任务")放到 P1**。
 
 pub mod motto;
+pub mod notification_template;
 pub mod pomodoro;
 pub mod project;
 pub mod review;
@@ -24,6 +25,7 @@ pub mod tag;
 pub mod task;
 
 pub use motto::Motto;
+pub use notification_template::NotificationTemplate;
 pub use pomodoro::PomodoroSession;
 pub use project::Project;
 pub use review::{DailyReview, MonthlyReview, WeeklyReview};
