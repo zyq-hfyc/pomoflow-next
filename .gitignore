@@ -23,6 +23,10 @@
 /apps/desktop/ui/.vite/
 /apps/desktop/ui/tsconfig.tsbuildinfo
 
+# 桌面端根的 tauri-cli npm wrapper(P1.7 加,只装 CLI 二进制)
+/apps/desktop/node_modules/
+/apps/desktop/package-lock.json
+
 # --- Python 残留(以防从 v1 仓库误拷过来) ---
 __pycache__/
 *.py[cod]

@@ -42,6 +42,8 @@ pub fn run() {
             commands::get_task,
             commands::upsert_task,
             commands::delete_task,
+            commands::complete_task,
+            commands::reopen_task,
             commands::list_projects,
             commands::upsert_project,
             commands::delete_project,
@@ -50,6 +52,15 @@ pub fn run() {
             commands::delete_tag,
             commands::list_tags_for_task,
             commands::set_tags_for_task,
+            commands::start_pomodoro,
+            commands::stop_pomodoro,
+            commands::list_pomodoros,
+            commands::get_daily_review,
+            commands::upsert_daily_review,
+            commands::get_weekly_review,
+            commands::upsert_weekly_review,
+            commands::get_monthly_review,
+            commands::upsert_monthly_review,
         ])
         .setup(|app| {
             info!("Tauri app setup complete, building tray...");

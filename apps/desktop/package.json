@@ -1,0 +1,13 @@
+{
+  "name": "pomoflow-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "PomoFlow Tauri 2 桌面端 —— 启动入口",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

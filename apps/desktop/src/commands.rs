@@ -13,7 +13,11 @@
 
 use std::path::{Path, PathBuf};
 
-use pomoflow_core::model::{Id, Project, Tag, Task};
+use chrono::Utc;
+use pomoflow_core::model::{
+    DailyReview, Id, MonthlyReview, PomodoroSession, Project, Tag, Task, TaskStatus, Timestamp,
+    WeeklyReview,
+};
 use pomoflow_core::store::{SqliteStore, Store, TaskQuery};
 use tauri::State;
 
@@ -148,4 +152,157 @@ pub fn set_tags_for_task(
         parsed.push(tid);
     }
     state.store.set_tags_for_task(&id, &parsed).map_err(map_err)
+}
+
+// === Pomodoro commands ===
+//
+// 计时器流程:
+//   start_pomodoro(task_id?, project_id?, duration_minutes)
+//     → 建一条 PomodoroSession(started_at = now, ended_at = now 占位, is_completed = false)
+//   stop_pomodoro(session_id, is_completed)
+//     → ended_at = now, is_completed = 传入值;若 is_completed=true 且绑定了 task,
+//        累加 task.completed_pomodoros(失败仅日志不影响主返回)
+//
+// 不在 Store trait 上加 get_pomodoro(避免 trait surface 扩大):stop 时 list + find by id,
+// 当前 P1.7 单进程规模下 O(n) 完全够;后续统计 / 多设备场景再考虑加。
+
+#[tauri::command]
+pub fn start_pomodoro(
+    task_id: Option<String>,
+    project_id: Option<String>,
+    duration: u32,
+    state: State<'_, AppState>,
+) -> Result<PomodoroSession, String> {
+    let task_id = match task_id {
+        Some(s) => Some(Id::parse(&s).ok_or_else(|| format!("invalid task_id: {s}"))?),
+        None => None,
+    };
+    let project_id = match project_id {
+        Some(s) => Some(Id::parse(&s).ok_or_else(|| format!("invalid project_id: {s}"))?),
+        None => None,
+    };
+    let session = PomodoroSession::new(task_id, project_id, duration);
+    state.store.upsert_pomodoro(session).map_err(map_err)
+}
+
+#[tauri::command]
+pub fn stop_pomodoro(
+    session_id: String,
+    is_completed: bool,
+    state: State<'_, AppState>,
+) -> Result<PomodoroSession, String> {
+    let id = Id::parse(&session_id).ok_or_else(|| format!("invalid session_id: {session_id}"))?;
+    let mut session = state
+        .store
+        .list_pomodoros()
+        .map_err(map_err)?
+        .into_iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| format!("pomodoro not found: {session_id}"))?;
+
+    // 捕获待累加的 task_id,后面 session 会被 move 进 upsert
+    let task_to_bump = if is_completed {
+        session.task_id.clone()
+    } else {
+        None
+    };
+
+    session.ended_at = Utc::now();
+    session.is_completed = is_completed;
+    session.updated_at = Timestamp::now();
+
+    let result = state.store.upsert_pomodoro(session).map_err(map_err)?;
+
+    // 完成且绑定了任务 → 累加 task.completed_pomodoros
+    // 失败仅静默(不影响主返回:PomodoroSession 已成功落库,统计可重算)
+    if let Some(task_id) = task_to_bump {
+        if let Ok(mut task) = state.store.get_task(&task_id) {
+            task.completed_pomodoros = task.completed_pomodoros.saturating_add(1);
+            task.updated_at = Timestamp::now();
+            let _ = state.store.upsert_task(task);
+        }
+    }
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn list_pomodoros(state: State<'_, AppState>) -> Result<Vec<PomodoroSession>, String> {
+    state.store.list_pomodoros().map_err(map_err)
+}
+
+// === Task complete / reopen commands ===
+//
+// 业务规则:TaskUpdate schema 不暴露 status / completed_at / completed_pomodoros,
+// 只能经 complete / reopen / 番茄钟逻辑变更,避免绕过业务规则。
+// 这里封装成 command —— Store trait 不感知"完成"业务语义。
+
+#[tauri::command]
+pub fn complete_task(id: String, state: State<'_, AppState>) -> Result<Task, String> {
+    let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
+    let mut task = state.store.get_task(&id).map_err(map_err)?;
+    task.status = TaskStatus::Completed;
+    task.completed_at = Some(Utc::now());
+    task.updated_at = Timestamp::now();
+    state.store.upsert_task(task).map_err(map_err)
+}
+
+#[tauri::command]
+pub fn reopen_task(id: String, state: State<'_, AppState>) -> Result<Task, String> {
+    let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
+    let mut task = state.store.get_task(&id).map_err(map_err)?;
+    task.status = TaskStatus::Active;
+    task.completed_at = None;
+    task.updated_at = Timestamp::now();
+    state.store.upsert_task(task).map_err(map_err)
+}
+
+// === Review commands(日 / 周 / 月复盘透传) ===
+
+#[tauri::command]
+pub fn get_daily_review(
+    date: String,
+    state: State<'_, AppState>,
+) -> Result<Option<DailyReview>, String> {
+    state.store.get_daily_review(&date).map_err(map_err)
+}
+
+#[tauri::command]
+pub fn upsert_daily_review(
+    review: DailyReview,
+    state: State<'_, AppState>,
+) -> Result<DailyReview, String> {
+    state.store.upsert_daily_review(review).map_err(map_err)
+}
+
+#[tauri::command]
+pub fn get_weekly_review(
+    week_start: String,
+    state: State<'_, AppState>,
+) -> Result<Option<WeeklyReview>, String> {
+    state.store.get_weekly_review(&week_start).map_err(map_err)
+}
+
+#[tauri::command]
+pub fn upsert_weekly_review(
+    review: WeeklyReview,
+    state: State<'_, AppState>,
+) -> Result<WeeklyReview, String> {
+    state.store.upsert_weekly_review(review).map_err(map_err)
+}
+
+#[tauri::command]
+pub fn get_monthly_review(
+    year_month: String,
+    state: State<'_, AppState>,
+) -> Result<Option<MonthlyReview>, String> {
+    state.store.get_monthly_review(&year_month).map_err(map_err)
+}
+
+#[tauri::command]
+pub fn upsert_monthly_review(
+    review: MonthlyReview,
+    state: State<'_, AppState>,
+) -> Result<MonthlyReview, String> {
+    state.store.upsert_monthly_review(review).map_err(map_err)
 }
