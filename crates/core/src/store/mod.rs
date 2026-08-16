@@ -59,6 +59,8 @@ pub struct TaskQuery {
     /// 番茄钟页右侧任务清单限定"当月任务"。month_end 单独传,跟 `date` 互不冲突。
     pub month_start_ms: Option<i64>,
     pub month_end_ms: Option<i64>,
+    /// 按重复模板过滤(重复编排层用):列出该模板的全部实例。
+    pub repeat_parent: Option<Id>,
 }
 
 /// 番茄钟页右侧任务清单支持的日期过滤维度 —— 与 v1 `timerFilter.date` 一一对应。
@@ -223,6 +225,11 @@ impl Store for InMemoryStore {
             })
             .filter(|t| q.status.is_none_or(|s| t.status == s))
             .filter(|t| q.priority.is_none_or(|p| t.priority == p))
+            .filter(|t| {
+                q.repeat_parent
+                    .as_ref()
+                    .is_none_or(|p| t.repeat_parent_id.as_ref() == Some(p))
+            })
             .filter(|t| {
                 // 月份区间(可选,与 date 互不冲突)
                 if q.month_start_ms.is_none() && q.month_end_ms.is_none() {

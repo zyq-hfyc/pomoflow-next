@@ -173,8 +173,14 @@ export const listTasks = (query: TaskQuery) =>
 
 export const getTask = (id: string) => invoke<TaskView>("get_task", { id });
 
-export const upsertTask = (task: Task) =>
-  invoke<TaskView>("upsert_task", { task });
+/**
+ * 新建/更新任务。
+ * 可选 tagIds:v1 TaskCreate.tag_ids 原子语义 —— 先链标签再落任务,
+ * 使重复实例生成时能复制到模板标签;编辑 repeat 时传入当前标签,
+ * 重生成实例与 v1 update_task(标签应用在重生成前)语义一致。
+ */
+export const upsertTask = (task: Task, tagIds?: string[] | null) =>
+  invoke<TaskView>("upsert_task", { task, tagIds });
 
 export const deleteTask = (id: string) => invoke<void>("delete_task", { id });
 
@@ -194,6 +200,17 @@ export const upsertProject = (project: Project) =>
 export const deleteProject = (id: string) =>
   invoke<void>("delete_project", { id });
 
+/** 拖拽排序项(项目含 parent_id;标签只用 id + display_order) */
+export interface ReorderItem {
+  id: string;
+  parent_id?: string | null;
+  display_order?: number;
+}
+
+/** 项目树拖拽排序:环/深度/存在性校验在后端,失败整体回滚。 */
+export const reorderProjects = (items: ReorderItem[]) =>
+  invoke<void>("reorder_projects", { items });
+
 // === Tag ===
 
 export const listTags = () => invoke<Tag[]>("list_tags");
@@ -201,6 +218,10 @@ export const listTags = () => invoke<Tag[]>("list_tags");
 export const upsertTag = (tag: Tag) => invoke<Tag>("upsert_tag", { tag });
 
 export const deleteTag = (id: string) => invoke<void>("delete_tag", { id });
+
+/** 标签拖拽排序(只更新 display_order)。 */
+export const reorderTags = (items: ReorderItem[]) =>
+  invoke<void>("reorder_tags", { items });
 
 export const listTagsForTask = (taskId: string) =>
   invoke<Tag[]>("list_tags_for_task", { taskId });

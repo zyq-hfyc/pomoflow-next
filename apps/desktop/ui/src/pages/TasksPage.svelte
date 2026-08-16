@@ -401,29 +401,31 @@
     const due = data.due_date ?? (filter === "tomorrow" ? tomorrowStr() : todayStr());
     try {
       const taskId = newId();
-      await api.upsertTask({
-        id: taskId,
-        title: data.title,
-        description: "",
-        project_id: data.project_id ?? selectedProject,
-        priority: data.priority,
-        status: "active",
-        due_date: hasTimePart(due) ? due : `${due}T00:00:00`,
-        estimated_pomodoros: data.estimated_pomodoros,
-        completed_pomodoros: 0,
-        pomodoro_duration: data.pomodoro_duration,
-        reminder: data.reminder ?? "none",
-        repeat: data.repeat ?? "none",
-        repeat_parent_id: null,
-        repeat_end_date: null,
-        repeat_config: data.repeat_config ?? null,
-        completed_at: null,
-        created_at: nowIso(),
-        updated_at: nowIso(),
-      });
-      if (data.tag_ids.length > 0) {
-        await api.setTagsForTask(taskId, data.tag_ids);
-      }
+      // tagIds 随任务原子提交(v1 TaskCreate 语义):
+      // 后端先链标签再生成重复实例,实例才能复制到模板标签
+      await api.upsertTask(
+        {
+          id: taskId,
+          title: data.title,
+          description: "",
+          project_id: data.project_id ?? selectedProject,
+          priority: data.priority,
+          status: "active",
+          due_date: hasTimePart(due) ? due : `${due}T00:00:00`,
+          estimated_pomodoros: data.estimated_pomodoros,
+          completed_pomodoros: 0,
+          pomodoro_duration: data.pomodoro_duration,
+          reminder: data.reminder ?? "none",
+          repeat: data.repeat ?? "none",
+          repeat_parent_id: null,
+          repeat_end_date: null,
+          repeat_config: data.repeat_config ?? null,
+          completed_at: null,
+          created_at: nowIso(),
+          updated_at: nowIso(),
+        },
+        data.tag_ids,
+      );
       await refresh();
     } catch (e) {
       error = String(e);

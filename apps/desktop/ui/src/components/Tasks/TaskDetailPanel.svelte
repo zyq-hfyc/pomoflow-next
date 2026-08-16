@@ -102,6 +102,25 @@
     }
   }
 
+  // repeat 变化会触发后端删旧实例+重生成(v1 update_task)—— 重生成读模板
+  // 当前标签,故这次提交带上当前标签,保持与 v1"标签先于重生成应用"一致
+  async function patchRepeat(v: Repeat) {
+    try {
+      await api.upsertTask(
+        {
+          ...task,
+          repeat: v,
+          updated_at: nowIso(),
+        },
+        selectedTagIds,
+      );
+      onChanged();
+    } catch (e) {
+      console.error("patch repeat failed", e);
+      alert(fmt(t.task.saveFailed, { err: String(e) }));
+    }
+  }
+
   async function commitTitle() {
     const next = titleDraft.trim();
     if (!next || next === task.title) return;
@@ -403,7 +422,7 @@
         value={task.repeat ?? "none"}
         onchange={(e) => {
           const v = (e.currentTarget as HTMLSelectElement).value as Repeat;
-          void patchTask({ repeat: v });
+          void patchRepeat(v);
         }}
       >
         {#each REPEAT_OPTIONS as o (o.value)}

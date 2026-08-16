@@ -721,6 +721,10 @@ impl Store for SqliteStore {
             sql.push_str(" AND t.priority = ?");
             args.push(Box::new(priority_str(p).to_string()));
         }
+        if let Some(rp) = &q.repeat_parent {
+            sql.push_str(" AND t.repeat_parent_id = ?");
+            args.push(Box::new(rp.as_str().to_string()));
+        }
         // 月份区间(v1 番茄钟右侧"当月任务"用)
         if let Some(start) = q.month_start_ms {
             sql.push_str(" AND t.due_date_ms >= ?");

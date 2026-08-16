@@ -11,6 +11,7 @@ use tauri_plugin_autostart::MacosLauncher;
 use crate::commands::{ensure_parent, store_path, AppState};
 
 pub mod commands;
+pub mod repeat_service;
 pub mod tray;
 
 /// 迁移前把 db 复制为 `store.db.<YYYYmmdd_HHMMSS>.bak`(v1 `database.py::_backup_db` 对齐)。

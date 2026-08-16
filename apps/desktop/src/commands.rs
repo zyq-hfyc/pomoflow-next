@@ -107,18 +107,62 @@ fn embed_views(state: &AppState, tasks: Vec<Task>) -> Result<Vec<TaskView>, Stri
 }
 
 #[tauri::command]
-pub fn upsert_task(task: Task, state: State<'_, AppState>) -> Result<TaskView, String> {
+pub fn upsert_task(
+    task: Task,
+    tag_ids: Option<Vec<String>>,
+    state: State<'_, AppState>,
+) -> Result<TaskView, String> {
     // v1 TaskUpdate 的保护字段语义(status/completed_pomodoros/completed_at 只经
     // complete/reopen/番茄钟逻辑变更)在 v2 由前端约定保证 —— 内部命令
     // complete_task / stop_pomodoro 也走本入口,无法在 IPC 层强制区分。
     validate::validate_task(&task).map_err(map_err)?;
-    let saved = state.store.upsert_task(task).map_err(map_err)?;
+    let store = &state.store;
+
+    // 可选:同请求链接标签(v1 TaskCreate.tag_ids 原子语义 —— 重复实例生成时
+    // 需要模板标签已就位,故先链标签再落任务/生成实例)
+    if let Some(raw_ids) = &tag_ids {
+        let mut parsed = Vec::with_capacity(raw_ids.len());
+        for raw in raw_ids {
+            parsed.push(Id::parse(raw).ok_or_else(|| format!("invalid tag_id: {raw}"))?);
+        }
+        store.set_tags_for_task(&task.id, &parsed).map_err(map_err)?;
+    }
+
+    // === 重复编排(v1 create_task / update_task 翻译) ===
+    let existing = store.get_task(&task.id).ok();
+    let mut task = task;
+    if task.repeat_parent_id.is_none() {
+        // 模板:每次 upsert 重算 repeat_end_date(v1 行为)
+        task.repeat_end_date = if task.repeat != pomoflow_core::model::Repeat::None {
+            pomoflow_core::repeat::compute_repeat_end_date(&task)
+        } else {
+            None
+        };
+        let repeat_changed = existing
+            .as_ref()
+            .is_some_and(|e| e.repeat != task.repeat);
+        let saved = store.upsert_task(task.clone()).map_err(map_err)?;
+        if repeat_changed {
+            // 规则变化:删旧 active 实例(完成的保留),有新规则则重生成
+            crate::repeat_service::delete_active_instances(store, &saved.id).map_err(map_err)?;
+            if saved.repeat != pomoflow_core::model::Repeat::None {
+                crate::repeat_service::generate_instances(store, &saved).map_err(map_err)?;
+            }
+        } else if existing.is_none() && saved.repeat != pomoflow_core::model::Repeat::None {
+            // 新建模板:预生成实例
+            crate::repeat_service::generate_instances(store, &saved).map_err(map_err)?;
+        }
+        return embed_views(&state, vec![saved]).map(|mut v| v.pop().unwrap());
+    }
+    let saved = store.upsert_task(task).map_err(map_err)?;
     embed_views(&state, vec![saved]).map(|mut v| v.pop().unwrap())
 }
 
 #[tauri::command]
 pub fn delete_task(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
+    // v1 FK CASCADE:删模板级联删全部重复实例(含已完成)
+    crate::repeat_service::delete_all_instances(&state.store, &id).map_err(map_err)?;
     state.store.delete_task(&id).map_err(map_err)
 }
 
