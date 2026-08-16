@@ -1,15 +1,17 @@
 # --- Rust / Cargo ---
 /target/
 **/*.rs.bk
-Cargo.lock
 
 # 本机工具链指向(由各机器 owner 各自配置,绝不入仓)
 /.cargo/config.toml
 /.cargo/config.local.toml
 
-# workspace 的 Cargo.lock 不提交(binary crate 才提交);这里 crates/core 是 lib,
-# apps/desktop 是 bin —— 在它们自己的 Cargo.toml 里单独决定。
-# 简单起见:整个 workspace 都不提交 Cargo.lock,等出现 bin crate 再说。
+# Cargo.lock:P1.6 起 commit 进仓。
+# 原策略"workspace 不提交、只有 bin crate 才提交"已不成立:
+#   ci.yml / release.yml 跑 `--locked`,没 lockfile 直接挂;
+#   且 workspace 现在已有 bin crate(apps/desktop + tools/migrate-v1),
+#   按上游惯例(tauri-action / rust-libs)整 workspace 提交一份 lockfile
+#   才能保证 release build 可复现。
 
 # --- Tauri ---
 /apps/desktop/target/

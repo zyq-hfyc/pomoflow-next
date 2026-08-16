@@ -17,9 +17,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Result;
-use pomoflow_core::model::{
-    Priority, Reminder, Repeat, TaskStatus,
-};
+use pomoflow_core::model::{Priority, Reminder, Repeat, TaskStatus};
 use pomoflow_core::store::{SqliteStore, Store, TaskQuery};
 use rusqlite::Connection;
 
@@ -160,9 +158,18 @@ fn build_v1_fixture(path: &std::path::Path) -> Result<()> {
     )?;
 
     // —— 3 个标签(用于多对多)
-    conn.execute("INSERT INTO tags (id, name, color) VALUES (10, 'urgent', '#ff0000')", [])?;
-    conn.execute("INSERT INTO tags (id, name, color) VALUES (11, 'review', '#00ff00')", [])?;
-    conn.execute("INSERT INTO tags (id, name, color) VALUES (12, 'blocked', '#0000ff')", [])?;
+    conn.execute(
+        "INSERT INTO tags (id, name, color) VALUES (10, 'urgent', '#ff0000')",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO tags (id, name, color) VALUES (11, 'review', '#00ff00')",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO tags (id, name, color) VALUES (12, 'blocked', '#0000ff')",
+        [],
+    )?;
 
     // —— 4 个任务,覆盖各种 enum / 状态 / 关联
     conn.execute(
@@ -209,9 +216,18 @@ fn build_v1_fixture(path: &std::path::Path) -> Result<()> {
     )?;
 
     // —— task_tag 多对多
-    conn.execute("INSERT INTO task_tag (task_id, tag_id) VALUES (100, 10)", [])?;
-    conn.execute("INSERT INTO task_tag (task_id, tag_id) VALUES (100, 11)", [])?;
-    conn.execute("INSERT INTO task_tag (task_id, tag_id) VALUES (101, 11)", [])?;
+    conn.execute(
+        "INSERT INTO task_tag (task_id, tag_id) VALUES (100, 10)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO task_tag (task_id, tag_id) VALUES (100, 11)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO task_tag (task_id, tag_id) VALUES (101, 11)",
+        [],
+    )?;
 
     // —— 3 个番茄
     conn.execute(
@@ -338,15 +354,30 @@ fn full_migration_round_trip() -> Result<()> {
     // —— 番茄会话行数 + 关联重映射
     let pomos = v2.list_pomodoros()?;
     assert_eq!(pomos.len(), 3, "pomodoros row count");
-    let p1000 = pomos.iter().find(|p| p.duration == 25 && p.started_at.timestamp() % 86400 == 36000).unwrap();
+    let p1000 = pomos
+        .iter()
+        .find(|p| p.duration == 25 && p.started_at.timestamp() % 86400 == 36000)
+        .unwrap();
     assert_eq!(p1000.task_id.as_ref().unwrap(), &t100.id);
     assert_eq!(p1000.project_id.as_ref().unwrap(), &child.id);
     assert!(p1000.is_completed);
 
     // —— 复盘
-    assert!(v2.get_daily_review("2026-01-14")?.unwrap().content.starts_with("专注"));
-    assert!(v2.get_weekly_review("2026-01-12")?.unwrap().content.starts_with("本周"));
-    assert!(v2.get_monthly_review("2026-01")?.unwrap().content.starts_with("1 月"));
+    assert!(v2
+        .get_daily_review("2026-01-14")?
+        .unwrap()
+        .content
+        .starts_with("专注"));
+    assert!(v2
+        .get_weekly_review("2026-01-12")?
+        .unwrap()
+        .content
+        .starts_with("本周"));
+    assert!(v2
+        .get_monthly_review("2026-01")?
+        .unwrap()
+        .content
+        .starts_with("1 月"));
 
     // 清理
     let _ = std::fs::remove_file(&v1_path);
@@ -379,7 +410,8 @@ fn dry_run_does_not_write_v2() -> Result<()> {
 fn schema_check_rejects_non_v1_db() {
     let bogus_path = temp_path("bogus.db");
     let conn = Connection::open(&bogus_path).unwrap();
-    conn.execute_batch("CREATE TABLE foo (id INTEGER PRIMARY KEY)").unwrap();
+    conn.execute_batch("CREATE TABLE foo (id INTEGER PRIMARY KEY)")
+        .unwrap();
     drop(conn);
 
     let v2_path = temp_path("v2-bogus.db");

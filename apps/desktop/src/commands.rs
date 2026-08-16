@@ -130,10 +130,7 @@ pub fn delete_tag(id: String, state: State<'_, AppState>) -> Result<(), String> 
 // === Task ↔ Tag 关联 ===
 
 #[tauri::command]
-pub fn list_tags_for_task(
-    task_id: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<Tag>, String> {
+pub fn list_tags_for_task(task_id: String, state: State<'_, AppState>) -> Result<Vec<Tag>, String> {
     let id = Id::parse(&task_id).ok_or_else(|| format!("invalid id: {task_id}"))?;
     state.store.list_tags_for_task(&id).map_err(map_err)
 }
@@ -150,8 +147,5 @@ pub fn set_tags_for_task(
         let tid = Id::parse(&raw).ok_or_else(|| format!("invalid tag_id: {raw}"))?;
         parsed.push(tid);
     }
-    state
-        .store
-        .set_tags_for_task(&id, &parsed)
-        .map_err(map_err)
+    state.store.set_tags_for_task(&id, &parsed).map_err(map_err)
 }

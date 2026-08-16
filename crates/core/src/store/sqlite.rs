@@ -34,8 +34,8 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::error::{CoreError, CoreResult};
 use crate::model::{
-    DailyReview, Id, MonthlyReview, PomodoroSession, Priority, Project, Reminder, Repeat, Tag, Task,
-    TaskStatus, Timestamp, WeeklyReview,
+    DailyReview, Id, MonthlyReview, PomodoroSession, Priority, Project, Reminder, Repeat, Tag,
+    Task, TaskStatus, Timestamp, WeeklyReview,
 };
 use crate::store::{Store, TaskQuery};
 
@@ -323,7 +323,8 @@ fn core_try<T>(r: CoreResult<T>) -> rusqlite::Result<T> {
 
 fn row_to_task(row: &Row<'_>) -> rusqlite::Result<Task> {
     let id_s: String = row.get("id")?;
-    let id = Id::parse(&id_s).ok_or_else(|| core_err(CoreError::storage(format!("invalid task id: {id_s}"))))?;
+    let id = Id::parse(&id_s)
+        .ok_or_else(|| core_err(CoreError::storage(format!("invalid task id: {id_s}"))))?;
 
     let deleted_at_ms: Option<i64> = row.get("deleted_at_ms")?;
     let updated_at_ms: i64 = row.get("updated_at_ms")?;
@@ -345,30 +346,39 @@ fn row_to_task(row: &Row<'_>) -> rusqlite::Result<Task> {
     let reminder_s: String = row.get("reminder")?;
     let repeat_kind_s: String = row.get("repeat_kind")?;
 
-    let make = || core_try(Ok(Task {
-        id: id.clone(),
-        title: row.get("title")?,
-        description: row.get("description")?,
-        project_id: project_id.clone(),
-        priority: priority_parse(&priority_s).map_err(core_err)?,
-        status: task_status_parse(&status_s).map_err(core_err)?,
-        due_date: due_date_ms.map(dt_from_ms).transpose().map_err(core_err)?,
-        estimated_pomodoros: row.get::<_, i64>("estimated_pomodoros")? as u32,
-        completed_pomodoros: row.get::<_, i64>("completed_pomodoros")? as u32,
-        pomodoro_duration: pomodoro_duration.map(|v| v as u32),
-        reminder: reminder_parse(&reminder_s).map_err(core_err)?,
-        repeat: repeat_parse(&repeat_kind_s).map_err(core_err)?,
-        completed_at: completed_at_ms.map(dt_from_ms).transpose().map_err(core_err)?,
-        revision: row.get::<_, i64>("revision")? as u64,
-        deleted_at: deleted_at_ms.map(ts_from_ms).transpose().map_err(core_err)?,
-        updated_at: ts_from_ms(updated_at_ms).map_err(core_err)?,
-    }));
+    let make = || {
+        core_try(Ok(Task {
+            id: id.clone(),
+            title: row.get("title")?,
+            description: row.get("description")?,
+            project_id: project_id.clone(),
+            priority: priority_parse(&priority_s).map_err(core_err)?,
+            status: task_status_parse(&status_s).map_err(core_err)?,
+            due_date: due_date_ms.map(dt_from_ms).transpose().map_err(core_err)?,
+            estimated_pomodoros: row.get::<_, i64>("estimated_pomodoros")? as u32,
+            completed_pomodoros: row.get::<_, i64>("completed_pomodoros")? as u32,
+            pomodoro_duration: pomodoro_duration.map(|v| v as u32),
+            reminder: reminder_parse(&reminder_s).map_err(core_err)?,
+            repeat: repeat_parse(&repeat_kind_s).map_err(core_err)?,
+            completed_at: completed_at_ms
+                .map(dt_from_ms)
+                .transpose()
+                .map_err(core_err)?,
+            revision: row.get::<_, i64>("revision")? as u64,
+            deleted_at: deleted_at_ms
+                .map(ts_from_ms)
+                .transpose()
+                .map_err(core_err)?,
+            updated_at: ts_from_ms(updated_at_ms).map_err(core_err)?,
+        }))
+    };
     make()
 }
 
 fn row_to_project(row: &Row<'_>) -> rusqlite::Result<Project> {
     let id_s: String = row.get("id")?;
-    let id = Id::parse(&id_s).ok_or_else(|| core_err(CoreError::storage(format!("invalid project id: {id_s}"))))?;
+    let id = Id::parse(&id_s)
+        .ok_or_else(|| core_err(CoreError::storage(format!("invalid project id: {id_s}"))))?;
 
     let parent_id_s: Option<String> = row.get("parent_id")?;
     let parent_id = match parent_id_s {
@@ -396,7 +406,8 @@ fn row_to_project(row: &Row<'_>) -> rusqlite::Result<Project> {
 
 fn row_to_tag(row: &Row<'_>) -> rusqlite::Result<Tag> {
     let id_s: String = row.get("id")?;
-    let id = Id::parse(&id_s).ok_or_else(|| core_err(CoreError::storage(format!("invalid tag id: {id_s}"))))?;
+    let id = Id::parse(&id_s)
+        .ok_or_else(|| core_err(CoreError::storage(format!("invalid tag id: {id_s}"))))?;
 
     core_try(Ok(Tag {
         id,
@@ -414,7 +425,8 @@ fn row_to_tag(row: &Row<'_>) -> rusqlite::Result<Tag> {
 
 fn row_to_pomodoro(row: &Row<'_>) -> rusqlite::Result<PomodoroSession> {
     let id_s: String = row.get("id")?;
-    let id = Id::parse(&id_s).ok_or_else(|| core_err(CoreError::storage(format!("invalid pomodoro id: {id_s}"))))?;
+    let id = Id::parse(&id_s)
+        .ok_or_else(|| core_err(CoreError::storage(format!("invalid pomodoro id: {id_s}"))))?;
 
     let task_id_s: Option<String> = row.get("task_id")?;
     let task_id = match task_id_s {
@@ -453,7 +465,11 @@ fn row_to_pomodoro(row: &Row<'_>) -> rusqlite::Result<PomodoroSession> {
 
 fn row_to_daily_review(row: &Row<'_>) -> rusqlite::Result<DailyReview> {
     let id_s: String = row.get("id")?;
-    let id = Id::parse(&id_s).ok_or_else(|| core_err(CoreError::storage(format!("invalid daily_review id: {id_s}"))))?;
+    let id = Id::parse(&id_s).ok_or_else(|| {
+        core_err(CoreError::storage(format!(
+            "invalid daily_review id: {id_s}"
+        )))
+    })?;
 
     core_try(Ok(DailyReview {
         id,
@@ -467,7 +483,11 @@ fn row_to_daily_review(row: &Row<'_>) -> rusqlite::Result<DailyReview> {
 
 fn row_to_weekly_review(row: &Row<'_>) -> rusqlite::Result<WeeklyReview> {
     let id_s: String = row.get("id")?;
-    let id = Id::parse(&id_s).ok_or_else(|| core_err(CoreError::storage(format!("invalid weekly_review id: {id_s}"))))?;
+    let id = Id::parse(&id_s).ok_or_else(|| {
+        core_err(CoreError::storage(format!(
+            "invalid weekly_review id: {id_s}"
+        )))
+    })?;
 
     core_try(Ok(WeeklyReview {
         id,
@@ -481,7 +501,11 @@ fn row_to_weekly_review(row: &Row<'_>) -> rusqlite::Result<WeeklyReview> {
 
 fn row_to_monthly_review(row: &Row<'_>) -> rusqlite::Result<MonthlyReview> {
     let id_s: String = row.get("id")?;
-    let id = Id::parse(&id_s).ok_or_else(|| core_err(CoreError::storage(format!("invalid monthly_review id: {id_s}"))))?;
+    let id = Id::parse(&id_s).ok_or_else(|| {
+        core_err(CoreError::storage(format!(
+            "invalid monthly_review id: {id_s}"
+        )))
+    })?;
 
     core_try(Ok(MonthlyReview {
         id,
@@ -619,7 +643,9 @@ impl Store for SqliteStore {
     fn list_projects(&self) -> CoreResult<Vec<Project>> {
         let conn = self.lock()?;
         let mut stmt = conn
-            .prepare("SELECT * FROM projects WHERE deleted_at_ms IS NULL ORDER BY updated_at_ms DESC")
+            .prepare(
+                "SELECT * FROM projects WHERE deleted_at_ms IS NULL ORDER BY updated_at_ms DESC",
+            )
             .map_err(|e| CoreError::storage(format!("prepare list_projects: {e}")))?;
         let rows = stmt
             .query_map([], row_to_project)

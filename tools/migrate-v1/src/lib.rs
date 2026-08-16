@@ -25,8 +25,8 @@ use log::{info, warn};
 use rusqlite::Connection;
 
 use pomoflow_core::model::{
-    DailyReview, Id, MonthlyReview, PomodoroSession, Priority, Project, Reminder, Repeat, Tag, Task,
-    TaskStatus, Timestamp, WeeklyReview,
+    DailyReview, Id, MonthlyReview, PomodoroSession, Priority, Project, Reminder, Repeat, Tag,
+    Task, TaskStatus, Timestamp, WeeklyReview,
 };
 use pomoflow_core::store::{SqliteStore, Store};
 
@@ -51,8 +51,7 @@ pub struct Args {
 /// 单独提出来是为了让 `tests/integ.rs` 能直接 `use migrate_v1::run_main_with_args`
 /// 跳过 clap 解析(测试需要自己构造 `Args`)。
 pub fn run_main_with_args(args: Args) -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     info!(
         "migrate-v1 from={} to={} dry_run={}",
         args.from.display(),
@@ -131,7 +130,10 @@ pub fn run(args: Args) -> Result<()> {
     migrate_monthly_reviews(&v1, v2.as_ref(), &mut stats)?;
 
     println!("\n=== Migration Summary ===");
-    println!("  mode:         {}", if args.dry_run { "DRY-RUN" } else { "WRITE" });
+    println!(
+        "  mode:         {}",
+        if args.dry_run { "DRY-RUN" } else { "WRITE" }
+    );
     println!("  projects:     {}", stats.projects);
     println!("  tags:         {}", stats.tags);
     println!("  tasks:        {}", stats.tasks);
@@ -264,9 +266,8 @@ fn migrate_projects(
     stats: &mut Stats,
     id_map: &mut HashMap<i64, Id>,
 ) -> Result<()> {
-    let mut stmt = v1.prepare(
-        "SELECT id, name, color, parent_id, updated_date FROM projects ORDER BY id",
-    )?;
+    let mut stmt =
+        v1.prepare("SELECT id, name, color, parent_id, updated_date FROM projects ORDER BY id")?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, i64>(0)?,
@@ -482,9 +483,7 @@ fn migrate_task_tags(
     id_map: &IdMap,
 ) -> Result<()> {
     let mut stmt = v1.prepare("SELECT task_id, tag_id FROM task_tag")?;
-    let rows = stmt.query_map([], |r| {
-        Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
-    })?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
 
     let mut per_task: HashMap<Id, Vec<Id>> = HashMap::new();
     for row in rows {
@@ -644,7 +643,8 @@ fn migrate_weekly_reviews(
     v2: Option<&SqliteStore>,
     stats: &mut Stats,
 ) -> Result<()> {
-    let mut stmt = v1.prepare("SELECT id, week_start, content, updated_date FROM weekly_reviews")?;
+    let mut stmt =
+        v1.prepare("SELECT id, week_start, content, updated_date FROM weekly_reviews")?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, i64>(0)?,
@@ -696,7 +696,8 @@ fn migrate_monthly_reviews(
     v2: Option<&SqliteStore>,
     stats: &mut Stats,
 ) -> Result<()> {
-    let mut stmt = v1.prepare("SELECT id, year_month, content, updated_date FROM monthly_reviews")?;
+    let mut stmt =
+        v1.prepare("SELECT id, year_month, content, updated_date FROM monthly_reviews")?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, i64>(0)?,

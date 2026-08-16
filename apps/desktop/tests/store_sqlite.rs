@@ -7,8 +7,8 @@
 //! `apps/desktop` 的本地模块),import 路径相应更新。
 
 use pomoflow_core::model::{
-    DailyReview, Id, MonthlyReview, PomodoroSession, Priority, Project, Reminder, Repeat, Tag, Task,
-    TaskStatus, Timestamp, WeeklyReview,
+    DailyReview, Id, MonthlyReview, PomodoroSession, Priority, Project, Reminder, Repeat, Tag,
+    Task, TaskStatus, Timestamp, WeeklyReview,
 };
 use pomoflow_core::store::{SqliteStore, Store, TaskQuery};
 
@@ -144,24 +144,30 @@ fn task_query_filters_by_project_and_status() {
     s.upsert_task(t_done.clone()).unwrap();
     s.upsert_task(t_other.clone()).unwrap();
 
-    let only_p1 = s.list_tasks(&TaskQuery {
-        project_id: Some(p1.clone()),
-        ..TaskQuery::default()
-    }).unwrap();
+    let only_p1 = s
+        .list_tasks(&TaskQuery {
+            project_id: Some(p1.clone()),
+            ..TaskQuery::default()
+        })
+        .unwrap();
     assert_eq!(only_p1.len(), 2);
 
-    let only_done = s.list_tasks(&TaskQuery {
-        status: Some(TaskStatus::Completed),
-        ..TaskQuery::default()
-    }).unwrap();
+    let only_done = s
+        .list_tasks(&TaskQuery {
+            status: Some(TaskStatus::Completed),
+            ..TaskQuery::default()
+        })
+        .unwrap();
     assert_eq!(only_done.len(), 1);
     assert_eq!(only_done[0].id, t_done.id);
 
-    let active_p1 = s.list_tasks(&TaskQuery {
-        project_id: Some(p1.clone()),
-        status: Some(TaskStatus::Active),
-        ..TaskQuery::default()
-    }).unwrap();
+    let active_p1 = s
+        .list_tasks(&TaskQuery {
+            project_id: Some(p1.clone()),
+            status: Some(TaskStatus::Active),
+            ..TaskQuery::default()
+        })
+        .unwrap();
     assert_eq!(active_p1.len(), 1);
     assert_eq!(active_p1[0].id, t_active.id);
 }
@@ -246,28 +252,34 @@ fn task_tags_association() {
     s.upsert_tag(g_a.clone()).unwrap();
     s.upsert_tag(g_b.clone()).unwrap();
 
-    s.set_tags_for_task(&t.id, &[g_a.id.clone(), g_b.id.clone()]).unwrap();
+    s.set_tags_for_task(&t.id, &[g_a.id.clone(), g_b.id.clone()])
+        .unwrap();
     let tags = s.list_tags_for_task(&t.id).unwrap();
     assert_eq!(tags.len(), 2);
 
     // 替换为单个标签
-    s.set_tags_for_task(&t.id, std::slice::from_ref(&g_a.id)).unwrap();
+    s.set_tags_for_task(&t.id, std::slice::from_ref(&g_a.id))
+        .unwrap();
     let tags = s.list_tags_for_task(&t.id).unwrap();
     assert_eq!(tags.len(), 1);
     assert_eq!(tags[0].id, g_a.id);
 
     // 按 tag_id 过滤任务
-    let with_a = s.list_tasks(&TaskQuery {
-        tag_id: Some(g_a.id.clone()),
-        ..TaskQuery::default()
-    }).unwrap();
+    let with_a = s
+        .list_tasks(&TaskQuery {
+            tag_id: Some(g_a.id.clone()),
+            ..TaskQuery::default()
+        })
+        .unwrap();
     assert_eq!(with_a.len(), 1);
     assert_eq!(with_a[0].id, t.id);
 
-    let with_b = s.list_tasks(&TaskQuery {
-        tag_id: Some(g_b.id.clone()),
-        ..TaskQuery::default()
-    }).unwrap();
+    let with_b = s
+        .list_tasks(&TaskQuery {
+            tag_id: Some(g_b.id.clone()),
+            ..TaskQuery::default()
+        })
+        .unwrap();
     assert_eq!(with_b.len(), 0);
 }
 
@@ -286,7 +298,8 @@ fn pomodoros_serialise_correctly() {
         updated_at: now(),
     })
     .unwrap();
-    s.upsert_task(sample_task(tid.clone(), pid.clone())).unwrap();
+    s.upsert_task(sample_task(tid.clone(), pid.clone()))
+        .unwrap();
 
     let started = chrono::Utc::now() - chrono::Duration::minutes(25);
     let session = PomodoroSession {
@@ -353,7 +366,10 @@ fn reviews_upsert_by_unique_key() {
         updated_at: now(),
     };
     s.upsert_weekly_review(w.clone()).unwrap();
-    assert_eq!(s.get_weekly_review("2026-08-10").unwrap().unwrap().content, "Wk");
+    assert_eq!(
+        s.get_weekly_review("2026-08-10").unwrap().unwrap().content,
+        "Wk"
+    );
 
     // 月复盘
     let m = MonthlyReview {
@@ -365,7 +381,10 @@ fn reviews_upsert_by_unique_key() {
         updated_at: now(),
     };
     s.upsert_monthly_review(m.clone()).unwrap();
-    assert_eq!(s.get_monthly_review("2026-08").unwrap().unwrap().content, "Aug");
+    assert_eq!(
+        s.get_monthly_review("2026-08").unwrap().unwrap().content,
+        "Aug"
+    );
 }
 
 #[test]
@@ -373,7 +392,10 @@ fn get_missing_returns_not_found() {
     let s = store();
     let missing = Id::new();
     let err = s.get_task(&missing).unwrap_err();
-    assert!(matches!(err, pomoflow_core::error::CoreError::NotFound { .. }));
+    assert!(matches!(
+        err,
+        pomoflow_core::error::CoreError::NotFound { .. }
+    ));
 }
 
 #[test]
@@ -396,6 +418,11 @@ fn task_limit_caps_result() {
         s.upsert_task(t).unwrap();
     }
 
-    let top = s.list_tasks(&TaskQuery { limit: Some(3), ..TaskQuery::default() }).unwrap();
+    let top = s
+        .list_tasks(&TaskQuery {
+            limit: Some(3),
+            ..TaskQuery::default()
+        })
+        .unwrap();
     assert_eq!(top.len(), 3);
 }
