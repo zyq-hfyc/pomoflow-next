@@ -16,6 +16,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::{CoreError, CoreResult};
 use crate::model::{
     DailyReview, Id, MonthlyReview, PomodoroSession, Project, Tag, Task, WeeklyReview,
@@ -29,7 +31,8 @@ pub struct TagLink {
 }
 
 /// 任务查询条件(全字段可选)。
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskQuery {
     pub project_id: Option<Id>,
     pub tag_id: Option<Id>,

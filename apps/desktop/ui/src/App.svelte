@@ -1,94 +1,508 @@
 <script lang="ts">
-  // P1.1:Hello 窗口,展示 Svelte 5 runes + Tauri 2 集成链路是否通畅。
-  // P1.3 起:替换为 Task CRUD UI,从 Rust commands 拉数据。
+  // P1.3:Task CRUD UI —— 从 Rust commands 拉数据,落到 Svelte 5 runes 反应式 UI。
+  //
+  // 重构:把 P1.1 的 Hello 窗口替换成任务管理界面,所有操作最终落到 Tauri command
+  // → pomoflow-core::Store → SQLite。
 
-  // Svelte 5 runes 写法(替代旧的 let / $: 响应式)
-  let phase = $state<"boot" | "ready">("boot");
-  let buildMode = $state<string>("");
+  import { invoke } from "@tauri-apps/api/core";
+  import { onMount } from "svelte";
 
-  $effect(() => {
-    // 启动时探测 build mode —— dev 下是 dev,build 后是 production
-    buildMode = import.meta.env.DEV ? "dev" : "production";
-    phase = "ready";
-  });
+  // === 与 Rust 端域模型对齐的 TS 类型 ===
+  // 字段名 = Rust serde 默认输出(snake_case,TaskQuery 单独开了 camelCase,这里没用)。
+  // chrono DateTime<Utc> 默认序列化为 RFC3339 字符串,这里用 string 接收。
+
+  type Id = string;
+
+  type TaskStatus = "active" | "completed";
+  type Priority = "high" | "medium" | "low" | "none";
+  type Reminder =
+    | "none"
+    | "on_time"
+    | "minutes5"
+    | "minutes30"
+    | "hour1"
+    | "day1"
+    | "days2";
+  type Repeat = "none" | "daily" | "weekdays" | "weekly" | "monthly" | "yearly";
+
+  interface Task {
+    id: Id;
+    title: string;
+    description: string;
+    project_id: Id | null;
+    priority: Priority;
+    status: TaskStatus;
+    due_date: string | null;
+    estimated_pomodoros: number;
+    completed_pomodoros: number;
+    pomodoro_duration: number | null;
+    reminder: Reminder;
+    repeat: Repeat;
+    completed_at: string | null;
+    revision: number;
+    deleted_at: string | null;
+    updated_at: string;
+  }
+
+  interface Project {
+    id: Id;
+    name: string;
+    color: string;
+    parent_id: Id | null;
+    revision: number;
+    deleted_at: string | null;
+    updated_at: string;
+  }
+
+  // === 反应式状态 ===
+
+  let tasks = $state<Task[]>([]);
+  let projects = $state<Project[]>([]);
+  let loading = $state(true);
+  let error = $state<string | null>(null);
+
+  let newTitle = $state("");
+  let newProjectId = $state<Id | "">("");
+  let submitting = $state(false);
+
+  // 简单过滤:全部 / 进行中 / 已完成
+  let filter = $state<"all" | "active" | "completed">("all");
+
+  // 派生量
+  const activeCount = $derived(
+    tasks.filter((t) => t.status === "active").length,
+  );
+  const completedCount = $derived(
+    tasks.filter((t) => t.status === "completed").length,
+  );
+  const filteredTasks = $derived(
+    filter === "all" ? tasks : tasks.filter((t) => t.status === filter),
+  );
+
+  // === 数据加载 ===
+
+  async function refresh() {
+    try {
+      const [t, p] = await Promise.all([
+        invoke<Task[]>("list_tasks", { query: {} }),
+        invoke<Project[]>("list_projects"),
+      ]);
+      tasks = t;
+      projects = p;
+    } catch (e) {
+      error = String(e);
+    } finally {
+      loading = false;
+    }
+  }
+
+  onMount(refresh);
+
+  // === 写操作 ===
+
+  function nowIso(): string {
+    return new Date().toISOString();
+  }
+
+  function newTaskId(): Id {
+    return crypto.randomUUID();
+  }
+
+  async function addTask() {
+    const title = newTitle.trim();
+    if (!title || submitting) return;
+    submitting = true;
+    error = null;
+    try {
+      const task: Task = {
+        id: newTaskId(),
+        title,
+        description: "",
+        project_id: newProjectId || null,
+        priority: "none",
+        status: "active",
+        due_date: null,
+        estimated_pomodoros: 0,
+        completed_pomodoros: 0,
+        pomodoro_duration: null,
+        reminder: "none",
+        repeat: "none",
+        completed_at: null,
+        revision: 1,
+        deleted_at: null,
+        updated_at: nowIso(),
+      };
+      await invoke<Task>("upsert_task", { task });
+      newTitle = "";
+      await refresh();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      submitting = false;
+    }
+  }
+
+  async function toggleStatus(task: Task) {
+    const nextStatus: TaskStatus =
+      task.status === "active" ? "completed" : "active";
+    try {
+      await invoke<Task>("upsert_task", {
+        task: {
+          ...task,
+          status: nextStatus,
+          completed_at: nextStatus === "completed" ? nowIso() : null,
+          updated_at: nowIso(),
+        },
+      });
+      await refresh();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function deleteTask(task: Task) {
+    if (!confirm(`删除任务「${task.title}」?`)) return;
+    try {
+      await invoke("delete_task", { id: task.id });
+      await refresh();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function changePriority(task: Task, priority: Priority) {
+    try {
+      await invoke<Task>("upsert_task", {
+        task: { ...task, priority, updated_at: nowIso() },
+      });
+      await refresh();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  // === 派生工具 ===
+
+  function projectName(id: Id | null): string {
+    if (!id) return "";
+    return projects.find((p) => p.id === id)?.name ?? "";
+  }
+
+  function priorityLabel(p: Priority): string {
+    return { high: "高", medium: "中", low: "低", none: "" }[p];
+  }
 </script>
 
-<main class="hero">
-  <div class="logo" aria-hidden="true">🍅</div>
-  <h1>Hello PomoFlow</h1>
-  <p class="subtitle">Tauri 2 + Svelte 5 脚手架就位</p>
+<main class="page">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">🍅</span>
+      <h1>PomoFlow</h1>
+    </div>
+    <div class="counts">
+      <span class="count">进行中 <b>{activeCount}</b></span>
+      <span class="count">已完成 <b>{completedCount}</b></span>
+    </div>
+  </header>
 
-  {#if phase === "ready"}
-    <div class="meta">
-      <span class="badge">build: {buildMode}</span>
-      <span class="badge">phase: P1.1 scaffold</span>
+  <form class="composer" onsubmit={(e) => { e.preventDefault(); addTask(); }}>
+    <input
+      type="text"
+      bind:value={newTitle}
+      placeholder="新任务标题..."
+      disabled={submitting}
+      aria-label="新任务标题"
+    />
+    <select bind:value={newProjectId} disabled={submitting} aria-label="项目">
+      <option value="">无项目</option>
+      {#each projects as p (p.id)}
+        <option value={p.id}>{p.name}</option>
+      {/each}
+    </select>
+    <button type="submit" disabled={submitting || !newTitle.trim()}>
+      {submitting ? "添加中..." : "添加"}
+    </button>
+  </form>
+
+  <div class="filter-row">
+    <button
+      class:active={filter === "all"}
+      onclick={() => (filter = "all")}
+    >全部</button>
+    <button
+      class:active={filter === "active"}
+      onclick={() => (filter = "active")}
+    >进行中</button>
+    <button
+      class:active={filter === "completed"}
+      onclick={() => (filter = "completed")}
+    >已完成</button>
+  </div>
+
+  {#if error}
+    <div class="error" role="alert">
+      <span>⚠ {error}</span>
+      <button onclick={() => (error = null)}>×</button>
     </div>
   {/if}
 
-  <p class="hint">
-    下一步 P1.2 起接入 SQLite + 任务 CRUD。
-    <br />
-    Rust 端 <code>crates/core</code> 已就绪,UI ↔ 后端桥接在 P1.3 接通。
-  </p>
+  {#if loading}
+    <p class="hint">加载中...</p>
+  {:else if filteredTasks.length === 0}
+    <p class="hint">
+      {filter === "all" ? "暂无任务,添加一个开始吧" : "此视图下没有任务"}
+    </p>
+  {:else}
+    <ul class="task-list">
+      {#each filteredTasks as task (task.id)}
+        <li class:done={task.status === "completed"}>
+          <input
+            type="checkbox"
+            checked={task.status === "completed"}
+            onchange={() => toggleStatus(task)}
+            aria-label="切换完成"
+          />
+          <div class="content">
+            <div class="title-row">
+              <span class="title">{task.title}</span>
+              {#if task.project_id}
+                <span class="project-badge">{projectName(task.project_id)}</span>
+              {/if}
+              {#if task.priority !== "none"}
+                <span class="pri-badge pri-{task.priority}">{priorityLabel(task.priority)}</span>
+              {/if}
+            </div>
+            {#if task.description}
+              <p class="desc">{task.description}</p>
+            {/if}
+          </div>
+          <div class="actions">
+            <select
+              value={task.priority}
+              onchange={(e) =>
+                changePriority(task, (e.currentTarget as HTMLSelectElement).value as Priority)}
+              aria-label="优先级"
+            >
+              <option value="none">优先级</option>
+              <option value="high">高</option>
+              <option value="medium">中</option>
+              <option value="low">低</option>
+            </select>
+            <button class="del" onclick={() => deleteTask(task)} aria-label="删除">
+              删除
+            </button>
+          </div>
+        </li>
+      {/each}
+    </ul>
+  {/if}
 </main>
 
 <style>
-  .hero {
-    text-align: center;
-    max-width: 480px;
-    padding: 2rem;
+  .page {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    padding: 1.5rem 2rem 3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
   }
 
-  .logo {
-    font-size: 4rem;
-    line-height: 1;
-    margin-bottom: 0.5rem;
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--color-border);
   }
 
-  h1 {
-    margin: 0 0 0.5rem 0;
-    font-size: 2rem;
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .brand h1 {
+    margin: 0;
+    font-size: 1.25rem;
     font-weight: 600;
-    color: var(--color-text);
   }
+  .logo { font-size: 1.5rem; }
 
-  .subtitle {
-    margin: 0 0 1.5rem 0;
+  .counts {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.875rem;
     color: var(--color-text-muted);
-    font-size: 1rem;
+  }
+  .count b {
+    color: var(--color-text);
+    font-weight: 600;
+    margin-left: 0.25rem;
   }
 
-  .meta {
+  .composer {
     display: flex;
     gap: 0.5rem;
-    justify-content: center;
-    margin-bottom: 1.5rem;
+  }
+  .composer input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: 0.95rem;
+    background: var(--color-surface);
+  }
+  .composer select {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+  }
+  .composer button {
+    padding: 0.5rem 1.25rem;
+    border: none;
+    border-radius: var(--radius-md);
+    background: var(--color-accent);
+    color: #fff;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .composer button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
-  .badge {
-    display: inline-block;
-    padding: 0.25rem 0.75rem;
+  .filter-row {
+    display: flex;
+    gap: 0.5rem;
+  }
+  .filter-row button {
     background: var(--color-surface);
     border: 1px solid var(--color-border);
-    border-radius: 999px;
-    font-size: 0.8125rem;
+    border-radius: var(--radius-md);
+    padding: 0.3rem 0.85rem;
+    font-size: 0.85rem;
     color: var(--color-text-muted);
-    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+  }
+  .filter-row button.active {
+    background: var(--color-accent);
+    color: #fff;
+    border-color: var(--color-accent);
+  }
+
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius-md);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.875rem;
+  }
+  .error button {
+    background: none;
+    border: none;
+    color: inherit;
+    font-size: 1.1rem;
+    cursor: pointer;
   }
 
   .hint {
-    margin: 0;
     color: var(--color-text-muted);
-    font-size: 0.875rem;
-    line-height: 1.6;
+    text-align: center;
+    padding: 2rem;
+    font-size: 0.9rem;
   }
 
-  code {
+  .task-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .task-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
     background: var(--color-surface);
     border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+  }
+  .task-list li.done .title {
+    text-decoration: line-through;
+    color: var(--color-text-muted);
+  }
+
+  .task-list input[type="checkbox"] {
+    margin-top: 0.25rem;
+  }
+
+  .content {
+    flex: 1;
+    min-width: 0;
+  }
+  .title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .title {
+    font-weight: 500;
+  }
+  .project-badge {
+    font-size: 0.75rem;
+    padding: 0.1rem 0.5rem;
+    background: #f3f4f6;
+    border-radius: 999px;
+    color: var(--color-text-muted);
+  }
+  .pri-badge {
+    font-size: 0.75rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
+  .pri-high { background: #fee2e2; color: #991b1b; }
+  .pri-medium { background: #fef3c7; color: #92400e; }
+  .pri-low { background: #dbeafe; color: #1e40af; }
+
+  .desc {
+    margin: 0.25rem 0 0;
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+  }
+
+  .actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    align-items: flex-end;
+  }
+  .actions select {
+    font-size: 0.75rem;
+    border: 1px solid var(--color-border);
     border-radius: 4px;
-    padding: 0.1rem 0.4rem;
-    font-size: 0.85em;
-    color: var(--color-accent);
+    padding: 0.15rem 0.4rem;
+    background: var(--color-surface);
+  }
+  .actions .del {
+    background: transparent;
+    border: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    padding: 0.15rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+  .actions .del:hover {
+    color: #dc2626;
+    border-color: #dc2626;
   }
 </style>
