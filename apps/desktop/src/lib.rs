@@ -90,6 +90,8 @@ pub fn run() {
             commands::get_notification_template,
             commands::upsert_notification_template,
             commands::today_completed_minutes,
+            commands::stats_range,
+            commands::stats_overview,
         ])
         .setup(|app| {
             info!("Tauri app setup complete, building tray...");

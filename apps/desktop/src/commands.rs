@@ -13,11 +13,12 @@
 
 use std::path::{Path, PathBuf};
 
-use chrono::Utc;
+use chrono::{NaiveDate, Utc};
 use pomoflow_core::model::{
     DailyReview, Id, MonthlyReview, Motto, NotificationTemplate, PomodoroSession, Project, SubTask,
     Tag, Task, TaskStatus, TaskView, Timestamp, WeeklyReview,
 };
+use pomoflow_core::stats::{self, OverviewStats, RangeStats, StatsGroup};
 use pomoflow_core::store::{SqliteStore, Store, TaskQuery};
 use pomoflow_core::validate;
 use tauri::State;
@@ -441,4 +442,84 @@ pub fn today_completed_minutes(
         .store
         .today_completed_minutes(start_ms, end_ms)
         .map_err(map_err)
+}
+
+/// 本地日区间 [start_date, end_date](双含)→ UTC 毫秒窗口 [start, end_exclusive)。
+/// 统计页窄查会话用:把"本地某天的会话"换算成 UTC 时间戳范围。
+fn local_day_range_to_utc_ms(
+    start_date: &str,
+    end_date: &str,
+    tz_offset_min: i32,
+) -> Option<(i64, i64)> {
+    let s = NaiveDate::parse_from_str(start_date, "%Y-%m-%d").ok()?;
+    let e = NaiveDate::parse_from_str(end_date, "%Y-%m-%d").ok()?;
+    let offset_ms = tz_offset_min as i64 * 60_000;
+    let start = s.and_hms_opt(0, 0, 0)?.and_utc().timestamp_millis() - offset_ms;
+    let end_excl = (e + chrono::Duration::days(1))
+        .and_hms_opt(0, 0, 0)?
+        .and_utc()
+        .timestamp_millis()
+        - offset_ms;
+    Some((start, end_excl))
+}
+
+/// 统计页维度查询(v1 `/api/stats/range`)。
+///
+/// - `start_date`/`end_date`:本地日期 YYYY-MM-DD,双端包含
+/// - `group`:day / week / month
+/// - `tz_offset_min`:会话日分桶用的本地时区偏移(东正西负,如上海 +480)
+///
+/// 语义在 core::stats(纯函数),此处只做取数编排。
+#[tauri::command]
+pub fn stats_range(
+    start_date: String,
+    end_date: String,
+    group: StatsGroup,
+    tz_offset_min: i32,
+    state: State<'_, AppState>,
+) -> Result<RangeStats, String> {
+    let Some((start_ms, end_ms)) = local_day_range_to_utc_ms(&start_date, &end_date, tz_offset_min)
+    else {
+        return Err(format!("invalid date range: {start_date}..{end_date}"));
+    };
+    let sessions = state
+        .store
+        .list_pomodoros_between(start_ms, end_ms)
+        .map_err(map_err)?;
+    // 全量任务(不走分页 list_tasks:limit 夹紧 ≤5000,超限时老任务被截断,统计会少算)
+    let tasks = state.store.list_tasks_for_stats().map_err(map_err)?;
+    let projects = state.store.list_projects().map_err(map_err)?;
+    Ok(stats::range_stats(
+        &sessions,
+        &tasks,
+        &projects,
+        &start_date,
+        &end_date,
+        group,
+        tz_offset_min,
+    ))
+}
+
+/// 统计总览(v1 `/api/stats/overview`)。
+///
+/// `today`/`week_start`/`month_start` 是前端本地时区的日期(YYYY-MM-DD);
+/// total_sessions / total_tasks_completed 无时间界。
+#[tauri::command]
+pub fn stats_overview(
+    today: String,
+    week_start: String,
+    month_start: String,
+    tz_offset_min: i32,
+    state: State<'_, AppState>,
+) -> Result<OverviewStats, String> {
+    let sessions = state.store.list_pomodoros().map_err(map_err)?;
+    let tasks = state.store.list_tasks_for_stats().map_err(map_err)?;
+    Ok(stats::overview_stats(
+        &sessions,
+        &tasks,
+        &today,
+        &week_start,
+        &month_start,
+        tz_offset_min,
+    ))
 }
