@@ -317,6 +317,25 @@ pub fn upsert_daily_review(
     state.store.upsert_daily_review(review).map_err(map_err)
 }
 
+/// 日期区间列表(v1 GET /api/daily-reviews?start&end,手账模式用)。
+#[tauri::command]
+pub fn list_daily_reviews(
+    start_date: String,
+    end_date: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<DailyReview>, String> {
+    state
+        .store
+        .list_daily_reviews_between(&start_date, &end_date)
+        .map_err(map_err)
+}
+
+/// 删除某天日复盘(v1 DELETE 语义,硬删)。
+#[tauri::command]
+pub fn delete_daily_review(date: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.store.delete_daily_review(&date).map_err(map_err)
+}
+
 #[tauri::command]
 pub fn get_weekly_review(
     week_start: String,
@@ -333,6 +352,43 @@ pub fn upsert_weekly_review(
     state.store.upsert_weekly_review(review).map_err(map_err)
 }
 
+/// 某月的周复盘列表(v1 GET /api/weekly-reviews?year&month):
+/// 返回所有**周一落在这个月内**的自然周,v1 crud.py:733-740 对齐。
+#[tauri::command]
+pub fn list_weekly_reviews(
+    year: i32,
+    month: u32,
+    state: State<'_, AppState>,
+) -> Result<Vec<WeeklyReview>, String> {
+    let (Some(first), Some(last_day)) = (
+        NaiveDate::from_ymd_opt(year, month, 1),
+        if month == 12 {
+            NaiveDate::from_ymd_opt(year + 1, 1, 1)
+        } else {
+            NaiveDate::from_ymd_opt(year, month + 1, 1)
+        },
+    ) else {
+        return Err(format!("invalid year/month: {year}-{month}"));
+    };
+    let last = last_day.pred_opt().unwrap_or(first);
+    state
+        .store
+        .list_weekly_reviews_between(&first.to_string(), &last.to_string())
+        .map_err(map_err)
+}
+
+/// 删除某周复盘(硬删)。
+#[tauri::command]
+pub fn delete_weekly_review(
+    week_start: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .store
+        .delete_weekly_review(&week_start)
+        .map_err(map_err)
+}
+
 #[tauri::command]
 pub fn get_monthly_review(
     year_month: String,
@@ -347,6 +403,18 @@ pub fn upsert_monthly_review(
     state: State<'_, AppState>,
 ) -> Result<MonthlyReview, String> {
     state.store.upsert_monthly_review(review).map_err(map_err)
+}
+
+/// 删除某月复盘(硬删)。
+#[tauri::command]
+pub fn delete_monthly_review(
+    year_month: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .store
+        .delete_monthly_review(&year_month)
+        .map_err(map_err)
 }
 
 // === SubTask commands ===

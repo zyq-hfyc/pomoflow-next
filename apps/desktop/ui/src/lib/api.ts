@@ -235,17 +235,37 @@ export const getDailyReview = (date: string) =>
 export const upsertDailyReview = (review: DailyReview) =>
   invoke<DailyReview>("upsert_daily_review", { review });
 
+/** 日期区间列表(手账模式;双端包含 YYYY-MM-DD) */
+export const listDailyReviews = (startDate: string, endDate: string) =>
+  invoke<DailyReview[]>("list_daily_reviews", { startDate, endDate });
+
+/** 删除某天日复盘(硬删) */
+export const deleteDailyReview = (date: string) =>
+  invoke<void>("delete_daily_review", { date });
+
 export const getWeeklyReview = (weekStart: string) =>
   invoke<WeeklyReview | null>("get_weekly_review", { weekStart });
 
 export const upsertWeeklyReview = (review: WeeklyReview) =>
   invoke<WeeklyReview>("upsert_weekly_review", { review });
 
+/** 某月的周复盘列表(周一落在该月内的自然周) */
+export const listWeeklyReviews = (year: number, month: number) =>
+  invoke<WeeklyReview[]>("list_weekly_reviews", { year, month });
+
+/** 删除某周复盘(硬删) */
+export const deleteWeeklyReview = (weekStart: string) =>
+  invoke<void>("delete_weekly_review", { weekStart });
+
 export const getMonthlyReview = (yearMonth: string) =>
   invoke<MonthlyReview | null>("get_monthly_review", { yearMonth });
 
 export const upsertMonthlyReview = (review: MonthlyReview) =>
   invoke<MonthlyReview>("upsert_monthly_review", { review });
+
+/** 删除某月复盘(硬删) */
+export const deleteMonthlyReview = (yearMonth: string) =>
+  invoke<void>("delete_monthly_review", { yearMonth });
 
 // === SubTask ===
 
