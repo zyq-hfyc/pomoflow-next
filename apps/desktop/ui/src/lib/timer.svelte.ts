@@ -257,6 +257,49 @@ export function resetTodayStats(count: number, minutes: number): void {
   lastStatsDay = new Date().toDateString();
 }
 
+/// 从后端总览重拉今日统计(v1 refreshTodayStats:启动 / 回前台 / 跨午夜)。
+export async function syncTodayStatsFromOverview(): Promise<void> {
+  try {
+    const now = new Date();
+    const dow = now.getDay();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - (dow === 0 ? 6 : dow - 1));
+    monday.setHours(0, 0, 0, 0);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const iso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const s = await api.statsOverview(
+      iso(now),
+      iso(monday),
+      iso(monthStart),
+      -now.getTimezoneOffset(),
+    );
+    resetTodayStats(s.today_sessions, s.today_minutes);
+  } catch (e) {
+    console.warn("sync today stats", e);
+  }
+}
+
+/// 今日统计的三类重同步时机(v1 AppContext L323-341):
+/// 1. 启动(App 调一次)2. 回前台 3. 60s 跨午夜检测。
+let _statsTimersInitialzed = false;
+export function initTodayStatsSync(): void {
+  if (_statsTimersInitialzed || typeof window === "undefined") return;
+  _statsTimersInitialzed = true;
+  void syncTodayStatsFromOverview();
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) void syncTodayStatsFromOverview();
+  });
+  let lastDay = new Date().toDateString();
+  window.setInterval(() => {
+    const today = new Date().toDateString();
+    if (today !== lastDay) {
+      lastDay = today;
+      void syncTodayStatsFromOverview();
+    }
+  }, 60_000);
+}
+
 // === 完成链(v1 handleTimerComplete) ===
 
 /// 候选池:active + due 本月 + due 日 ≤ 今天;优先级 → created 升序。
@@ -302,7 +345,8 @@ async function sendSystemNotification(title: string, body: string): Promise<void
 
 async function handleComplete(): Promise<void> {
   const mode = _state.mode;
-  const totalMinutes = Math.floor((startSeconds || 0) / 60);
+  // v1:今日统计按完整模式时长计(与暂停无关),不用 startSeconds(暂停续跑会少计)
+  const totalMinutes = Math.floor(modeSeconds(mode) / 60);
   const task = _state.activeTask;
 
   // 通知/弹窗文案:模板按当前语言解析(focus/break 用各自字段)

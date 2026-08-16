@@ -19,6 +19,7 @@
     tick as timerTick,
     recalibrateOnVisible,
     refreshNotificationTemplate,
+    initTodayStatsSync,
   } from "./lib/timer.svelte";
   import { initReminders } from "./lib/reminders.svelte";
   import { initTheme } from "./lib/theme.svelte";
@@ -49,6 +50,8 @@
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) recalibrateOnVisible();
     });
+    // 今日统计重同步(启动/回前台/跨午夜,v1 AppContext)
+    initTodayStatsSync();
     // 任务提醒引擎(30s 轮询 + 专注抑制/补弹 + 启动补弹)
     initReminders();
   });

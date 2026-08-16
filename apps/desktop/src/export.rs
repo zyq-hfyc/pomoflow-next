@@ -26,8 +26,9 @@ pub struct ExportRow {
     pub priority: String,
     #[serde(default)]
     pub due_date: String,
+    /// 预计番茄数:数字单元格(v1 estimated_pomodoros,Excel 可直接求和)
     #[serde(default)]
-    pub estimated: String,
+    pub estimated: f64,
     #[serde(default)]
     pub tags: String,
     #[serde(default)]
@@ -73,13 +74,14 @@ fn inner_build(
         sheet.set_column_width(i as u16, *w)?;
     }
 
-    // 表头:加粗 + 居中 + 浅灰底 + 底边框,行高 22
+    // 表头:加粗 + 居中 + 浅灰底 + 浅灰底边框(v1 #E5E7EB),行高 22
     let header_fmt = Format::new()
         .set_bold()
         .set_align(FormatAlign::Center)
         .set_align(FormatAlign::VerticalCenter)
         .set_background_color(rust_xlsxwriter::Color::RGB(0xF3F4F6))
-        .set_border_bottom(FormatBorder::Thin);
+        .set_border_bottom(FormatBorder::Thin)
+        .set_border_bottom_color(rust_xlsxwriter::Color::RGB(0xE5E7EB));
     for (i, h) in headers.iter().take(9).enumerate() {
         sheet.write_string_with_format(0, i as u16, h, &header_fmt)?;
     }
@@ -102,7 +104,7 @@ fn inner_build(
         sheet.write_string_with_format(r, 2, &row.project, &body_fmt)?;
         sheet.write_string_with_format(r, 3, &row.priority, &body_fmt)?;
         sheet.write_string_with_format(r, 4, &row.due_date, &body_fmt)?;
-        sheet.write_string_with_format(r, 5, &row.estimated, &body_fmt)?;
+        sheet.write_number_with_format(r, 5, row.estimated, &body_fmt)?;
         sheet.write_string_with_format(r, 6, &row.tags, &body_fmt)?;
         sheet.write_string_with_format(r, 7, &row.subtasks, &body_fmt)?;
         sheet.write_string_with_format(r, 8, &row.status, &body_fmt)?;
@@ -133,7 +135,7 @@ mod tests {
             project: "工作".into(),
             priority: "高".into(),
             due_date: "2026-08-16".into(),
-            estimated: "4".into(),
+            estimated: 4.0,
             tags: "urgent, review".into(),
             subtasks: "列大纲\n查资料".into(),
             status: "未完成".into(),

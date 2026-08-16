@@ -400,7 +400,8 @@ export interface ExportRow {
   project: string;
   priority: string;
   dueDate: string;
-  estimated: string;
+  /** 预计番茄数:数字(v1 estimated_pomodoros,Excel 可直接求和) */
+  estimated: number;
   tags: string;
   subtasks: string;
   status: string;

@@ -106,9 +106,11 @@ async function checkOnce(): Promise<void> {
     const key = `${task.id}:${reminderTime}`;
     if (fired[key]) continue; // 已触发过,去重
     if (focusing) continue; // 专注中跳过,结束后的检查会补弹
-    await fireNotification(task);
+    // 先记后发:v1 是全同步无竞态;v2 通知含 IPC await,若后写,
+    // 30s tick 与专注结束补弹并发时会双弹同一条
     fired[key] = reminderTime;
     changed = true;
+    await fireNotification(task);
   }
 
   // 清理过期记录(7 天 TTL)

@@ -29,7 +29,6 @@
     switchMode,
     setActiveTask,
     clearCompletionMessage,
-    resetTodayStats,
   } from "../lib/timer.svelte";
   import { getSettings } from "../lib/settings.svelte";
   import * as api from "../lib/api";
@@ -57,7 +56,9 @@
   // === 数据 ===
   let projects = $state<Project[]>([]);
   let tags = $state<Tag[]>([]);
-  let sidebarTasks = $state<TaskWithExtras[]>([]); // 右侧栏任务列表
+  let sidebarTasks = $state<TaskWithExtras[]>([]); // 右侧栏任务列表(当月+筛选)
+  // 任务下拉候选(v1 TaskSelector:全部 active 任务,不受侧栏筛选影响)
+  let allActiveTasks = $state<TaskWithExtras[]>([]);
   let todayReview = $state<string | null>(null);
   let todayMinutes = $state<number>(0);
   let error = $state<string | null>(null);
@@ -148,6 +149,15 @@
     void timer.todayCount;
     void refreshTodayMinutes();
     void refreshSidebarTasks();
+    void refreshAllActiveTasks();
+  });
+
+  // v1 TimerPage:活动任务一旦变成 completed(无论在哪页勾选)→ 清除选中,
+  // 避免对已完成任务再开专注会话
+  $effect(() => {
+    if (timer.activeTask && timer.activeTask.status === "completed") {
+      setActiveTask(null);
+    }
   });
 
   // === 加载 ===
@@ -184,6 +194,25 @@
     }
   }
 
+  /// 任务下拉候选:全部 active 任务(v1 TaskSelector 语义,与侧栏筛选解耦),
+  /// 按优先级 → 创建时间排序展示
+  async function refreshAllActiveTasks() {
+    try {
+      const list = await api.listTasks({ status: "active", limit: null });
+      const order: Record<string, number> = { high: 0, medium: 1, low: 2, none: 3 };
+      allActiveTasks = (list as TaskWithExtras[]).sort((a, b) => {
+        const pa = order[a.priority ?? "none"] ?? 3;
+        const pb = order[b.priority ?? "none"] ?? 3;
+        if (pa !== pb) return pa - pb;
+        return (
+          new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime()
+        );
+      });
+    } catch (e) {
+      console.warn("refresh active tasks", e);
+    }
+  }
+
   async function refreshTodayReview() {
     try {
       const r: DailyReview | null = await api.getDailyReview(todayISO());
@@ -209,38 +238,16 @@
   });
 
   onMount(async () => {
+    // 今日统计由引擎 initTodayStatsSync 全局同步(App 挂载),此处不再重复
     await Promise.all([
       refreshProjects(),
       refreshTags(),
       refreshSidebarTasks(),
+      refreshAllActiveTasks(),
       refreshTodayReview(),
       refreshTodayMinutes(),
-      syncTodayStatsFromOverview(),
     ]);
   });
-
-  /// 启动时从后端总览同步今日统计(v1 refreshTodayStats;之后的即时累加在引擎本地)。
-  async function syncTodayStatsFromOverview() {
-    try {
-      const now = new Date();
-      const dow = now.getDay();
-      const monday = new Date(now);
-      monday.setDate(now.getDate() - (dow === 0 ? 6 : dow - 1));
-      monday.setHours(0, 0, 0, 0);
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      const iso = (d: Date) =>
-        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-      const s = await api.statsOverview(
-        iso(now),
-        iso(monday),
-        iso(monthStart),
-        -now.getTimezoneOffset(),
-      );
-      resetTodayStats(s.today_sessions, s.today_minutes);
-    } catch (e) {
-      console.warn("sync today stats", e);
-    }
-  }
 
   // === 操作 ===
   // 开始当前模式(专注可无任务;时长取任务自带或全局,v1 startTimer)
@@ -286,7 +293,7 @@
 
   // 任务选择器变化 → 更新全局活动任务("" = 无特定任务)
   function onPickTask(value: string) {
-    const task = value ? sidebarTasks.find((t) => t.id === value) ?? null : null;
+    const task = value ? allActiveTasks.find((t) => t.id === value) ?? null : null;
     setActiveTask(task);
   }
 
@@ -438,9 +445,10 @@
             disabled={timer.running || timer.sessionId !== null}
             onchange={(e) => onPickTask((e.currentTarget as HTMLSelectElement).value)}
           >
-            <!-- v1:显式"无特定任务"选项,允许无任务专注 -->
+            <!-- v1:显式"无特定任务"选项,允许无任务专注;
+                 候选=全部 active 任务(优先级→创建时间),不受右侧栏筛选影响 -->
             <option value="">{t.timer.noSpecificTask}</option>
-            {#each sidebarTasks.filter((task) => task.status === "active") as task (task.id)}
+            {#each allActiveTasks as task (task.id)}
               <option value={task.id}>{task.title}</option>
             {/each}
           </select>

@@ -31,6 +31,7 @@
     Repeat,
   } from "../lib/api";
   import { currentRoute, navigate } from "../lib/router.svelte";
+  import { startWithTask } from "../lib/timer.svelte";
   import { getDict, fmt } from "../lib/i18n.svelte";
   import { todayStr, tomorrowStr, datePart, hasTimePart } from "../lib/dueDate";
   import ProjectSidebar from "../components/Tasks/ProjectSidebar.svelte";
@@ -378,14 +379,12 @@
     void refresh();
   }
 
+  // 一键开始专注(v1:navigate + autostart):引擎先弃当前会话再开新专注,
+  // 会话全程由引擎驱动(修复旧实现 dispatch 无人监听的事件 + 孤儿会话行)
   async function startTask(task: TaskWithTags) {
     try {
-      const session = await api.startPomodoro(task.id, null, task.pomodoro_duration ?? 25);
+      await startWithTask(task);
       navigate("/timer");
-      // 触发 timer.start via window 事件：当前 P1.7 TimerPage 读 timer 模块 —
-      // 这里仅跳路由，由 TimerPage 监听 startPomodoro 返回的 session 完成 timer.start 注入。
-      // 简化处理：把 session 写入全局 timer 模块通过事件总线。
-      window.dispatchEvent(new CustomEvent("pomoflow:start-task", { detail: { task, session } }));
     } catch (e) {
       error = String(e);
     }
@@ -461,8 +460,8 @@
         project: projects.find((p) => p.id === task.project_id)?.name ?? "",
         priority: t.priority[task.priority ?? "none"] ?? task.priority ?? "",
         dueDate: task.due_date ? task.due_date.slice(0, 10) : "",
-        // v1 只导 estimated
-        estimated: String(task.estimated_pomodoros ?? 0),
+        // v1 只导 estimated(数字单元格)
+        estimated: task.estimated_pomodoros ?? 0,
         tags: (task.tags ?? []).map((x) => x.name).join(", "),
         subtasks: (task.subtasks ?? []).map((s) => s.title).join("\n"),
         status:
