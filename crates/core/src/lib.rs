@@ -13,6 +13,7 @@
 //! - [`sync`]      —— 同步协议(ChangeLog + LWW 合并算法 + revision)
 //! - [`store`]     —— 存储抽象(`Store` trait + 内存实现,供测试 / 后续 SQLite 实现)
 //! - [`validate`]  —— 业务规则校验(任务必填项、项目层级 ≤ 3 ...)
+//! - [`stats`]     —— 统计聚合(趋势 / 总览 / 项目分布,v1 crud.py 翻译)
 //! - [`error`]     —— 统一错误类型
 
 #![deny(rust_2018_idioms)]
@@ -21,6 +22,7 @@
 
 pub mod error;
 pub mod model;
+pub mod stats;
 pub mod store;
 pub mod sync;
 pub mod validate;

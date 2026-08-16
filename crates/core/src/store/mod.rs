@@ -78,6 +78,11 @@ pub enum TaskDateFilter {
 pub trait Store: std::fmt::Debug {
     // --- Tasks ---
     fn list_tasks(&self, q: &TaskQuery) -> CoreResult<Vec<Task>>;
+    /// 统计专用:全量任务(软删过滤,**无分页上限**)。
+    ///
+    /// v1 统计是全表过滤 COUNT/聚合,不走分页;`list_tasks` 的 limit 会夹紧到
+    /// ≤5000,任务数超限时最老任务被静默截断,统计数字会偏低 —— 所以单独提供。
+    fn list_tasks_for_stats(&self) -> CoreResult<Vec<Task>>;
     fn get_task(&self, id: &Id) -> CoreResult<Task>;
     fn upsert_task(&self, task: Task) -> CoreResult<Task>;
     fn delete_task(&self, id: &Id) -> CoreResult<()>;
@@ -102,6 +107,9 @@ pub trait Store: std::fmt::Debug {
 
     // --- Pomodoro sessions ---
     fn list_pomodoros(&self) -> CoreResult<Vec<PomodoroSession>>;
+    /// 按 started_at 毫秒区间过滤(统计页窄查询):`start_ms <= started_at_ms < end_ms`,
+    /// 过滤软删除。
+    fn list_pomodoros_between(&self, start_ms: i64, end_ms: i64) -> CoreResult<Vec<PomodoroSession>>;
     fn upsert_pomodoro(&self, session: PomodoroSession) -> CoreResult<PomodoroSession>;
     fn delete_pomodoro(&self, id: &Id) -> CoreResult<()>;
 
@@ -248,6 +256,26 @@ impl Store for InMemoryStore {
                 .then_with(|| a.id.as_str().cmp(b.id.as_str()))
         });
         out.truncate(crate::validate::clamp_limit(q.limit));
+        Ok(out)
+    }
+
+    fn list_tasks_for_stats(&self) -> CoreResult<Vec<Task>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<Task> = g
+            .tasks
+            .values()
+            .filter(|t| t.deleted_at.is_none())
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| {
+            b.created_at
+                .0
+                .cmp(&a.created_at.0)
+                .then_with(|| a.id.as_str().cmp(b.id.as_str()))
+        });
         Ok(out)
     }
 
@@ -461,6 +489,29 @@ impl Store for InMemoryStore {
             .filter(|s| s.deleted_at.is_none())
             .cloned()
             .collect())
+    }
+
+    fn list_pomodoros_between(
+        &self,
+        start_ms: i64,
+        end_ms: i64,
+    ) -> CoreResult<Vec<PomodoroSession>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<PomodoroSession> = g
+            .pomodoros
+            .values()
+            .filter(|s| s.deleted_at.is_none())
+            .filter(|s| {
+                let ms = s.started_at.timestamp_millis();
+                ms >= start_ms && ms < end_ms
+            })
+            .cloned()
+            .collect();
+        out.sort_by_key(|s| std::cmp::Reverse(s.started_at));
+        Ok(out)
     }
 
     fn upsert_pomodoro(&self, session: PomodoroSession) -> CoreResult<PomodoroSession> {

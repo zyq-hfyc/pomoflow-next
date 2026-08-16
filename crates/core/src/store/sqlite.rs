@@ -759,6 +759,25 @@ impl Store for SqliteStore {
         Ok(out)
     }
 
+    fn list_tasks_for_stats(&self) -> CoreResult<Vec<Task>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                // 全量(无 LIMIT):统计聚合与 v1 全表过滤语义一致
+                "SELECT * FROM tasks WHERE deleted_at_ms IS NULL
+                 ORDER BY created_at_ms DESC, id",
+            )
+            .map_err(|e| CoreError::storage(format!("prepare list_tasks_for_stats: {e}")))?;
+        let rows = stmt
+            .query_map([], row_to_task)
+            .map_err(|e| CoreError::storage(format!("query: {e}")))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| CoreError::storage(format!("row: {e}")))?);
+        }
+        Ok(out)
+    }
+
     fn get_task(&self, id: &Id) -> CoreResult<Task> {
         let conn = self.lock()?;
         conn.query_row(
@@ -1095,6 +1114,30 @@ impl Store for SqliteStore {
             .map_err(|e| CoreError::storage(format!("query: {e}")))?;
         rows.map(|r| r.map_err(|e| CoreError::storage(format!("row: {e}"))))
             .collect()
+    }
+
+    fn list_pomodoros_between(
+        &self,
+        start_ms: i64,
+        end_ms: i64,
+    ) -> CoreResult<Vec<PomodoroSession>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT * FROM pomodoros
+                 WHERE deleted_at_ms IS NULL
+                   AND started_at_ms >= ? AND started_at_ms < ?
+                 ORDER BY started_at_ms DESC",
+            )
+            .map_err(|e| CoreError::storage(format!("prepare list_pomodoros_between: {e}")))?;
+        let rows = stmt
+            .query_map(params![start_ms, end_ms], row_to_pomodoro)
+            .map_err(|e| CoreError::storage(format!("query: {e}")))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| CoreError::storage(format!("row: {e}")))?);
+        }
+        Ok(out)
     }
 
     fn upsert_pomodoro(&self, session: PomodoroSession) -> CoreResult<PomodoroSession> {
