@@ -26,7 +26,13 @@ tauri-build = { version = "2.6", features = [] }
 pomoflow-core = { path = "../../crates/core" }
 
 # Tauri 2 主框架
-tauri = { version = "2.11", features = [] }
+# - tray-icon:系统托盘(右键菜单 / 最小化到托盘)
+# - image-png:从 PNG 字节加载 tray icon
+tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
+
+# Tauri 2 官方插件(P1.4 引入)
+tauri-plugin-notification = "2"
+tauri-plugin-autostart = "2"
 
 # SQLite 持久化(P1.2 实现 `crates/core::Store` trait)
 # bundled 把 SQLite C 源码编进 binary,无需系统预装 libsqlite3。

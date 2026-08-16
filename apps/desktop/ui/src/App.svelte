@@ -6,6 +6,12 @@
 
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
+  import {
+    isPermissionGranted,
+    requestPermission,
+    sendNotification,
+  } from "@tauri-apps/plugin-notification";
+  import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 
   // === 与 Rust 端域模型对齐的 TS 类型 ===
   // 字段名 = Rust serde 默认输出(snake_case,TaskQuery 单独开了 camelCase,这里没用)。
@@ -68,6 +74,13 @@
   // 简单过滤:全部 / 进行中 / 已完成
   let filter = $state<"all" | "active" | "completed">("all");
 
+  // === P1.4 系统能力状态 ===
+  let autostartOn = $state(false);
+  let autostartLoading = $state(false);
+  let notificationPermission = $state<"granted" | "denied" | "default">(
+    "default",
+  );
+
   // 派生量
   const activeCount = $derived(
     tasks.filter((t) => t.status === "active").length,
@@ -96,7 +109,27 @@
     }
   }
 
-  onMount(refresh);
+  onMount(async () => {
+    await refresh();
+    await refreshSystemStatus();
+  });
+
+  async function refreshSystemStatus() {
+    try {
+      autostartOn = await isEnabled();
+    } catch (e) {
+      // 首次读不到 / 权限缺失 —— 静默,UI 显式标 unknown
+      console.warn("isEnabled failed", e);
+      autostartOn = false;
+    }
+    try {
+      notificationPermission = (await isPermissionGranted())
+        ? "granted"
+        : "default";
+    } catch {
+      notificationPermission = "default";
+    }
+  }
 
   // === 写操作 ===
 
@@ -178,6 +211,49 @@
       await refresh();
     } catch (e) {
       error = String(e);
+    }
+  }
+
+  // === P1.4 系统能力操作 ===
+
+  async function toggleAutostart() {
+    if (autostartLoading) return;
+    autostartLoading = true;
+    try {
+      if (autostartOn) {
+        await disable();
+        autostartOn = false;
+      } else {
+        await enable();
+        autostartOn = true;
+      }
+    } catch (e) {
+      error = `自启动切换失败: ${e}`;
+    } finally {
+      autostartLoading = false;
+    }
+  }
+
+  async function testNotification() {
+    try {
+      let granted = await isPermissionGranted();
+      if (!granted) {
+        const perm = await requestPermission();
+        granted = perm === "granted";
+        notificationPermission = perm;
+      } else {
+        notificationPermission = "granted";
+      }
+      if (!granted) {
+        error = "通知权限未授予,无法发送";
+        return;
+      }
+      sendNotification({
+        title: "PomoFlow 测试通知",
+        body: `当前任务数:${tasks.length},进行中:${activeCount}`,
+      });
+    } catch (e) {
+      error = `通知失败: ${e}`;
     }
   }
 
@@ -296,6 +372,44 @@
       {/each}
     </ul>
   {/if}
+
+  <!-- P1.4 系统能力面板 -->
+  <section class="settings">
+    <h2>系统能力</h2>
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-name">开机自启动</span>
+        <span class="setting-hint">
+          OS 启动时自动运行 PomoFlow(静默启动,常驻托盘)
+        </span>
+      </div>
+      <button
+        class="toggle"
+        class:on={autostartOn}
+        disabled={autostartLoading}
+        onclick={toggleAutostart}
+        aria-pressed={autostartOn}
+      >
+        {autostartLoading ? "..." : autostartOn ? "已开启" : "已关闭"}
+      </button>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-name">系统通知</span>
+        <span class="setting-hint">
+          番茄完成 / 任务提醒时弹出系统通知
+        </span>
+      </div>
+      <button class="action" onclick={testNotification}>
+        发送测试通知
+      </button>
+    </div>
+
+    <p class="tray-hint">
+      💡 关闭主窗口时 PomoFlow 会驻留在系统托盘,右键托盘图标可『显示窗口 / 退出』。
+    </p>
+  </section>
 </main>
 
 <style>
@@ -504,5 +618,70 @@
   .actions .del:hover {
     color: #dc2626;
     border-color: #dc2626;
+  }
+
+  /* === P1.4 系统能力面板 === */
+  .settings {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px dashed var(--color-border);
+  }
+  .settings h2 {
+    margin: 0 0 1rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+  .setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 0;
+    gap: 1rem;
+  }
+  .setting-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .setting-name {
+    font-weight: 500;
+    color: var(--color-text);
+  }
+  .setting-hint {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+  }
+  .toggle {
+    padding: 0.4rem 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: 0.85rem;
+    min-width: 5rem;
+  }
+  .toggle.on {
+    background: var(--color-accent);
+    color: #fff;
+    border-color: var(--color-accent);
+  }
+  .toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+  .action {
+    padding: 0.4rem 1rem;
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-accent);
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .action:hover { background: var(--color-accent); color: #fff; }
+  .tray-hint {
+    margin: 1rem 0 0;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+    line-height: 1.5;
   }
 </style>
