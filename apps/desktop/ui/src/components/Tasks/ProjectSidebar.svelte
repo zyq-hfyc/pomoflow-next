@@ -7,7 +7,7 @@
   //     每个按钮右侧显示「预估分钟 + 任务数」(来自 props.tasks 聚合)
   //   - 项目树:支持 3 级嵌套;每个节点 hover 显示 ⋮ 菜单(加子 / 改名 / 删除)
   //   - 选中项目 → onSelectProject(id);选中筛选 → onSetFilter(key)
-  //   - 手账模式当前 P1.10 占位(filter key 接收但页面侧仍跳 JournalPage)
+  //   - 手账模式:任务页中栏渲染 JournalView(无独立路由)
 
   import { Search, Sun, Sunrise, CalendarDays, CalendarCheck, CircleCheck, CalendarRange, Folder, ChevronDown, ChevronRight, Plus, MoreVertical, Pencil, Trash2 } from "lucide-svelte";
   import type { Component } from "svelte";

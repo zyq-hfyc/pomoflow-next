@@ -12,21 +12,29 @@
   interface Props {
     value: string | null;
     placeholder?: string;
+    /** 无障碍名称(手账月视图渲染 40+ 个文本框,placeholder 不作可访问名) */
+    ariaLabel?: string;
     rows?: number;
     onSave: (text: string) => void;
     onDelete?: () => void;
   }
 
-  let { value, placeholder, rows = 2, onSave, onDelete }: Props = $props();
+  let { value, placeholder, ariaLabel, rows = 2, onSave, onDelete }: Props =
+    $props();
 
   let text = $state(untrack(() => value ?? ""));
 
-  // 当外部 value 变化时(例如刷新后重新拉数据)同步本地
+  // 当外部 value 变化时(例如刷新后重新拉数据)同步本地。
+  // ⚠️ 对 text 的读/写必须 untrack —— 否则 text 成为依赖,用户每敲一键
+  // (bind:value 改 text)都会触发本 effect 把输入重置回旧 value(v1 的
+  // useEffect([value]) 只依赖 value,这里等价复刻)。
   $effect(() => {
     const incoming = value ?? "";
-    if (incoming !== text) {
-      text = incoming;
-    }
+    untrack(() => {
+      if (incoming !== text) {
+        text = incoming;
+      }
+    });
   });
 
   function handleBlur() {
@@ -43,6 +51,7 @@
   bind:value={text}
   onblur={handleBlur}
   placeholder={placeholder ?? "写下今天的复盘..."}
+  aria-label={ariaLabel ?? placeholder ?? "复盘内容"}
   {rows}
   class="review-textarea"
 ></textarea>

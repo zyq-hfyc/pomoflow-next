@@ -4,9 +4,8 @@
   // 拆分理由:把 P1.3-P1.5 塞在一个文件里的 687 行 App.svelte 拆成:
   //   - App.svelte(本文件):壳 + 导航 + 路由 outlet + 全局 tick 副作用
   //   - pages/TimerPage.svelte:番茄钟主页(圆环 + 控制)
-  //   - pages/TasksPage.svelte:任务 CRUD(从原 App.svelte 迁过来)
+  //   - pages/TasksPage.svelte:任务 CRUD(从原 App.svelte 迁过来;journal 视图 = 手账)
   //   - pages/StatsPage.svelte:统计(占位,P1.9 接 Recharts)
-  //   - pages/JournalPage.svelte:手账(占位,P1.10 实现)
   //   - pages/SettingsPage.svelte:设置(从原 system 面板迁过来 + 番茄钟参数)
   //
   // 全局 tick:`$effect` 监听 `running`,true 时每秒 `tick()`,false 时清掉 interval。
@@ -17,7 +16,6 @@
   import TimerPage from "./pages/TimerPage.svelte";
   import TasksPage from "./pages/TasksPage.svelte";
   import StatsPage from "./pages/StatsPage.svelte";
-  import JournalPage from "./pages/JournalPage.svelte";
   import SettingsPage from "./pages/SettingsPage.svelte";
 
   // === 全局 timer tick ===
@@ -60,8 +58,6 @@
       <TasksPage />
     {:else if route === "/stats"}
       <StatsPage />
-    {:else if route === "/journal"}
-      <JournalPage />
     {:else if route === "/settings"}
       <SettingsPage />
     {:else}

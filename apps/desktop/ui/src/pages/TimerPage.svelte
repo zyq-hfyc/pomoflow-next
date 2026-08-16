@@ -357,11 +357,9 @@
   }
   async function handleDeleteReview() {
     try {
-      const today = todayISO();
-      const existing = await api.getDailyReview(today);
-      if (existing) {
-        await api.upsertDailyReview({ ...existing, content: "" });
-      }
+      // v1 语义:硬删(deleteDailyReview),不写 content="" 墓碑行 ——
+      // 与手账视图的删除口径一致,避免残留行让"清空"永远不再触发
+      await api.deleteDailyReview(todayISO());
       todayReview = null;
     } catch (e) {
       console.warn("delete review", e);

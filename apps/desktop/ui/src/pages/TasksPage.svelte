@@ -2,7 +2,9 @@
   // 任务管理页 —— v1 同款 3 列布局：
   //   [左] 时间筛选 + 项目树 + 搜索
   //   [中] 当前视图的标题 / 4 张统计卡 / 筛选条 / 添加表单 / 任务列表（扁平或分组）
-  //   [右] 选中任务的详情面板（TaskDetailPanel）
+  //        journal 视图换成手账月视图（JournalView）
+  //   [右] 选中任务的详情面板（TaskDetailPanel）；journal 视图为月度复盘面板
+  //        （MonthReviewPanel）
   //
   // 视图模式：
   //   - today / tomorrow / week / planned / completed / journal（6 档）
@@ -36,6 +38,8 @@
   import StatCard from "../components/Stats/StatCard.svelte";
   import FilterBar from "../components/Tasks/FilterBar.svelte";
   import TaskForm from "../components/Tasks/TaskForm.svelte";
+  import JournalView from "../components/Tasks/JournalView.svelte";
+  import MonthReviewPanel from "../components/Tasks/MonthReviewPanel.svelte";
 
   type TaskWithTags = Task & { tags?: Tag[] };
   type FilterKey = "today" | "tomorrow" | "week" | "planned" | "completed" | "journal" | "";
@@ -51,6 +55,12 @@
   let searchQuery = $state("");
 
   let selectedTask = $state<TaskWithTags | null>(null);
+
+  // === 手账模式状态(P1.10):年/月默认今天;reviewVersion 在周复盘保存后 +1,
+  //     驱动右侧 MonthReviewPanel 重拉 ===
+  let journalYear = $state(new Date().getFullYear());
+  let journalMonth = $state(new Date().getMonth() + 1);
+  let reviewVersion = $state(0);
 
   // === Planned / Completed 视图的独立筛选 state ===
   let plannedFilterProject = $state<string | null>(null);
@@ -133,8 +143,8 @@
         endDate: completedFilterEndDate,
       });
     } else if (filter === "journal") {
-      // 手账模式：所有 active 任务（带日期）— P1.10 由 JournalView 接手
-      result = result.filter((t) => t.status === "active" && t.due_date);
+      // 手账模式：所有带 due_date 的任务（含 completed，可勾选切换）— v1 语义
+      result = result.filter((t) => !!t.due_date);
     }
 
     // 排序：active 在前 → 优先级 → 创建时间
@@ -443,7 +453,6 @@
   }
 </script>
 
-<!-- 占位：从 journal 视图暂未做 P1.10 -->
 <svelte:head>
   <title>任务 - PomoFlow</title>
 </svelte:head>
@@ -479,11 +488,15 @@
   <!-- 中：主内容 -->
   <div class="main">
     {#if filter === "journal"}
-      <div class="journal-placeholder">
-        <h2>手账模式</h2>
-        <p>月视图按自然周分组、每日勾选 + 复盘 — 在 P1.10 实现。</p>
-        <p class="hint">当前 active 任务数：{filtered.length}</p>
-      </div>
+      <JournalView
+        year={journalYear}
+        month={journalMonth}
+        tasks={filtered}
+        onYearChange={(y) => (journalYear = y)}
+        onMonthChange={(m) => (journalMonth = m)}
+        onReviewChange={() => (reviewVersion += 1)}
+        onTasksChange={() => void refresh()}
+      />
     {:else}
       <div class="inner">
         <!-- 标题 -->
@@ -641,8 +654,10 @@
     {/if}
   </div>
 
-  <!-- 右：详情面板 -->
-  {#if selectedTask && filter !== "journal"}
+  <!-- 右：手账模式为月度复盘面板，其余为任务详情 -->
+  {#if filter === "journal"}
+    <MonthReviewPanel year={journalYear} month={journalMonth} {reviewVersion} />
+  {:else if selectedTask}
     <TaskDetailPanel
       task={selectedTask}
       {projects}
@@ -729,19 +744,5 @@
     color: inherit;
     font-size: 1.1rem;
     cursor: pointer;
-  }
-
-  .journal-placeholder {
-    text-align: center;
-    padding: 4rem 1rem;
-    color: var(--color-text-muted, #6b6864);
-  }
-  .journal-placeholder h2 {
-    margin: 0 0 0.5rem;
-    color: var(--color-text, #1f1d1b);
-  }
-  .journal-placeholder .hint {
-    margin-top: 1rem;
-    font-size: 0.85rem;
   }
 </style>
