@@ -12,13 +12,17 @@
 | [`pomoflow`](https://github.com/zyq-hfyc/pomoflow) | TypeScript + Python + PyInstaller | 「不需要同步」的用户,继续维护 v1.x |
 | **`pomoflow-next`**(本仓库) | Tauri 2 + Rust + 薄 Web UI | 「准备多端同步」的用户,v2 渐进 |
 
-## 当前进度(P0 = `crates/core` 奠基)
+## 当前进度(v1 功能复刻完成)
 
-- ✅ Cargo workspace + 三个目录占位(`crates/core` / `apps/desktop` / `tools/migrate-v1`)
-- ✅ `crates/core` 域模型 + 同步协议 + 存储抽象 + 业务校验 + 集成测试
-- ⏳ `apps/desktop` Tauri 2 工程(P1 阶段)
-- ⏳ `tools/migrate-v1` v1 SQLite → v2 store 迁移 CLI(P0/P1 之间)
-- ⏳ CI matrix + Release matrix(P1 收尾)
+- ✅ Cargo workspace(`crates/core` + `apps/desktop` + `tools/migrate-v1`)
+- ✅ `crates/core`:域模型 + LWW 同步 + 存储(含版本化 SQLite 迁移) + 业务校验 +
+  统计聚合 + 重复任务日期引擎 + 拖拽排序校验,79 个测试
+- ✅ `apps/desktop` Tauri 2 桌面端:v1 全功能 —— 计时器(挂钟制/自动链/任务接续/
+  提醒)、任务页(6 视图 + 重复任务引擎 + 手账月历复盘)、统计页(6 维度 + SVG 图表)、
+  设置页(7 标签:计时/清单树拖拽/标签/8 主题背景/名言/通知文案/中英双语)、xlsx 导出、
+  帮助页、托盘/通知/开机自启
+- ✅ `tools/migrate-v1`:v1 SQLite → v2 store 一键迁移(全表,含重复实例/子任务/名言)
+- ✅ CI + 三平台 Release(tag 触发)
 
 完整路线与 ADR 见 [docs/architecture.md § 13](https://github.com/zyq-hfyc/pomoflow/blob/main/docs/architecture.md)
 (权威文档在原仓库,本仓库只做执行)。
@@ -93,15 +97,17 @@ cargo check --all-targets
 cargo test --all-targets
 ```
 
-## 与 v1 的数据迁移(P1 阶段)
+## 与 v1 的数据迁移
 
-`tools/migrate-v1` 会提供 CLI 把 v1 `pomoflow.db`(SQLite)导出 → v2 store:
+`tools/migrate-v1` CLI 把 v1 `pomoflow.db`(SQLite)一键导入 v2 store
+(项目树/标签/任务含重复实例与子任务/番茄会话/三档复盘/名言,全量):
 
 ```bash
-# 计划中的命令(P1 实现,目前不可用)
-cargo run -p migrate-v1 -- --from path/to/pomoflow.db --to ~/.local/share/pomoflow/store.db --dry-run
-cargo run -p migrate-v1 -- --from path/to/pomoflow.db --to ~/.local/share/pomoflow/store.db
+cargo run -p migrate-v1 -- --from path/to/pomoflow.db --to "%APPDATA%\pomoflow\store.db" --dry-run
+cargo run -p migrate-v1 -- --from path/to/pomoflow.db --to "%APPDATA%\pomoflow\store.db"
 ```
+
+详见 [docs/migration.md](./docs/migration.md)。
 
 ## 贡献
 

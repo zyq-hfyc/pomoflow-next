@@ -13,10 +13,12 @@
 架构原则 / ADR / 同步协议设计 → 一律查 [`pomoflow/docs/architecture.md`](../pomoflow/docs/architecture.md)
 (原仓库),不要在本仓库另起一份互相矛盾的 ADR。
 
-## 当前阶段(P0)
+## 当前阶段(v1 功能复刻完成,准备 P2 云同步)
 
-**在做**:把 `crates/core` 跑稳 —— 域模型 + 同步协议 + 存储抽象 + 业务校验
-**没在做**:Tauri 桌面端(P1)、云端同步(P2+)
+**已完成**:v1 全功能复刻 —— core(模型/同步/存储/校验/统计/重复/排序)+
+桌面端(计时器/任务页含手账/统计页/设置 7 标签/双语/主题/xlsx 导出/帮助页)+
+migrate-v1 全表迁移。v1 是功能规格权威,复刻语义以 v1 源码为准。
+**没在做**:云端同步(P2+)
 
 具体进度看根目录 [`README.md`](./README.md)。
 
@@ -45,11 +47,14 @@ docs/                本仓库内文档
 
 | 模块 | 作用 |
 |------|------|
-| `model` | 域实体(Task / Project / Tag / PomodoroSession / Review),UUID 主键 + revision + 软删除 |
+| `model` | 域实体(Task / Project / Tag / PomodoroSession / Review / Motto / NotificationTemplate),UUID 主键 + revision + 软删除 |
 | `sync::lww` | Last-Writer-Wins 合并核心,revision → updated_at → device_id 三层仲裁 |
 | `sync::mod` | ChangeLog + `merge_changelogs` 函数 |
-| `store` | `Store` trait + `InMemoryStore` 实现(单测用) |
-| `validate` | 业务规则校验(任务必填项、项目层级 ≤ 3 等) |
+| `store` | `Store` trait + `InMemoryStore` + `SqliteStore`(9 表);`store::migrate` 版本化迁移(`PRAGMA user_version` 驱动) |
+| `validate` | 业务规则校验(v1 schemas.py 上限:标题 200 / 描述 5000 / 时长 1..=1000 / 项目层级 ≤ 3 等) |
+| `stats` | 统计聚合(趋势/总览/项目分布),v1 crud.py 翻译,tz 由前端传入 |
+| `repeat` | 重复任务日期引擎(6 规则 + custom JSON),与 v1 Python 差分对拍验证 |
+| `reorder` | 拖拽排序校验(项目树环/深度,标签平铺) |
 | `error` | `CoreError` 统一错误类型,thiserror 派生 |
 
 ## 测试

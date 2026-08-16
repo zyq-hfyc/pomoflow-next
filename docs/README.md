@@ -6,10 +6,10 @@
 
 ## 本目录文件
 
-| 文件 | 何时写 |
-|------|--------|
-| `migration.md` | P1 阶段:`tools/migrate-v1` CLI 完成时写用户操作手册(v1 → v2 数据迁移步骤) |
-| `release.md` | P1 阶段:首次跨平台 release 后写打包流程 / 签名 / 自动更新策略 |
+| 文件 | 状态 |
+|------|------|
+| `migration.md` | ✅ v1 → v2 数据迁移用户手册(`tools/migrate-v1` CLI) |
+| `release.md` | ⏳ 首次跨平台 release 后写打包流程 / 签名 / 自动更新策略 |
 | `adr/` | **不创建**。所有 ADR 在原 `pomoflow/docs/architecture.md` 维护 |
 
 ## 跨仓库引用清单
