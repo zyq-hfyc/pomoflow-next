@@ -25,6 +25,7 @@ export interface Task {
   status: "active" | "completed";
   reminder?: string | null;
   repeat?: string | null;
+  repeat_config?: string | null;
   completed_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -59,9 +60,27 @@ export interface PomodoroSession {
   updated_at: string;
 }
 
+export interface SubTask {
+  id: string;
+  task_id: string;
+  title: string;
+  is_completed: boolean;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DailyReview {
   date: string;
   content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Motto {
+  id: string;
+  text: string;
+  author: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -85,6 +104,13 @@ export interface TaskQuery {
   tag_id?: string | null;
   status?: "active" | "completed" | null;
   limit?: number | null;
+  /** v1 番茄钟页右侧任务清单支持按优先级筛选 */
+  priority?: Priority | null;
+  /** v1 番茄钟页右侧任务清单支持按 due_date 维度筛选(today / tomorrow / this_week) */
+  date?: "today" | "tomorrow" | "this_week" | null;
+  /** 番茄钟页右侧任务清单限定"当月任务" */
+  month_start_ms?: number | null;
+  month_end_ms?: number | null;
 }
 
 // === Task ===
@@ -165,3 +191,30 @@ export const getMonthlyReview = (yearMonth: string) =>
 
 export const upsertMonthlyReview = (review: MonthlyReview) =>
   invoke<MonthlyReview>("upsert_monthly_review", { review });
+
+// === SubTask ===
+
+export const listSubtasksForTask = (taskId: string) =>
+  invoke<SubTask[]>("list_subtasks_for_task", { taskId });
+
+export const upsertSubtask = (subtask: SubTask) =>
+  invoke<SubTask>("upsert_subtask", { subtask });
+
+export const deleteSubtask = (id: string) =>
+  invoke<void>("delete_subtask", { id });
+
+// === Motto ===
+
+export const listMottos = () => invoke<Motto[]>("list_mottos");
+
+export const upsertMotto = (motto: Motto) =>
+  invoke<Motto>("upsert_motto", { motto });
+
+export const deleteMotto = (id: string) =>
+  invoke<void>("delete_motto", { id });
+
+// === Stats ===
+
+/** 番茄钟页"今日专注"分钟数(start_ms / end_ms 由前端按本地时区算出后传入) */
+export const todayCompletedMinutes = (startMs: number, endMs: number) =>
+  invoke<number>("today_completed_minutes", { startMs, endMs });
