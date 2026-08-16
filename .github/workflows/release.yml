@@ -2,24 +2,109 @@ name: release
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*"
 
-# P1 阶段实装:tag `v*` push → 在 Windows / macOS / Ubuntu 三平台构建 Tauri 桌面端
-# → 产出 `.msi` / `.dmg` / `.AppImage` / `.deb` / `.rpm`
-# → 上传到 GitHub Releases(自动从 tag 名生成 release notes)
+# P1.6 阶段实装:tag `v*` push → tauri-action 在 Windows / macOS / Ubuntu 三平台跑
+# `cargo tauri build` → 产出 Tauri bundle → 自动上传 GitHub Release(草稿,需手动 publish)。
 #
-# P0 阶段空占位,避免 tag push 触发失败 CI。
+# 触发器与 ci.yml 共享 v* tag:ci.yml 先跑 crates/core 单元闸作发布前自检,
+# core 编译不过时,release 这边 tauri build 也过不去(自然互锁)。
+#
+# 平台覆盖(P1.6 MVP):
+#   - Linux  : ubuntu-latest     → x86_64-unknown-linux-gnu  → .deb / .AppImage
+#   - macOS  : macos-latest (M1) → aarch64-apple-darwin     → .dmg / .app
+#     (Intel macOS 暂不覆盖,Intel 用户走 Rosetta 2;v0.x 范围够用,后续按需补)
+#   - Windows: windows-latest    → x86_64-pc-windows-msvc   → .msi / .exe
+#
+# bundle targets 在 `apps/desktop/tauri.conf.json` 用 `targets: "all"` 全开,
+# icon / 签名等后续按平台补(P1.6 只做"能编出来能上传"的最小可用闭环)。
+#
+# 图标说明:`apps/desktop/icons/` 当前只有 PNG(最大 256×256)+ .ico,**缺 icon.icns**;
+# macOS .dmg bundle 强依赖 .icns。本 workflow 在 build 前跑 `cargo tauri icon` 把
+# icon.icns 一并生成出来(源图先复用 128x128@2x.png,质量偏低够 MVP;后续要提升清晰度,
+# 只需 commit 一张 ≥1024×1024 源图到 `apps/desktop/icons/source.png`,然后改本步骤的
+# 源图路径即可,无需手动维护各平台 icon)。
 
-env:
-  CARGO_TERM_COLOR: always
+permissions:
+  contents: write
+
+concurrency:
+  # 同 tag 重复 push 时,旧 build 自动取消(避免占 CI 额度)。
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  placeholder:
-    name: P0 placeholder (no release yet)
-    runs-on: ubuntu-latest
+  build:
+    name: Build (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - platform: macos-aarch64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - platform: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    runs-on: ${{ matrix.os }}
+
     steps:
-      - name: Skip until P1
-        run: |
-          echo "P1 阶段才会实装 release workflow"
-          echo "现在 P0 阶段 crates/core 已经验证可编译"
-          echo "tag ${{ github.ref_name }} 已接收,不会产生产物,等 P1 再启用"
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Node.js(前端 `npm run build` + tsc)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/desktop/ui/package-lock.json
+
+      - name: Install frontend deps(npm ci,锁定 lockfile)
+        working-directory: apps/desktop/ui
+        run: npm ci
+
+      - name: Install tauri-cli(只用于 icon 生成;build 那步 tauri-action 内部自带)
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Generate Tauri icon variants(填齐 macOS 缺的 icon.icns)
+        # 源:`apps/desktop/icons/128x128@2x.png`(256×256,质量偏低仅够 MVP)
+        # 后续换 ≥1024×1024 源图后,改下面这一行的路径即可。
+        working-directory: apps/desktop
+        run: cargo tauri icon icons/128x128@2x.png
+
+      - name: Build Tauri bundles + upload to GitHub Release
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "PomoFlow ${{ github.ref_name }}"
+          releaseBody: |
+            Tauri 2 桌面端发布包 —— 见 README 与 release notes。
+
+            ## 安装
+            - **Linux**: `.deb` 直接 `sudo dpkg -i` 安装;`.AppImage` 加可执行权限双击
+            - **macOS**: `.dmg` 拖入 Applications;首次启动需右键"打开"(未签名)
+            - **Windows**: `.msi` 双击安装
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}

@@ -9,10 +9,9 @@ on:
 #
 # 理由:本地用 `cargo check / test / clippy / fmt` 自我把关就够了,
 # CI 留给发布闸 —— tag push 时同时跑本文件(crates/core 单元闸)与
-# `release.yml`(Tauri 三平台打包占位 / P1.6 实装)。
+# `release.yml`(P1.6 实装完毕:Windows / macOS / Linux 三平台 Tauri 打包 → GitHub Release)。
 #
-# 阶段目标(P0):验证 crates/core 可编译 + 测试通过 + clippy 零警告。
-# P1.6 阶段会在 release.yml 实装 Tauri 桌面端的 Windows / macOS / Linux matrix。
+# 当前阶段目标:验证 crates/core 可编译 + 测试通过 + clippy 零警告 + fmt 风格。
 
 env:
   CARGO_TERM_COLOR: always
