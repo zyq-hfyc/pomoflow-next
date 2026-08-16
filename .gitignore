@@ -67,4 +67,7 @@ desktop.ini
 coverage/
 *.lcov
 .pytest_cache/
-.grcov/docs/提示词.txt
+.grcov/
+
+# 用户个人任务清单,不进入版本控制
+docs/提示词.txt
