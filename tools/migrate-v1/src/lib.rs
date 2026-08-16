@@ -25,8 +25,8 @@ use log::{info, warn};
 use rusqlite::Connection;
 
 use pomoflow_core::model::{
-    DailyReview, Id, MonthlyReview, PomodoroSession, Priority, Project, Reminder, Repeat, Tag,
-    Task, TaskStatus, Timestamp, WeeklyReview,
+    DailyReview, Id, MonthlyReview, Motto, PomodoroSession, Priority, Project, Reminder, Repeat,
+    SubTask, Tag, Task, TaskStatus, Timestamp, WeeklyReview,
 };
 use pomoflow_core::store::{SqliteStore, Store};
 
@@ -67,10 +67,12 @@ struct Stats {
     tags: usize,
     tasks: usize,
     task_tags: usize,
+    subtasks: usize,
     pomodoros: usize,
     daily_reviews: usize,
     weekly_reviews: usize,
     monthly_reviews: usize,
+    mottos: usize,
     skipped: usize,
 }
 
@@ -124,10 +126,12 @@ pub fn run(args: Args) -> Result<()> {
     id_map.task = task_id_map;
 
     migrate_task_tags(&v1, v2.as_ref(), &mut stats, &id_map)?;
+    migrate_subtasks(&v1, v2.as_ref(), &mut stats, &id_map)?;
     migrate_pomodoros(&v1, v2.as_ref(), &mut stats, &id_map)?;
     migrate_daily_reviews(&v1, v2.as_ref(), &mut stats)?;
     migrate_weekly_reviews(&v1, v2.as_ref(), &mut stats)?;
     migrate_monthly_reviews(&v1, v2.as_ref(), &mut stats)?;
+    migrate_mottos(&v1, v2.as_ref(), &mut stats)?;
 
     println!("\n=== Migration Summary ===");
     println!(
@@ -138,10 +142,12 @@ pub fn run(args: Args) -> Result<()> {
     println!("  tags:         {}", stats.tags);
     println!("  tasks:        {}", stats.tasks);
     println!("  task_tag:     {}", stats.task_tags);
+    println!("  subtasks:     {}", stats.subtasks);
     println!("  pomodoros:    {}", stats.pomodoros);
     println!("  daily_rev:    {}", stats.daily_reviews);
     println!("  weekly_rev:   {}", stats.weekly_reviews);
     println!("  monthly_rev:  {}", stats.monthly_reviews);
+    println!("  mottos:       {}", stats.mottos);
     if stats.skipped > 0 {
         warn!("skipped {} rows due to parse errors", stats.skipped);
     }
@@ -159,6 +165,8 @@ fn check_v1_schema(v1: &Connection) -> Result<()> {
         "weekly_reviews",
         "monthly_reviews",
     ];
+    // 老版本 v1 库可能没有这两张表(功能后加的)—— 缺了只告警,跳过对应迁移
+    let optional = ["subtasks", "mottos"];
     let mut stmt = v1.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;
     let mut rows = stmt.query([])?;
     let mut found = std::collections::HashSet::new();
@@ -173,7 +181,22 @@ fn check_v1_schema(v1: &Connection) -> Result<()> {
     if !missing.is_empty() {
         anyhow::bail!("v1 schema missing tables: {missing:?}");
     }
+    for t in optional {
+        if !found.contains(t) {
+            warn!("v1 db has no '{t}' table (older version) — related data skipped");
+        }
+    }
     Ok(())
+}
+
+/// 判断 v1 库里是否存在某张表(可选表迁移前检查)。
+fn has_v1_table(v1: &Connection, table: &str) -> Result<bool> {
+    let count: i64 = v1.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?",
+        [table],
+        |r| r.get(0),
+    )?;
+    Ok(count > 0)
 }
 
 // === 时间解析 —— v1 用 SQLAlchemy 默认 UTC,SQLite 实际存在多种格式 ===
@@ -254,6 +277,7 @@ fn repeat_v1_to_v2(s: &str) -> Repeat {
         "每周" => Repeat::Weekly,
         "每月" => Repeat::Monthly,
         "每年" => Repeat::Yearly,
+        "自定义" => Repeat::Custom,
         _ => Repeat::None,
     }
 }
@@ -266,20 +290,24 @@ fn migrate_projects(
     stats: &mut Stats,
     id_map: &mut HashMap<i64, Id>,
 ) -> Result<()> {
-    let mut stmt =
-        v1.prepare("SELECT id, name, color, parent_id, updated_date FROM projects ORDER BY id")?;
+    let mut stmt = v1.prepare(
+        "SELECT id, name, color, parent_id, display_order, created_date, updated_date
+         FROM projects ORDER BY id",
+    )?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, i64>(0)?,
             r.get::<_, String>(1)?,
             r.get::<_, String>(2)?,
             r.get::<_, Option<i64>>(3)?,
-            r.get::<_, Option<String>>(4)?,
+            r.get::<_, Option<i64>>(4)?,
+            r.get::<_, Option<String>>(5)?,
+            r.get::<_, Option<String>>(6)?,
         ))
     })?;
 
     for row in rows {
-        let (v1_id, name, color, v1_parent, updated) = match row {
+        let (v1_id, name, color, v1_parent, display_order, created, updated) = match row {
             Ok(x) => x,
             Err(e) => {
                 warn!("project row read: {e}");
@@ -295,12 +323,19 @@ fn migrate_projects(
             .and_then(parse_datetime)
             .map(Timestamp)
             .unwrap_or_else(Timestamp::now);
+        let created_at = created
+            .as_deref()
+            .and_then(parse_datetime)
+            .map(Timestamp)
+            .unwrap_or(updated_at);
 
         let project = Project {
             id: new_id.clone(),
             name,
             color,
             parent_id,
+            display_order: display_order.unwrap_or(0).max(0) as u32,
+            created_at,
             revision: 1,
             deleted_at: None,
             updated_at,
@@ -321,18 +356,23 @@ fn migrate_tags(
     stats: &mut Stats,
     id_map: &mut HashMap<i64, Id>,
 ) -> Result<()> {
-    let mut stmt = v1.prepare("SELECT id, name, color, updated_date FROM tags ORDER BY id")?;
+    let mut stmt = v1.prepare(
+        "SELECT id, name, color, display_order, created_date, updated_date
+         FROM tags ORDER BY display_order, id",
+    )?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, i64>(0)?,
             r.get::<_, String>(1)?,
             r.get::<_, String>(2)?,
-            r.get::<_, Option<String>>(3)?,
+            r.get::<_, Option<i64>>(3)?,
+            r.get::<_, Option<String>>(4)?,
+            r.get::<_, Option<String>>(5)?,
         ))
     })?;
 
     for row in rows {
-        let (v1_id, name, color, updated) = match row {
+        let (v1_id, name, color, display_order, created, updated) = match row {
             Ok(x) => x,
             Err(e) => {
                 warn!("tag row read: {e}");
@@ -347,11 +387,18 @@ fn migrate_tags(
             .and_then(parse_datetime)
             .map(Timestamp)
             .unwrap_or_else(Timestamp::now);
+        let created_at = created
+            .as_deref()
+            .and_then(parse_datetime)
+            .map(Timestamp)
+            .unwrap_or(updated_at);
 
         let tag = Tag {
             id: new_id.clone(),
             name: name.clone(),
             color,
+            display_order: display_order.unwrap_or(0).max(0) as u32,
+            created_at,
             revision: 1,
             deleted_at: None,
             updated_at,
@@ -387,7 +434,8 @@ fn migrate_tasks(
     let mut stmt = v1.prepare(
         "SELECT id, title, description, project_id, priority, status, due_date,
                 estimated_pomodoros, completed_pomodoros, pomodoro_duration,
-                reminder, repeat, completed_at, updated_date
+                reminder, repeat, repeat_config, repeat_parent_id, repeat_end_date,
+                completed_at, created_date, updated_date
          FROM tasks ORDER BY id",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -405,7 +453,11 @@ fn migrate_tasks(
             r.get::<_, Option<String>>(10)?,
             r.get::<_, Option<String>>(11)?,
             r.get::<_, Option<String>>(12)?,
-            r.get::<_, Option<String>>(13)?,
+            r.get::<_, Option<i64>>(13)?,
+            r.get::<_, Option<String>>(14)?,
+            r.get::<_, Option<String>>(15)?,
+            r.get::<_, Option<String>>(16)?,
+            r.get::<_, Option<String>>(17)?,
         ))
     })?;
 
@@ -423,7 +475,11 @@ fn migrate_tasks(
             pomodoro_duration,
             reminder,
             repeat,
+            repeat_config,
+            v1_repeat_parent,
+            repeat_end_date,
             completed_at,
+            created,
             updated,
         ) = match row {
             Ok(x) => x,
@@ -441,6 +497,13 @@ fn migrate_tasks(
             .and_then(parse_datetime)
             .map(Timestamp)
             .unwrap_or_else(Timestamp::now);
+        let created_at = created
+            .as_deref()
+            .and_then(parse_datetime)
+            .map(Timestamp)
+            .unwrap_or(updated_at);
+        // v1 模板先建(id 小),实例后建(id 大)→ ORDER BY id 时模板已入 map
+        let repeat_parent_id = v1_repeat_parent.and_then(|pid| task_id_map.get(&pid).cloned());
 
         let task = Task {
             id: new_id.clone(),
@@ -461,7 +524,11 @@ fn migrate_tasks(
                 .as_deref()
                 .map(repeat_v1_to_v2)
                 .unwrap_or(Repeat::None),
+            repeat_config,
+            repeat_parent_id,
+            repeat_end_date: repeat_end_date.as_deref().and_then(parse_datetime),
             completed_at: completed_at.as_deref().and_then(parse_datetime),
+            created_at,
             revision: 1,
             deleted_at: None,
             updated_at,
@@ -520,7 +587,8 @@ fn migrate_pomodoros(
     id_map: &IdMap,
 ) -> Result<()> {
     let mut stmt = v1.prepare(
-        "SELECT id, task_id, project_id, duration, started_at, ended_at, is_completed, updated_date
+        "SELECT id, task_id, project_id, duration, started_at, ended_at, is_completed,
+                created_date, updated_date
          FROM pomodoro_sessions ORDER BY id",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -533,11 +601,12 @@ fn migrate_pomodoros(
             r.get::<_, Option<String>>(5)?,
             r.get::<_, bool>(6)?,
             r.get::<_, Option<String>>(7)?,
+            r.get::<_, Option<String>>(8)?,
         ))
     })?;
 
     for row in rows {
-        let (v1_id, v1_task, v1_project, duration, started, ended, is_completed, updated) =
+        let (v1_id, v1_task, v1_project, duration, started, ended, is_completed, created, updated) =
             match row {
                 Ok(x) => x,
                 Err(e) => {
@@ -564,6 +633,11 @@ fn migrate_pomodoros(
             .and_then(parse_datetime)
             .map(Timestamp)
             .unwrap_or_else(Timestamp::now);
+        let created_at = created
+            .as_deref()
+            .and_then(parse_datetime)
+            .map(Timestamp)
+            .unwrap_or(updated_at);
 
         let session = PomodoroSession {
             id: Id::new(),
@@ -573,6 +647,7 @@ fn migrate_pomodoros(
             started_at: started_dt,
             ended_at: ended_dt,
             is_completed,
+            created_at,
             revision: 1,
             deleted_at: None,
             updated_at,
@@ -687,6 +762,132 @@ fn migrate_weekly_reviews(
             store.upsert_weekly_review(review)?;
         }
         stats.weekly_reviews += 1;
+    }
+    Ok(())
+}
+
+fn migrate_subtasks(
+    v1: &Connection,
+    v2: Option<&SqliteStore>,
+    stats: &mut Stats,
+    id_map: &IdMap,
+) -> Result<()> {
+    if !has_v1_table(v1, "subtasks")? {
+        return Ok(());
+    }
+    // v1 无排序列,按 (task_id, rowid) 顺序编 position(同 task 内 0 起递增)
+    let mut stmt = v1.prepare(
+        "SELECT rowid, task_id, title, is_completed, created_date, updated_date
+         FROM subtasks ORDER BY task_id, rowid",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, i64>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, bool>(3)?,
+            r.get::<_, Option<String>>(4)?,
+            r.get::<_, Option<String>>(5)?,
+        ))
+    })?;
+
+    let mut position_by_task: HashMap<Id, u32> = HashMap::new();
+    for row in rows {
+        let (v1_task, title, is_completed, created, updated) = match row {
+            Ok(x) => x,
+            Err(e) => {
+                warn!("subtask row read: {e}");
+                stats.skipped += 1;
+                continue;
+            }
+        };
+        let Some(task_id) = id_map.task.get(&v1_task).cloned() else {
+            continue;
+        };
+        let updated_at = updated
+            .as_deref()
+            .and_then(parse_datetime)
+            .map(Timestamp)
+            .unwrap_or_else(Timestamp::now);
+        let created_at = created
+            .as_deref()
+            .and_then(parse_datetime)
+            .map(Timestamp)
+            .unwrap_or(updated_at);
+        let position = position_by_task.entry(task_id.clone()).or_insert(0);
+
+        let subtask = SubTask {
+            id: Id::new(),
+            task_id,
+            title,
+            is_completed,
+            position: *position,
+            created_at,
+            revision: 1,
+            deleted_at: None,
+            updated_at,
+        };
+        *position += 1;
+
+        if let Some(store) = v2 {
+            store.upsert_subtask(subtask)?;
+        }
+        stats.subtasks += 1;
+    }
+    Ok(())
+}
+
+fn migrate_mottos(v1: &Connection, v2: Option<&SqliteStore>, stats: &mut Stats) -> Result<()> {
+    if !has_v1_table(v1, "mottos")? {
+        return Ok(());
+    }
+    let mut stmt =
+        v1.prepare("SELECT id, text, author, created_date, updated_date FROM mottos ORDER BY id")?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, Option<String>>(2)?,
+            r.get::<_, Option<String>>(3)?,
+            r.get::<_, Option<String>>(4)?,
+        ))
+    })?;
+
+    for row in rows {
+        let (v1_id, text, author, created, updated) = match row {
+            Ok(x) => x,
+            Err(e) => {
+                warn!("motto row read: {e}");
+                stats.skipped += 1;
+                continue;
+            }
+        };
+        let updated_at = updated
+            .as_deref()
+            .and_then(parse_datetime)
+            .map(Timestamp)
+            .unwrap_or_else(Timestamp::now);
+        let created_at = created
+            .as_deref()
+            .and_then(parse_datetime)
+            .map(Timestamp)
+            .unwrap_or(updated_at);
+
+        let motto = Motto {
+            id: Id::new(),
+            text,
+            author,
+            created_at,
+            revision: 1,
+            deleted_at: None,
+            updated_at,
+        };
+
+        if let Some(store) = v2 {
+            store.upsert_motto(motto)?;
+        } else {
+            let _ = v1_id; // dry-run 下消掉未使用告警
+        }
+        stats.mottos += 1;
     }
     Ok(())
 }

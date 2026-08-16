@@ -90,7 +90,21 @@ fn build_v1_fixture(path: &std::path::Path) -> Result<()> {
             id INTEGER PRIMARY KEY,
             task_id INTEGER NOT NULL,
             title TEXT NOT NULL,
-            is_completed INTEGER NOT NULL DEFAULT 0
+            is_completed INTEGER NOT NULL DEFAULT 0,
+            created_by TEXT,
+            created_date TEXT,
+            updated_by TEXT,
+            updated_date TEXT
+        );
+
+        CREATE TABLE mottos (
+            id INTEGER PRIMARY KEY,
+            text TEXT NOT NULL,
+            author TEXT,
+            created_by TEXT,
+            created_date TEXT,
+            updated_by TEXT,
+            updated_date TEXT
         );
 
         CREATE TABLE task_tag (
@@ -214,6 +228,47 @@ fn build_v1_fixture(path: &std::path::Path) -> Result<()> {
          ) VALUES (103, '空项目任务', NULL, 'none', 'active')",
         [],
     )?;
+    // —— 重复任务:模板 100 已有 repeat=每周;补一个自定义重复模板 + 实例
+    conn.execute(
+        "INSERT INTO tasks (
+            id, title, project_id, priority, status, due_date,
+            estimated_pomodoros, completed_pomodoros, pomodoro_duration,
+            repeat, repeat_config, created_date
+         ) VALUES (
+            104, '自定义重复模板', 1, 'medium', 'active', '2026-03-02 09:00:00.000000',
+            1, 0, 25, '自定义',
+            '{\"interval\":1,\"type\":\"week\",\"startDate\":\"2026-03-02\",\"endDate\":\"2026-05-02\",\"weekdays\":[1,3,5]}',
+            '2026-03-01 08:00:00.000000'
+         )",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO tasks (
+            id, title, project_id, priority, status, due_date,
+            estimated_pomodoros, completed_pomodoros, pomodoro_duration,
+            repeat, repeat_parent_id
+         ) VALUES (
+            105, '自定义重复模板', 1, 'medium', 'active', '2026-03-04 09:00:00.000000',
+            1, 0, 25, '', 104
+         )",
+        [],
+    )?;
+
+    // —— 子任务(无排序列,按 rowid 顺序)
+    conn.execute(
+        "INSERT INTO subtasks (task_id, title, is_completed) VALUES (100, '列大纲', 1)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO subtasks (task_id, title, is_completed) VALUES (100, '查资料', 0)",
+        [],
+    )?;
+
+    // —— 座右铭
+    conn.execute(
+        "INSERT INTO mottos (text, author) VALUES ('种一棵树最好的时间是十年前', '非洲谚语')",
+        [],
+    )?;
 
     // —— task_tag 多对多
     conn.execute(
@@ -300,7 +355,7 @@ fn full_migration_round_trip() -> Result<()> {
 
     // —— 任务行数 + 字段映射
     let tasks = v2.list_tasks(&TaskQuery::default())?;
-    assert_eq!(tasks.len(), 4, "tasks row count");
+    assert_eq!(tasks.len(), 6, "tasks row count");
 
     let t100 = tasks.iter().find(|t| t.title == "写方案").unwrap();
     assert_eq!(t100.priority, Priority::High);
@@ -337,6 +392,43 @@ fn full_migration_round_trip() -> Result<()> {
     assert_eq!(t103.reminder, Reminder::None);
     assert_eq!(t103.repeat, Repeat::None);
     assert!(t103.project_id.is_none());
+
+    // —— 重复任务:自定义规则映射 + 实例指向模板的新 UUID
+    let t104 = tasks
+        .iter()
+        .find(|t| t.title == "自定义重复模板" && t.repeat == Repeat::Custom)
+        .unwrap();
+    assert!(t104
+        .repeat_config
+        .as_deref()
+        .unwrap()
+        .contains("\"type\":\"week\""));
+    assert!(t104.due_date.is_some());
+    let t105 = tasks
+        .iter()
+        .find(|t| t.title == "自定义重复模板" && t.repeat == Repeat::None)
+        .unwrap();
+    assert_eq!(
+        t105.repeat_parent_id.as_ref().unwrap(),
+        &t104.id,
+        "实例的 repeat_parent_id 重映射到模板新 UUID"
+    );
+
+    // —— 子任务迁移 + position 按 rowid 顺序
+    let subs = v2.list_subtasks_for_task(&t100.id)?;
+    assert_eq!(subs.len(), 2, "subtasks row count");
+    assert_eq!(subs[0].title, "列大纲");
+    assert!(subs[0].is_completed);
+    assert_eq!(subs[0].position, 0);
+    assert_eq!(subs[1].title, "查资料");
+    assert!(!subs[1].is_completed);
+    assert_eq!(subs[1].position, 1);
+
+    // —— 座右铭迁移
+    let mottos = v2.list_mottos()?;
+    assert_eq!(mottos.len(), 1, "mottos row count");
+    assert_eq!(mottos[0].text, "种一棵树最好的时间是十年前");
+    assert_eq!(mottos[0].author.as_deref(), Some("非洲谚语"));
 
     // —— 任务 ↔ 标签 多对多保留
     let t100_tags = v2.list_tags_for_task(&t100.id)?;
