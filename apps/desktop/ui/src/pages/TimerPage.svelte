@@ -39,7 +39,7 @@
     Tag,
     Task,
   } from "../lib/api";
-  import { getDict, fmt } from "../lib/i18n.svelte";
+  import { getDict } from "../lib/i18n.svelte";
   import ReviewTextarea from "../components/Timer/ReviewTextarea.svelte";
   import MottoCard from "../components/Timer/MottoCard.svelte";
   import TimerRightSidebar, {
@@ -109,7 +109,7 @@
 
   const modeLabel = $derived(
     timer.mode === "focus"
-      ? t.mode.focus
+      ? t.mode.focusing
       : timer.mode === "short_break"
       ? t.mode.shortBreak
       : t.mode.longBreak,
@@ -396,6 +396,24 @@
         >{t.mode.longBreak}</button>
       </div>
 
+      {#if isFocus}
+        <div class="task-picker">
+          <select
+            id="task-select"
+            value={selectedTask?.id ?? ""}
+            disabled={timer.running || timer.sessionId !== null}
+            onchange={(e) => onPickTask((e.currentTarget as HTMLSelectElement).value)}
+          >
+            <!-- v1:显式"无特定任务"选项,允许无任务专注;
+                 候选=全部 active 任务(优先级→创建时间),不受右侧栏筛选影响 -->
+            <option value="">{t.timer.noSpecificTask}</option>
+            {#each allActiveTasks as task (task.id)}
+              <option value={task.id}>{task.title}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
+
       <!-- 圆环 -->
       <div class="ring-wrap">
         <svg
@@ -427,33 +445,16 @@
         </svg>
         <div class="ring-center">
           <div class="time" aria-live="polite">{timeDisplay}</div>
-          <div class="mode-label">{modeLabel}</div>
-          {#if selectedTask}
-            <div class="task-title" title={selectedTask.title}>
-              {selectedTask.title}
-            </div>
-          {/if}
+          <div class="mode-row">
+            <span class="mode-label">{modeLabel}</span>
+            {#if isFocus}
+              <span class="pomo-count">
+                {selectedTask?.completed_pomodoros ?? 0}/{selectedTask?.estimated_pomodoros ?? 0} {t.timer.pomodoros}
+              </span>
+            {/if}
+          </div>
         </div>
       </div>
-
-      {#if isFocus}
-        <div class="task-picker">
-          <label for="task-select">{t.timer.focusOn}</label>
-          <select
-            id="task-select"
-            value={selectedTask?.id ?? ""}
-            disabled={timer.running || timer.sessionId !== null}
-            onchange={(e) => onPickTask((e.currentTarget as HTMLSelectElement).value)}
-          >
-            <!-- v1:显式"无特定任务"选项,允许无任务专注;
-                 候选=全部 active 任务(优先级→创建时间),不受右侧栏筛选影响 -->
-            <option value="">{t.timer.noSpecificTask}</option>
-            {#each allActiveTasks as task (task.id)}
-              <option value={task.id}>{task.title}</option>
-            {/each}
-          </select>
-        </div>
-      {/if}
 
       {#if error}
         <div class="error" role="alert">⚠ {error}</div>
@@ -477,13 +478,10 @@
         {/if}
       </div>
 
-      <!-- 今日统计(v1:今日完成番茄数 + 长休间隔提示) -->
+      <!-- 今日统计(v1:今日完成番茄数) -->
       <div class="today-stats">
         <span class="dot"></span>
         {t.timer.todayDone} <b>{timer.todayCount}</b> {t.timer.pomodoroUnit}
-        {#if isFocus}
-          （{fmt(t.timer.longBreakHint, { n: getSettings().longBreakInterval })}）
-        {/if}
       </div>
 
       <!-- 今日日复盘(与手账模式当天日复盘同步) -->
@@ -623,20 +621,20 @@
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.02em;
   }
-  .mode-label {
+  .mode-row {
     margin-top: 0.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .mode-label {
     font-size: 1rem;
+    font-weight: 500;
     color: var(--color-text-muted, #6b6864);
   }
-  .task-title {
-    margin-top: 0.5rem;
-    max-width: 200px;
-    font-size: 0.85rem;
+  .pomo-count {
+    font-size: 0.9rem;
     color: var(--color-text-muted, #6b6864);
-    text-align: center;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .task-picker {
@@ -645,10 +643,6 @@
     gap: 0.5rem;
     flex-wrap: wrap;
     justify-content: center;
-  }
-  .task-picker label {
-    color: var(--color-text-muted, #6b6864);
-    font-size: 0.9rem;
   }
   .task-picker select {
     padding: 0.4rem 0.75rem;

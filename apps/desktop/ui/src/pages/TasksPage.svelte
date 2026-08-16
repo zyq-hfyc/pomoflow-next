@@ -33,7 +33,7 @@
   import { currentRoute, navigate } from "../lib/router.svelte";
   import { startWithTask } from "../lib/timer.svelte";
   import { getDict, fmt } from "../lib/i18n.svelte";
-  import { todayStr, tomorrowStr, datePart, hasTimePart } from "../lib/dueDate";
+  import { todayStr, tomorrowStr, datePart, hasTimePart, toIsoUtc } from "../lib/dueDate";
   import ProjectSidebar from "../components/Tasks/ProjectSidebar.svelte";
   import TaskItem from "../components/Tasks/TaskItem.svelte";
   import TaskDetailPanel from "../components/Tasks/TaskDetailPanel.svelte";
@@ -415,7 +415,7 @@
           project_id: data.project_id ?? selectedProject,
           priority: data.priority,
           status: "active",
-          due_date: hasTimePart(due) ? due : `${due}T00:00:00`,
+          due_date: toIsoUtc(hasTimePart(due) ? due : `${due}T00:00:00`),
           estimated_pomodoros: data.estimated_pomodoros,
           completed_pomodoros: 0,
           pomodoro_duration: data.pomodoro_duration,

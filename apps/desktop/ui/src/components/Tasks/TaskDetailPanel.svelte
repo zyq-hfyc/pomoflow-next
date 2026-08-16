@@ -29,6 +29,7 @@
   } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
   import type { Dict } from "../../lib/i18n";
+  import { toLocal, toIsoUtc } from "../../lib/dueDate";
   import TagPicker from "./TagPicker.svelte";
   import SubTaskItem from "./SubTaskItem.svelte";
 
@@ -57,31 +58,6 @@
     descDraft = task.description ?? "";
     dueDraft = toLocal(task.due_date);
   });
-
-  function toLocal(iso: string | null | undefined): string {
-    if (!iso) return "";
-    try {
-      const d = new Date(iso);
-      if (isNaN(d.getTime())) return "";
-      // datetime-local 需要 YYYY-MM-DDTHH:mm(本地时间)
-      const off = d.getTimezoneOffset();
-      const local = new Date(d.getTime() - off * 60000);
-      return local.toISOString().slice(0, 16);
-    } catch {
-      return "";
-    }
-  }
-
-  function toIsoUtc(local: string): string | null {
-    if (!local) return null;
-    try {
-      const d = new Date(local);
-      if (isNaN(d.getTime())) return null;
-      return d.toISOString();
-    } catch {
-      return null;
-    }
-  }
 
   function nowIso(): string {
     return new Date().toISOString();

@@ -81,7 +81,7 @@
   <header class="topbar">
     <!-- v1:logo(品牌番茄 SVG)+ 字标居左,导航紧跟其后靠左 -->
     <div class="brand">
-      <span class="logo" aria-hidden="true"><TomatoIcon size={22} /></span>
+      <span class="logo" aria-hidden="true"><TomatoIcon size={26} /></span>
       <h1>PomoFlow</h1>
     </div>
     <nav class="nav" aria-label={t.nav.mainNav}>
@@ -93,7 +93,7 @@
           onclick={() => navigate(r.path)}
           aria-current={route === r.path ? "page" : undefined}
         >
-          <Icon size={16} />
+          <Icon size={18} />
           {t.nav[r.labelKey]}
         </button>
       {/each}
@@ -148,6 +148,7 @@
     margin: 0;
     font-size: 1.1rem;
     font-weight: 600;
+    letter-spacing: -0.02em;
     color: var(--color-accent-700);
   }
   .logo {
@@ -180,7 +181,7 @@
   }
   .nav-item.active {
     color: var(--color-accent-600);
-    font-weight: 500;
+    font-weight: 600;
   }
   .nav-item.active::after {
     content: "";
