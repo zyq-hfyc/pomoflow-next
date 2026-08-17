@@ -17,6 +17,7 @@
   import TomatoIcon from "../ui/TomatoIcon.svelte";
   import RepeatCustomDialog from "./RepeatCustomDialog.svelte";
   import { todayStr, hasTimePart, fillCurrentTime } from "../../lib/dueDate";
+  import { projectTreeOptions } from "../../lib/projectTree";
   import { getSettings } from "../../lib/settings.svelte";
   import { getDict } from "../../lib/i18n.svelte";
   import type { Dict } from "../../lib/i18n";
@@ -140,30 +141,6 @@
     }
   });
 
-  function projectTreeOptions(): { id: string; name: string; depth: number; disabled: boolean }[] {
-    const map = new Map<string, Project & { children: string[] }>();
-    for (const p of projects) {
-      map.set(p.id, { ...p, children: [] });
-    }
-    const roots: string[] = [];
-    for (const p of projects) {
-      if (p.parent_id && map.has(p.parent_id)) {
-        map.get(p.parent_id)!.children.push(p.id);
-      } else {
-        roots.push(p.id);
-      }
-    }
-    const result: { id: string; name: string; depth: number; disabled: boolean }[] = [];
-    const walk = (id: string, depth: number) => {
-      const node = map.get(id)!;
-      const hasChildren = node.children.length > 0;
-      result.push({ id: node.id, name: node.name, depth, disabled: hasChildren });
-      for (const childId of node.children) walk(childId, depth + 1);
-    };
-    for (const rootId of roots) walk(rootId, 0);
-    return result;
-  }
-
   async function submit() {
     const trimmed = title.trim();
     if (!trimmed) {
@@ -272,7 +249,7 @@
           }}
         >
           <option value="">{t.task.detailNoProject}</option>
-          {#each projectTreeOptions() as opt (opt.id)}
+          {#each projectTreeOptions(projects) as opt (opt.id)}
             <option value={opt.id} disabled={opt.disabled}>
               {"　".repeat(opt.depth)}{opt.name}
             </option>
@@ -302,9 +279,9 @@
           id="tf-due"
           type="datetime-local"
           bind:value={dueDate}
-          onblur={(e) => {
-            const v = (e.currentTarget as HTMLInputElement).value;
-            if (v.length === 16) {
+          oninput={(e) => {
+            // v1 TaskForm:234-239 —— 选完日期+时间(长度 16)自动 blur 关闭原生日历弹窗
+            if ((e.currentTarget as HTMLInputElement).value.length === 16) {
               (e.currentTarget as HTMLInputElement).blur();
             }
           }}

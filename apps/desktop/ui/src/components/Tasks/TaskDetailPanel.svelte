@@ -29,9 +29,12 @@
   } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
   import type { Dict } from "../../lib/i18n";
-  import { toLocal, toIsoUtc } from "../../lib/dueDate";
+  import { toLocal, toIsoUtc, hasTimePart, fillCurrentTime } from "../../lib/dueDate";
+  import { projectTreeOptions } from "../../lib/projectTree";
+  import { getSettings } from "../../lib/settings.svelte";
   import TagPicker from "./TagPicker.svelte";
   import SubTaskItem from "./SubTaskItem.svelte";
+  import RepeatCustomDialog from "./RepeatCustomDialog.svelte";
 
   const t = $derived(getDict());
 
@@ -79,14 +82,16 @@
   }
 
   // repeat 变化会触发后端删旧实例+重生成(v1 update_task)—— 重生成读模板
-  // 当前标签,故这次提交带上当前标签,保持与 v1"标签先于重生成应用"一致
-  async function patchRepeat(v: Repeat) {
+  // 当前标签,故这次提交带上当前标签,保持与 v1"标签先于重生成应用"一致。
+  // `cfg` 只在 custom 弹窗确认时传入;切回内置规则时保留 repeat_config(v1 行为)
+  async function patchRepeat(v: Repeat, cfg?: string) {
     try {
       await api.upsertTask(
         {
           ...task,
           repeat: v,
           updated_at: nowIso(),
+          ...(v === "custom" && cfg !== undefined ? { repeat_config: cfg } : {}),
         },
         selectedTagIds,
       );
@@ -242,6 +247,7 @@
     { value: "weekly" },
     { value: "monthly" },
     { value: "yearly" },
+    { value: "custom" },
   ] as const;
 
   const REMINDER_DICT_KEY: Record<
@@ -266,6 +272,7 @@
     weekly: "weekly",
     monthly: "monthly",
     yearly: "yearly",
+    custom: "custom",
   };
 
   function reminderLabel(v: (typeof REMINDER_OPTIONS)[number]["value"]): string {
@@ -286,6 +293,43 @@
         p ?? "none"
       ] ?? ""
     );
+  }
+
+  // === repeat:自定义规则弹窗(v1 TaskDetailPanel:390-398) ===
+  let repeatDialogOpen = $state(false);
+
+  // === 预计番茄数编辑(v1 TaskDetailPanel:214-231) ===
+  const settings = $derived(getSettings());
+  // "= N 分钟"换算:单任务时长覆盖 > 全局专注时长(v1 用 task.pomodoro_duration,创建时已落全局值)
+  const estimatedMinutes = $derived(
+    task.estimated_pomodoros * (task.pomodoro_duration ?? settings.focusDuration),
+  );
+
+  function onEstimatedChange(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const raw = Math.round(Number(input.value));
+    const n = Math.min(99, Math.max(1, Number.isFinite(raw) ? raw : 1));
+    if (n !== task.estimated_pomodoros) {
+      void patchTask({ estimated_pomodoros: n });
+    }
+  }
+
+  // === 提醒变更:due 缺时间 → 补当前时间并提示(v1 TaskDetailPanel:101-114) ===
+  // v2 due_date 存 UTC RFC3339(恒含 T),"缺时间"只能在本地草稿上判断:
+  // 无到期日的任务选提醒时补今天+当前时间;有到期日(已带时间)直接保存
+  function onReminderChange(v: Reminder) {
+    if (v === "none") {
+      void patchTask({ reminder: v });
+      return;
+    }
+    if (!hasTimePart(dueDraft)) {
+      const filled = fillCurrentTime(dueDraft);
+      alert(t.task.detailTimeFilled);
+      dueDraft = filled;
+      void patchTask({ reminder: v, due_date: toIsoUtc(filled) });
+    } else {
+      void patchTask({ reminder: v });
+    }
   }
 </script>
 
@@ -337,8 +381,10 @@
         }}
       >
         <option value="">{t.task.detailNoProject}</option>
-        {#each projects as p (p.id)}
-          <option value={p.id}>{p.name}</option>
+        {#each projectTreeOptions(projects) as opt (opt.id)}
+          <option value={opt.id} disabled={opt.disabled}>
+            {"　".repeat(opt.depth)}{opt.name}
+          </option>
         {/each}
       </select>
     </div>
@@ -360,6 +406,24 @@
     </div>
   </section>
 
+  <!-- 预计番茄数编辑(v1 TaskDetailPanel:214-231):completed/ N = N 分钟 -->
+  <section class="block">
+    <label class="lbl" for="est">{t.task.detailPomodoro}</label>
+    <div class="pomo-row">
+      <span class="pomo-done">{task.completed_pomodoros}/</span>
+      <input
+        id="est"
+        class="pomo-input"
+        type="number"
+        min="1"
+        max="99"
+        value={task.estimated_pomodoros}
+        onchange={onEstimatedChange}
+      />
+      <span class="pomo-minutes">= {estimatedMinutes}{t.task.minute}</span>
+    </div>
+  </section>
+
   <section class="block">
     <label class="lbl" for="due">{t.task.detailDueDate}</label>
     <div class="row-inline">
@@ -367,6 +431,12 @@
         id="due"
         type="datetime-local"
         bind:value={dueDraft}
+        oninput={(e) => {
+          // 选完日期+时间后自动关闭原生日历弹窗(v1 TaskDetailPanel:243-248)
+          if ((e.currentTarget as HTMLInputElement).value.length === 16) {
+            (e.currentTarget as HTMLInputElement).blur();
+          }
+        }}
         onblur={commitDueDate}
       />
       {#if dueDraft}
@@ -383,7 +453,7 @@
         value={task.reminder ?? "none"}
         onchange={(e) => {
           const v = (e.currentTarget as HTMLSelectElement).value as Reminder;
-          void patchTask({ reminder: v });
+          onReminderChange(v);
         }}
       >
         {#each REMINDER_OPTIONS as o (o.value)}
@@ -398,7 +468,11 @@
         value={task.repeat ?? "none"}
         onchange={(e) => {
           const v = (e.currentTarget as HTMLSelectElement).value as Repeat;
-          void patchRepeat(v);
+          if (v === "custom") {
+            repeatDialogOpen = true;
+          } else {
+            void patchRepeat(v);
+          }
         }}
       >
         {#each REPEAT_OPTIONS as o (o.value)}
@@ -454,6 +528,17 @@
       {t.task.detailDelete}
     </button>
   </section>
+
+  <!-- 重复:自定义规则弹窗(v1 TaskDetailPanel:390-398) -->
+  <RepeatCustomDialog
+    open={repeatDialogOpen}
+    initialConfig={task.repeat_config}
+    onConfirm={(cfg) => {
+      repeatDialogOpen = false;
+      void patchRepeat("custom", cfg);
+    }}
+    onClose={() => (repeatDialogOpen = false)}
+  />
 </aside>
 
 <style>
@@ -588,6 +673,33 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
+  }
+  .pomo-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--color-text);
+  }
+  .pomo-done {
+    font-size: 0.9rem;
+  }
+  .pomo-input {
+    width: 3.5rem;
+    text-align: right;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-size: 0.9rem;
+  }
+  .pomo-input:focus {
+    border-color: var(--color-accent);
+    outline: none;
+  }
+  .pomo-minutes {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
   }
   .row-inline input {
     flex: 1;

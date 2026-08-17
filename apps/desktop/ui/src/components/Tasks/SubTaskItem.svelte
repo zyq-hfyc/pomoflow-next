@@ -8,6 +8,7 @@
   //   - 父组件持有 SubTask 数据,本组件只暴露 onChange(整条替换)+ onDelete。
 
   import { untrack } from "svelte";
+  import { Pencil, Trash2 } from "lucide-svelte";
   import type { SubTask } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
 
@@ -96,12 +97,27 @@
     >{subtask.title}</button>
   {/if}
 
+  <!-- v1 SubtaskItem(panel):显式铅笔/垃圾桶按钮,双击标题仍可编辑 -->
+  {#if !editing}
+    <button
+      type="button"
+      class="icon-btn"
+      onclick={startEdit}
+      aria-label={t.task.editSubtask}
+      title={t.task.editSubtask}
+    >
+      <Pencil size={13} />
+    </button>
+  {/if}
   <button
     type="button"
-    class="del"
+    class="icon-btn danger"
     onclick={() => onDelete(subtask.id)}
     aria-label={t.task.deleteSubtask}
-  >×</button>
+    title={t.task.deleteSubtask}
+  >
+    <Trash2 size={13} />
+  </button>
 </li>
 
 <style>
@@ -144,18 +160,22 @@
     text-decoration: line-through;
     color: var(--color-text-muted);
   }
-  .del {
+  .icon-btn {
     background: transparent;
     border: none;
     color: var(--color-text-muted);
-    font-size: 1.1rem;
-    line-height: 1;
-    padding: 0 0.4rem;
+    padding: 0.15rem 0.3rem;
     cursor: pointer;
     border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
   }
-  .del:hover {
-    color: #dc2626;
+  .icon-btn:hover {
+    color: var(--color-accent);
     background: var(--color-bg);
+  }
+  .icon-btn.danger:hover {
+    color: #dc2626;
   }
 </style>
