@@ -257,7 +257,6 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    flex-wrap: wrap;
   }
   .hint {
     font-size: 0.75rem;
@@ -276,11 +275,12 @@
     border-color: var(--color-accent, #e74c3c);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent, #e74c3c) 15%, transparent);
   }
+  /* v1 FilterBar:160-169 —— 导出按钮在到期日行内紧跟结束日期输入框(gap 同行),
+     不做 margin-left:auto 右推 */
   .export-btn {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    margin-left: auto;
     font-size: 0.85rem;
     padding: 0.4rem 0.75rem;
     border-radius: var(--radius-md, 8px);
