@@ -118,7 +118,11 @@ pub trait Store: std::fmt::Debug {
     fn list_pomodoros(&self) -> CoreResult<Vec<PomodoroSession>>;
     /// 按 started_at 毫秒区间过滤(统计页窄查询):`start_ms <= started_at_ms < end_ms`,
     /// 过滤软删除。
-    fn list_pomodoros_between(&self, start_ms: i64, end_ms: i64) -> CoreResult<Vec<PomodoroSession>>;
+    fn list_pomodoros_between(
+        &self,
+        start_ms: i64,
+        end_ms: i64,
+    ) -> CoreResult<Vec<PomodoroSession>>;
     fn upsert_pomodoro(&self, session: PomodoroSession) -> CoreResult<PomodoroSession>;
     fn delete_pomodoro(&self, id: &Id) -> CoreResult<()>;
 
@@ -159,7 +163,7 @@ pub trait Store: std::fmt::Debug {
     fn delete_subtask(&self, id: &Id) -> CoreResult<()>;
 
     // --- Mottos ---
-    /// 列出所有未软删的座右铭,按 updated_at 倒序(最近改的在前)。
+    /// 列出所有未软删的座右铭,按 created_at 升序(v1 id 升序 = 创建序)。
     fn list_mottos(&self) -> CoreResult<Vec<Motto>>;
     fn upsert_motto(&self, motto: Motto) -> CoreResult<Motto>;
     fn delete_motto(&self, id: &Id) -> CoreResult<()>;
@@ -829,7 +833,8 @@ impl Store for InMemoryStore {
             .filter(|m| m.deleted_at.is_none())
             .cloned()
             .collect();
-        out.sort_by_key(|m| std::cmp::Reverse(m.updated_at.0));
+        // v1 crud.py:833 按 id 升序(= 创建序)返回
+        out.sort_by_key(|m| m.created_at.0);
         Ok(out)
     }
 

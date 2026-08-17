@@ -996,8 +996,7 @@ impl Store for SqliteStore {
             };
             Some((id, parent))
         };
-        let existing: Vec<(Id, Option<Id>)> =
-            existing.iter().filter_map(parse_pair).collect();
+        let existing: Vec<(Id, Option<Id>)> = existing.iter().filter_map(parse_pair).collect();
         let existing_ids: std::collections::HashSet<Id> =
             existing.iter().map(|(id, _)| id.clone()).collect();
         crate::reorder::validate_ids_exist(items, &existing_ids)?;
@@ -1404,9 +1403,7 @@ impl Store for SqliteStore {
                 "SELECT * FROM weekly_reviews
                  WHERE week_start >= ? AND week_start <= ? ORDER BY week_start ASC",
             )
-            .map_err(|e| {
-                CoreError::storage(format!("prepare list_weekly_reviews_between: {e}"))
-            })?;
+            .map_err(|e| CoreError::storage(format!("prepare list_weekly_reviews_between: {e}")))?;
         let rows = stmt
             .query_map(params![start_week, end_week], row_to_weekly_review)
             .map_err(|e| CoreError::storage(format!("query: {e}")))?;
@@ -1571,7 +1568,7 @@ impl Store for SqliteStore {
     fn list_mottos(&self) -> CoreResult<Vec<Motto>> {
         let conn = self.lock()?;
         let mut stmt = conn
-            .prepare("SELECT * FROM mottos WHERE deleted_at_ms IS NULL ORDER BY updated_at_ms DESC")
+            .prepare("SELECT * FROM mottos WHERE deleted_at_ms IS NULL ORDER BY created_at_ms ASC")
             .map_err(|e| CoreError::storage(format!("prepare list_mottos: {e}")))?;
         let rows = stmt
             .query_map([], row_to_motto)
