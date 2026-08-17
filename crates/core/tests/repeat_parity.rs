@@ -42,10 +42,11 @@ fn parity_with_v1_python() {
                 .ok()
                 .map(|n| DateTime::<Utc>::from_naive_utc_and_offset(n, Utc))
         });
-        let out: Vec<String> = compute_repeat_dates(rule_of(&case.rule), due, case.config.as_deref())
-            .iter()
-            .map(|d| d.format("%Y-%m-%dT%H:%M").to_string())
-            .collect();
+        let out: Vec<String> =
+            compute_repeat_dates(rule_of(&case.rule), due, case.config.as_deref())
+                .iter()
+                .map(|d| d.format("%Y-%m-%dT%H:%M").to_string())
+                .collect();
         assert_eq!(
             out, case.dates,
             "rule={} due={:?} config={:?}",

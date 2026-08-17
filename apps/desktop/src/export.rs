@@ -64,7 +64,6 @@ fn inner_build(
     headers: &[String],
     rows: &[ExportRow],
 ) -> Result<(), rust_xlsxwriter::XlsxError> {
-
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();
     sheet.set_name(sheet_name)?;
@@ -125,7 +124,15 @@ mod tests {
         let path_str = path.to_str().unwrap().to_string();
 
         let headers: Vec<String> = [
-            "序号", "任务描述", "项目", "优先级", "到期日", "预计番茄数", "标签", "子任务", "任务状态",
+            "序号",
+            "任务描述",
+            "项目",
+            "优先级",
+            "到期日",
+            "预计番茄数",
+            "标签",
+            "子任务",
+            "任务状态",
         ]
         .iter()
         .map(|s| s.to_string())

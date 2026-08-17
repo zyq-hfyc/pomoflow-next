@@ -107,10 +107,7 @@ pub fn merge_graph(
 }
 
 /// 校验提交的 id 全部存在(缺失返回第一个 Missing)。
-pub fn validate_ids_exist(
-    submitted: &[ReorderItem],
-    existing_ids: &HashSet<Id>,
-) -> CoreResult<()> {
+pub fn validate_ids_exist(submitted: &[ReorderItem], existing_ids: &HashSet<Id>) -> CoreResult<()> {
     let missing: Vec<String> = submitted
         .iter()
         .filter(|it| !existing_ids.contains(&it.id))
@@ -201,7 +198,11 @@ mod tests {
         let c2 = id();
         let moved = id();
         // 现状:c2 挂 c1(未动);moved 将挂到 c2 下(提交)
-        let existing = vec![(r.clone(), None), (c1.clone(), Some(r)), (c2.clone(), Some(c1))];
+        let existing = vec![
+            (r.clone(), None),
+            (c1.clone(), Some(r)),
+            (c2.clone(), Some(c1)),
+        ];
         let submitted = vec![ReorderItem {
             id: moved.clone(),
             parent_id: Some(c2),
@@ -240,7 +241,7 @@ mod tests {
             &[ReorderItem {
                 id: b.clone(),
                 parent_id: None,
-                display_order: 0
+                display_order: 0,
             }],
             &existing,
         )

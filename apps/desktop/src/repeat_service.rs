@@ -14,9 +14,7 @@
 //! - **级联**:删模板 → 实例全部删除(v1 FK CASCADE)。
 
 use pomoflow_core::error::CoreResult;
-use pomoflow_core::model::{
-    Id, Repeat, SubTask, Task, TaskStatus, Timestamp,
-};
+use pomoflow_core::model::{Id, Repeat, SubTask, Task, TaskStatus, Timestamp};
 use pomoflow_core::repeat;
 use pomoflow_core::store::{Store, TaskQuery};
 

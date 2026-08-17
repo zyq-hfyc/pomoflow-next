@@ -63,7 +63,12 @@ fn parse_dt(s: &str) -> Option<DateTime<Utc>> {
         .split_once("+")
         .map(|(a, _)| a)
         .unwrap_or(s);
-    for fmt in ["%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"] {
+    for fmt in [
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+    ] {
         if let Ok(n) = chrono::NaiveDateTime::parse_from_str(trimmed, fmt) {
             return Some(DateTime::<Utc>::from_naive_utc_and_offset(n, Utc));
         }
@@ -151,11 +156,7 @@ fn compute_custom_dates(
         return Vec::new();
     };
     let step = cfg.step();
-    let start = cfg
-        .start_date
-        .as_deref()
-        .and_then(parse_dt)
-        .unwrap_or(due);
+    let start = cfg.start_date.as_deref().and_then(parse_dt).unwrap_or(due);
     let Some(end) = cfg.end_date.as_deref().and_then(parse_dt) else {
         return Vec::new(); // 无 endDate → 不生成(v1 语义)
     };
@@ -178,7 +179,8 @@ fn compute_custom_dates(
         "week" => {
             let offsets = cfg.weekday_offsets();
             // start 所在周的周一,整体按步进取周
-            let week_start = start_d - chrono::Duration::days(start_d.weekday().num_days_from_monday() as i64);
+            let week_start =
+                start_d - chrono::Duration::days(start_d.weekday().num_days_from_monday() as i64);
             let mut cur_week = week_start + chrono::Duration::weeks(step);
             while cur_week <= end_d && dates.len() < max_count {
                 for wd in &offsets {
@@ -359,9 +361,15 @@ mod tests {
     #[test]
     fn daily_steps_to_end_of_year() {
         // 12-30 起:12-31 一条就到年底
-        assert_eq!(dates_of(Repeat::Daily, "2026-12-30T09:30"), ["2026-12-31 09:30"]);
+        assert_eq!(
+            dates_of(Repeat::Daily, "2026-12-30T09:30"),
+            ["2026-12-31 09:30"]
+        );
         // 8-16(周日)起:次日 8-17
-        assert_eq!(dates_of(Repeat::Daily, "2026-08-16T09:30").first().unwrap(), "2026-08-17 09:30");
+        assert_eq!(
+            dates_of(Repeat::Daily, "2026-08-16T09:30").first().unwrap(),
+            "2026-08-17 09:30"
+        );
         // 秒归零(v1 make() 只传时分)
         assert_eq!(
             compute_repeat_dates(Repeat::Daily, Some(dt("2026-08-16T09:30:45")), None)[0]
@@ -383,8 +391,19 @@ mod tests {
     fn weekday_skips_weekend() {
         // 2026-08-14 周五 → 下一个是周一 8-17,再 8-18/19/20/21,跳过 8-22(六)/23(日)
         let out = dates_of(Repeat::Weekdays, "2026-08-14T09:00");
-        assert_eq!(&out[..5], &["2026-08-17 09:00", "2026-08-18 09:00", "2026-08-19 09:00", "2026-08-20 09:00", "2026-08-21 09:00"]);
-        assert!(!out.iter().any(|d| d.starts_with("2026-08-22") || d.starts_with("2026-08-23")));
+        assert_eq!(
+            &out[..5],
+            &[
+                "2026-08-17 09:00",
+                "2026-08-18 09:00",
+                "2026-08-19 09:00",
+                "2026-08-20 09:00",
+                "2026-08-21 09:00"
+            ]
+        );
+        assert!(!out
+            .iter()
+            .any(|d| d.starts_with("2026-08-22") || d.starts_with("2026-08-23")));
     }
 
     #[test]
@@ -402,8 +421,14 @@ mod tests {
         let out = dates_of(Repeat::Monthly, "2026-01-31T08:00");
         assert_eq!(
             out,
-            ["2026-03-31 08:00", "2026-05-31 08:00", "2026-07-31 08:00",
-             "2026-08-31 08:00", "2026-10-31 08:00", "2026-12-31 08:00"]
+            [
+                "2026-03-31 08:00",
+                "2026-05-31 08:00",
+                "2026-07-31 08:00",
+                "2026-08-31 08:00",
+                "2026-10-31 08:00",
+                "2026-12-31 08:00"
+            ]
         );
     }
 
@@ -431,7 +456,11 @@ mod tests {
     #[test]
     fn custom_invalid_or_missing_end_yields_empty() {
         assert!(custom_dates("2026-08-16T09:00", "not json").is_empty());
-        assert!(custom_dates("2026-08-16T09:00", r#"{"type":"day","interval":1,"startDate":"2026-08-16"}"#).is_empty());
+        assert!(custom_dates(
+            "2026-08-16T09:00",
+            r#"{"type":"day","interval":1,"startDate":"2026-08-16"}"#
+        )
+        .is_empty());
     }
 
     #[test]
@@ -443,7 +472,15 @@ mod tests {
             "2026-08-16T09:00",
             r#"{"interval":0,"type":"day","startDate":"2026-08-16","endDate":"2026-08-20"}"#,
         );
-        assert_eq!(out, ["2026-08-17 00:00", "2026-08-18 00:00", "2026-08-19 00:00", "2026-08-20 00:00"]);
+        assert_eq!(
+            out,
+            [
+                "2026-08-17 00:00",
+                "2026-08-18 00:00",
+                "2026-08-19 00:00",
+                "2026-08-20 00:00"
+            ]
+        );
     }
 
     #[test]
@@ -452,7 +489,15 @@ mod tests {
             "2026-08-16T09:00",
             r#"{"interval":1,"type":"day","startDate":"2026-08-16","endDate":"2026-08-25"}"#,
         );
-        assert_eq!(out, ["2026-08-18 00:00", "2026-08-20 00:00", "2026-08-22 00:00", "2026-08-24 00:00"]);
+        assert_eq!(
+            out,
+            [
+                "2026-08-18 00:00",
+                "2026-08-20 00:00",
+                "2026-08-22 00:00",
+                "2026-08-24 00:00"
+            ]
+        );
     }
 
     #[test]
@@ -460,7 +505,7 @@ mod tests {
         // interval 999 → 夹到 99 → 步进 100 天:8-16 + 100 = 11-24,仍在 end 内 → 1 条
         let out = custom_dates(
             "2026-08-16T09:00",
-            r#"{"interval":999,"type":"day","startDate":"2026-08-16","endDate":"2026-12-31"}"#
+            r#"{"interval":999,"type":"day","startDate":"2026-08-16","endDate":"2026-12-31"}"#,
         );
         assert_eq!(out, ["2026-11-24 00:00"]);
     }
@@ -473,7 +518,15 @@ mod tests {
             "2026-08-16T09:00",
             r#"{"interval":0,"type":"week","startDate":"2026-08-16","endDate":"2026-08-28","weekdays":[1,5]}"#,
         );
-        assert_eq!(out, ["2026-08-17 00:00", "2026-08-21 00:00", "2026-08-24 00:00", "2026-08-28 00:00"]);
+        assert_eq!(
+            out,
+            [
+                "2026-08-17 00:00",
+                "2026-08-21 00:00",
+                "2026-08-24 00:00",
+                "2026-08-28 00:00"
+            ]
+        );
 
         // 严格起点:候选周从 start+step 周起,start 所在周(周一 8-10)永不生成
         let same_week = custom_dates(
@@ -537,7 +590,10 @@ mod tests {
     fn end_date_yearly_clamps_feb29() {
         let t = task_with(Repeat::Yearly, "2028-02-29T09:00", None);
         assert_eq!(
-            compute_repeat_end_date(&t).unwrap().format("%Y-%m-%d").to_string(),
+            compute_repeat_end_date(&t)
+                .unwrap()
+                .format("%Y-%m-%d")
+                .to_string(),
             "2033-02-28"
         );
     }
@@ -550,7 +606,10 @@ mod tests {
             Some(r#"{"type":"week","endDate":"2026-10-01","weekdays":[1]}"#),
         );
         assert_eq!(
-            compute_repeat_end_date(&t).unwrap().format("%Y-%m-%d").to_string(),
+            compute_repeat_end_date(&t)
+                .unwrap()
+                .format("%Y-%m-%d")
+                .to_string(),
             "2026-10-01"
         );
     }
@@ -559,7 +618,10 @@ mod tests {
     fn end_date_regular_rules_dec31() {
         let t = task_with(Repeat::Daily, "2026-08-16T09:00", None);
         assert_eq!(
-            compute_repeat_end_date(&t).unwrap().format("%Y-%m-%d %H:%M").to_string(),
+            compute_repeat_end_date(&t)
+                .unwrap()
+                .format("%Y-%m-%d %H:%M")
+                .to_string(),
             "2026-12-31 23:59"
         );
         let none = task_with(Repeat::Daily, "2026-08-16T09:00", None);

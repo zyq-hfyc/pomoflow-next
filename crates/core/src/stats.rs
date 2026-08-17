@@ -352,15 +352,39 @@ mod tests {
         let empty: Vec<Task> = Vec::new();
         let no_projects: Vec<Project> = Vec::new();
 
-        let r = range_stats(&s, &empty, &no_projects, "2026-01-01", "2026-01-31", StatsGroup::Day, 480);
+        let r = range_stats(
+            &s,
+            &empty,
+            &no_projects,
+            "2026-01-01",
+            "2026-01-31",
+            StatsGroup::Day,
+            480,
+        );
         assert_eq!(r.trend.len(), 1);
         assert_eq!(r.trend[0].key, "2026-01-16");
 
-        let r = range_stats(&s, &empty, &no_projects, "2026-01-01", "2026-01-31", StatsGroup::Day, UTC0);
+        let r = range_stats(
+            &s,
+            &empty,
+            &no_projects,
+            "2026-01-01",
+            "2026-01-31",
+            StatsGroup::Day,
+            UTC0,
+        );
         assert_eq!(r.trend[0].key, "2026-01-15");
 
         // 西五区(-300):23:30Z → 18:30 同日
-        let r = range_stats(&s, &empty, &no_projects, "2026-01-01", "2026-01-31", StatsGroup::Day, -300);
+        let r = range_stats(
+            &s,
+            &empty,
+            &no_projects,
+            "2026-01-01",
+            "2026-01-31",
+            StatsGroup::Day,
+            -300,
+        );
         assert_eq!(r.trend[0].key, "2026-01-15");
     }
 
@@ -397,7 +421,15 @@ mod tests {
         ];
         let empty: Vec<Task> = Vec::new();
         let no_projects: Vec<Project> = Vec::new();
-        let r = range_stats(&s, &empty, &no_projects, "2026-01-01", "2026-01-31", StatsGroup::Week, UTC0);
+        let r = range_stats(
+            &s,
+            &empty,
+            &no_projects,
+            "2026-01-01",
+            "2026-01-31",
+            StatsGroup::Week,
+            UTC0,
+        );
         assert_eq!(r.trend.len(), 2);
         assert_eq!(r.trend[0].key, "2026-01-12");
         assert_eq!(r.trend[0].minutes, 50); // 周四+周日合并
@@ -409,12 +441,20 @@ mod tests {
     fn month_key_and_range_bounds_inclusive() {
         let s = vec![
             session(dt("2026-01-01T00:30:00Z"), 10), // start 当天(计入)
-            session(dt("2026-01-31T23:00:00Z"), 20),  // end 当天(计入)
-            session(dt("2026-02-01T00:30:00Z"), 40),  // 区间外
+            session(dt("2026-01-31T23:00:00Z"), 20), // end 当天(计入)
+            session(dt("2026-02-01T00:30:00Z"), 40), // 区间外
         ];
         let empty: Vec<Task> = Vec::new();
         let no_projects: Vec<Project> = Vec::new();
-        let r = range_stats(&s, &empty, &no_projects, "2026-01-01", "2026-01-31", StatsGroup::Month, UTC0);
+        let r = range_stats(
+            &s,
+            &empty,
+            &no_projects,
+            "2026-01-01",
+            "2026-01-31",
+            StatsGroup::Month,
+            UTC0,
+        );
         assert_eq!(r.trend.len(), 1);
         assert_eq!(r.trend[0].key, "2026-01");
         assert_eq!(r.trend[0].minutes, 30);
@@ -460,7 +500,7 @@ mod tests {
             completed_task("2026-01-20", Some(pid.clone()), 1, None), // duration NULL → 0 分钟(直译 v1 or 0)
             completed_task("2026-01-20", Some(other.clone()), 2, Some(30)), // 60 分钟
             completed_task("2026-02-05", Some(pid.clone()), 5, Some(25)), // due 区间外
-            completed_task("2026-01-20", None, 9, Some(25)), // 无项目 → 不计
+            completed_task("2026-01-20", None, 9, Some(25)),          // 无项目 → 不计
         ];
         let mut active = Task::new("未完成任务");
         active.project_id = Some(pid.clone());
@@ -489,15 +529,22 @@ mod tests {
     fn overview_periods_and_all_time_totals() {
         // today=2026-01-15(周四), week_start=01-12, month_start=01-01
         let s = vec![
-            session(dt("2026-01-15T09:00:00Z"), 25),  // today/week/month
-            session(dt("2026-01-13T09:00:00Z"), 25),  // week/month
-            session(dt("2026-01-02T09:00:00Z"), 30),  // month
-            session(dt("2025-12-20T09:00:00Z"), 45),  // 仅全时段
+            session(dt("2026-01-15T09:00:00Z"), 25), // today/week/month
+            session(dt("2026-01-13T09:00:00Z"), 25), // week/month
+            session(dt("2026-01-02T09:00:00Z"), 30), // month
+            session(dt("2025-12-20T09:00:00Z"), 45), // 仅全时段
         ];
         let mut done = Task::new("已完成");
         done.status = TaskStatus::Completed;
 
-        let o = overview_stats(&s, &[done, Task::new("进行中")], "2026-01-15", "2026-01-12", "2026-01-01", UTC0);
+        let o = overview_stats(
+            &s,
+            &[done, Task::new("进行中")],
+            "2026-01-15",
+            "2026-01-12",
+            "2026-01-01",
+            UTC0,
+        );
         assert_eq!(o.today_minutes, 25);
         assert_eq!(o.today_sessions, 1);
         assert_eq!(o.week_minutes, 50);
