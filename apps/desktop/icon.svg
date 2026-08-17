@@ -1,0 +1,16 @@
+<!-- PomoFlow 应用图标源 —— 品牌 TomatoIcon(与 ui/src/components/ui/TomatoIcon.svelte
+     同款图形):红果身 + 白高光 + 绿叶 + 茎,透明底。
+     用 `npx tauri icon icon.svg` 生成各平台图标(icons/*.png/ico/icns)。 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 果身:默认主题 accent 红(#e74c3c) -->
+  <circle cx="512" cy="640" r="320" fill="#e74c3c" />
+  <!-- 高光 -->
+  <ellipse cx="416" cy="576" rx="83" ry="144" fill="#ffffff" opacity="0.28" />
+  <!-- 绿叶 -->
+  <path
+    d="M512 320 C 448 256, 384 192, 448 160 C 512 128, 576 160, 512 224 C 576 160, 640 192, 608 256 C 576 320, 512 320, 512 320 Z"
+    fill="#7fa086"
+  />
+  <!-- 茎 -->
+  <path d="M512 256 L 512 128" stroke="#5f6f5a" stroke-width="42" stroke-linecap="round" />
+</svg>
