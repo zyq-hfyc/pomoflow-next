@@ -30,8 +30,7 @@
   } from "./lib/timer.svelte";
   import { initReminders } from "./lib/reminders.svelte";
   import { initTheme } from "./lib/theme.svelte";
-  // 品牌 logo:系统图标(tauri icons 同源),打包后 URL 由 Vite 管理
-  import logoUrl from "./assets/logo.png";
+  import TomatoIcon from "./components/ui/TomatoIcon.svelte";
   import TimerPage from "./pages/TimerPage.svelte";
   import TasksPage from "./pages/TasksPage.svelte";
   import StatsPage from "./pages/StatsPage.svelte";
@@ -92,9 +91,9 @@
 
 <main class="app app-bg">
   <header class="topbar">
-    <!-- v1:logo(系统图标)+ 字标居左,导航紧跟其后靠左 -->
+    <!-- v1:logo(品牌番茄 SVG)+ 字标居左,导航紧跟其后靠左 -->
     <div class="brand">
-      <img class="logo" src={logoUrl} alt="PomoFlow" width="26" height="26" />
+      <span class="logo" aria-hidden="true"><TomatoIcon size={26} /></span>
       <h1>PomoFlow</h1>
     </div>
     <nav class="nav" aria-label={t.nav.mainNav}>
@@ -168,10 +167,8 @@
     color: var(--color-accent-700);
   }
   .logo {
-    display: block;
-    width: 26px;
-    height: 26px;
-    flex-shrink: 0;
+    display: inline-flex;
+    color: var(--color-accent-500);
   }
 
   /* v1 Navbar:菜单靠左(紧跟 logo),激活 = accent 文字 + 2px 底部指示条 */
