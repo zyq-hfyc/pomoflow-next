@@ -125,20 +125,18 @@
 </aside>
 
 <style>
+  /* v1:全高列(w-80 + border-l + 内部滚动),不是悬浮卡片 —— 与左侧手账区对齐 */
   .panel {
     width: 320px; /* v1 w-80 */
     flex-shrink: 0;
+    height: 100%;
     background: var(--color-surface, #fff);
-    border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
-    box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.06));
-    padding: 1rem 1.25rem 1.5rem;
+    border-left: 1px solid var(--color-border, #e5e2dd);
+    padding: 1rem 1.25rem;
     display: flex;
     flex-direction: column;
     gap: 1rem;
-    max-height: calc(100vh - 8rem);
     overflow-y: auto;
-    align-self: flex-start;
   }
 
   .title {

@@ -678,7 +678,7 @@
     {/if}
   </div>
 
-  <!-- 右：手账模式为月度复盘面板，其余为任务详情 -->
+  <!-- 右：手账模式为月度复盘面板，其余为任务详情（v1：未选中任务时显示全高空态） -->
   {#if filter === "journal"}
     <MonthReviewPanel year={journalYear} month={journalMonth} {reviewVersion} />
   {:else if selectedTask}
@@ -689,6 +689,8 @@
       onClose={closePanel}
       onChanged={onPanelChanged}
     />
+  {:else}
+    <aside class="detail-empty">{t.task.detailEmpty}</aside>
   {/if}
 </div>
 
@@ -706,6 +708,20 @@
     min-width: 0;
     overflow-y: auto;
     padding: 1.5rem 2rem 2rem;
+  }
+
+  /* v1:未选中任务时右侧保留全高空态列(点击任务查看详情) */
+  .detail-empty {
+    width: 320px;
+    flex-shrink: 0;
+    height: 100%;
+    border-left: 1px solid var(--color-border, #e5e2dd);
+    background: var(--color-surface, #fff);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-text-muted, #6b6864);
+    font-size: 0.85rem;
   }
   .inner {
     max-width: 720px;

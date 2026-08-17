@@ -1,22 +1,20 @@
 <script lang="ts">
-  // 任务详情侧边面板 —— 右侧滑出,展示并编辑单条任务的所有字段。
+  // 任务详情侧边面板 —— v1 `TaskDetailPanel.tsx` 结构一比一复刻。
   //
-  // 范围(P1.8.2):
-  //   - title / description / project / priority(实时 select 改)
-  //   - tags 多选(TagPicker)
-  //   - due_date(datetime-local)
-  //   - reminder(7 档:不提醒 / 准时 / 5 分钟 / 30 分钟 / 1 小时 / 1 天 / 2 天)
-  //   - repeat(6 档:不重复 / 每天 / 工作日 / 每周 / 每月 / 每年;不含"自定义")
-  //   - 子任务列表(增删改 + 完成切换)
+  // 自上而下(与 v1 完全一致):
+  //   1. 头部:优先级色点 + 标题输入(失焦保存) + 关闭 ×
+  //   2. 标签:已选彩色 chip / 「无标签」 + 「编辑标签/收起」开关 + 复选列表
+  //   3. 信息行 ×6:优先级 / 番茄钟(completed/N=分钟) / 到期日 / 清单(树形)
+  //                / 提醒(缺时间自动补) / 重复(含自定义弹窗)
+  //   4. 子任务列表(勾选 + 铅笔/垃圾桶)+ 添加输入(Enter)
+  //   5. 备注 textarea(失焦保存)
+  //   6. 右下角小号「删除任务」文字链(垃圾桶图标,v1 无确认框)
   //
-  // 设计要点:
-  //   - 标题 / 描述用 draft → blur 时再 upsert,避免每个按键都打后端。
-  //   - 标签 / 优先级 / 项目 / 日期 / reminder / repeat 立刻调对应 command。
-  //   - 子任务用本地 state,add 后立刻 upsert + 刷新。
-  //   - `onClose` 由父组件(TasksPage)接到 → 关闭面板 + 刷新列表。
-  //   - 切换到另一条任务时 `$effect` 重新拉子任务 + 标签。
+  // 面板为全高列(320px + 左边框),与左侧列表区同高对齐,内部滚动。
 
-  import { onMount, untrack } from "svelte";
+  import { untrack } from "svelte";
+  // RepeatIcon:lucide 的 Repeat 图标,避开 api 的 Repeat 类型重名
+  import { X, Clock, Calendar, Bell, Repeat as RepeatIcon, Plus, Trash2, List } from "lucide-svelte";
   import * as api from "../../lib/api";
   import type {
     Priority,
@@ -32,7 +30,6 @@
   import { toLocal, toIsoUtc, hasTimePart, fillCurrentTime } from "../../lib/dueDate";
   import { projectTreeOptions } from "../../lib/projectTree";
   import { getSettings } from "../../lib/settings.svelte";
-  import TagPicker from "./TagPicker.svelte";
   import SubTaskItem from "./SubTaskItem.svelte";
   import RepeatCustomDialog from "./RepeatCustomDialog.svelte";
 
@@ -48,17 +45,15 @@
 
   let { task, projects, allTags, onClose, onChanged }: Props = $props();
 
-  // === title / description 草稿 ===
-  // 用 untrack 包初始值,避免 svelte-check 警告 "initial value capture"。
-  // 真正的同步逻辑在下面 $effect 里(task 切换时重置)。
+  // === title / note 草稿(IME 安全:输入只改本地,失焦才提交) ===
   let titleDraft = $state(untrack(() => task.title));
-  let descDraft = $state(untrack(() => task.description ?? ""));
+  let noteDraft = $state(untrack(() => task.description ?? ""));
   let dueDraft = $state(untrack(() => toLocal(task.due_date)));
 
   $effect(() => {
     // task 切换 → 重置草稿
     titleDraft = task.title;
-    descDraft = task.description ?? "";
+    noteDraft = task.description ?? "";
     dueDraft = toLocal(task.due_date);
   });
 
@@ -66,7 +61,7 @@
     return new Date().toISOString();
   }
 
-  // === 任务字段持久化(单个 patch) ===
+  // === 字段持久化(单个 patch) ===
   async function patchTask(patch: Partial<ApiTask>) {
     try {
       await api.upsertTask({
@@ -108,9 +103,9 @@
     await patchTask({ title: next });
   }
 
-  async function commitDescription() {
-    if (descDraft === (task.description ?? "")) return;
-    await patchTask({ description: descDraft });
+  async function commitNote() {
+    if (noteDraft === (task.description ?? "")) return;
+    await patchTask({ description: noteDraft });
   }
 
   async function commitDueDate() {
@@ -119,13 +114,9 @@
     await patchTask({ due_date: iso });
   }
 
-  function clearDueDate() {
-    dueDraft = "";
-    void patchTask({ due_date: null });
-  }
-
-  // === Tags ===
+  // === 标签(v1:chips 展示 + 编辑开关 + 复选列表) ===
   let selectedTagIds = $state<string[]>([]);
+  let editingTags = $state(false);
 
   $effect(() => {
     void loadTagsForTask();
@@ -134,14 +125,18 @@
   async function loadTagsForTask() {
     try {
       const tags = await api.listTagsForTask(task.id);
-      selectedTagIds = tags.map((t) => t.id);
+      selectedTagIds = tags.map((x) => x.id);
     } catch (e) {
       console.error("load tags failed", e);
     }
   }
 
-  async function onTagsChange(next: string[]) {
+  // v1 toggleTag:构造下一版 id 集合 → 整体提交
+  async function toggleTag(tagId: string) {
     const prev = selectedTagIds;
+    const next = prev.includes(tagId)
+      ? prev.filter((id) => id !== tagId)
+      : [...prev, tagId];
     selectedTagIds = next;
     try {
       await api.setTagsForTask(task.id, next);
@@ -152,9 +147,15 @@
     }
   }
 
-  // === SubTasks ===
+  const selectedTags = $derived(
+    selectedTagIds
+      .map((id) => allTags.find((x) => x.id === id))
+      .filter((x): x is Tag => Boolean(x)),
+  );
+
+  // === 子任务 ===
   let subtasks = $state<ApiSubTask[]>([]);
-  let newSubtask = $state("");
+  let subtaskInput = $state("");
 
   $effect(() => {
     void loadSubtasks();
@@ -169,9 +170,9 @@
   }
 
   async function addSubtask() {
-    const title = newSubtask.trim();
+    const title = subtaskInput.trim();
     if (!title) return;
-    newSubtask = "";
+    subtaskInput = "";
     const draft: ApiSubTask = {
       id: crypto.randomUUID(),
       task_id: task.id,
@@ -216,7 +217,7 @@
     }
   }
 
-  // === 删除任务(v1 TaskDetailPanel 底部按钮) ===
+  // === 删除任务(v1:右下角文字链,无确认框) ===
   async function deleteTask() {
     try {
       await api.deleteTask(task.id);
@@ -227,9 +228,7 @@
     }
   }
 
-  // === reminder / repeat 标签 ===
-  // value 与 Rust `Reminder` serde(snake_case)输出一致(Minutes5 → "minutes5");
-  // 展示文案查 v1 词典 enum(键形如 '' / '5m' / 'weekday'),做一层值映射
+  // === reminder / repeat 选项(value 与 Rust serde snake_case 对应) ===
   const REMINDER_OPTIONS = [
     { value: "none" },
     { value: "on_time" },
@@ -282,25 +281,11 @@
     return t.enum.repeat[REPEAT_DICT_KEY[v]];
   }
 
-  function projectName(id: string | null | undefined): string {
-    if (!id) return t.task.detailNoProject;
-    return projects.find((p) => p.id === id)?.name ?? t.task.unknownProject;
-  }
-
-  function priorityLabel(p: Priority | null | undefined): string {
-    return (
-      { high: t.priority.high, medium: t.priority.medium, low: t.priority.low, none: "" }[
-        p ?? "none"
-      ] ?? ""
-    );
-  }
-
-  // === repeat:自定义规则弹窗(v1 TaskDetailPanel:390-398) ===
+  // === repeat:自定义规则弹窗 ===
   let repeatDialogOpen = $state(false);
 
-  // === 预计番茄数编辑(v1 TaskDetailPanel:214-231) ===
+  // === 预计番茄数(v1:completed/ N = N 分钟) ===
   const settings = $derived(getSettings());
-  // "= N 分钟"换算:单任务时长覆盖 > 全局专注时长(v1 用 task.pomodoro_duration,创建时已落全局值)
   const estimatedMinutes = $derived(
     task.estimated_pomodoros * (task.pomodoro_duration ?? settings.focusDuration),
   );
@@ -314,9 +299,7 @@
     }
   }
 
-  // === 提醒变更:due 缺时间 → 补当前时间并提示(v1 TaskDetailPanel:101-114) ===
-  // v2 due_date 存 UTC RFC3339(恒含 T),"缺时间"只能在本地草稿上判断:
-  // 无到期日的任务选提醒时补今天+当前时间;有到期日(已带时间)直接保存
+  // === 提醒变更:due 缺时间 → 补当前时间并提示(v1:101-114) ===
   function onReminderChange(v: Reminder) {
     if (v === "none") {
       void patchTask({ reminder: v });
@@ -331,49 +314,147 @@
       void patchTask({ reminder: v });
     }
   }
+
+  // === 优先级色点(v1 PRIORITY_COLORS) ===
+  const PRIORITY_COLORS: Record<string, string> = {
+    high: "var(--color-priority-high, #c97b6e)",
+    medium: "var(--color-priority-medium, #d4a373)",
+    low: "var(--color-priority-low, #a8a298)",
+    none: "var(--color-neutral-400, #a8a298)",
+  };
 </script>
 
 <aside class="panel" aria-label={t.task.detailPanelAria}>
-  <header class="head">
-    <div class="meta">
-      <span class="proj">{projectName(task.project_id)}</span>
-      {#if task.priority !== "none"}
-        <span class="pri pri-{task.priority}">{priorityLabel(task.priority)}</span>
-      {/if}
+  <!-- 1. 头部:优先级点 + 标题 + 关闭 -->
+  <div class="head">
+    <div class="head-left">
+      <span class="pri-dot" style="background-color: {PRIORITY_COLORS[task.priority] ?? PRIORITY_COLORS.none}"></span>
+      <input
+        class="title-input"
+        bind:value={titleDraft}
+        onblur={commitTitle}
+        onkeydown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            (e.currentTarget as HTMLInputElement).blur();
+          }
+        }}
+        aria-label={t.task.titleAria}
+      />
     </div>
-    <button class="close" onclick={onClose} aria-label={t.common.close}>×</button>
-  </header>
+    <button class="close" onclick={onClose} aria-label={t.common.close}>
+      <X size={18} />
+    </button>
+  </div>
 
-  <input
-    class="title"
-    bind:value={titleDraft}
-    onblur={commitTitle}
-    onkeydown={(e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        (e.currentTarget as HTMLInputElement).blur();
-      }
-    }}
-    aria-label={t.task.titleAria}
-  />
+  <!-- 2. 标签 -->
+  <div class="tags">
+    {#if selectedTags.length > 0}
+      <div class="tag-chips">
+        {#each selectedTags as tag (tag.id)}
+          <span class="tag-chip" style="background-color: {tag.color}">{tag.name}</span>
+        {/each}
+      </div>
+    {:else}
+      <span class="no-tags">{t.task.detailNoTags}</span>
+    {/if}
+    <button type="button" class="tags-toggle" onclick={() => (editingTags = !editingTags)}>
+      {editingTags ? t.task.detailCollapse : t.task.detailEditTags}
+    </button>
+    {#if editingTags}
+      <div class="tags-editor">
+        {#each allTags as tag (tag.id)}
+          <label class="tags-editor-row">
+            <input
+              type="checkbox"
+              checked={selectedTagIds.includes(tag.id)}
+              onchange={() => void toggleTag(tag.id)}
+            />
+            <span class="tag-dot" style="background-color: {tag.color}"></span>
+            <span>{tag.name}</span>
+          </label>
+        {/each}
+        {#if allTags.length === 0}
+          <div class="no-tags">{t.task.detailNoTagsAvailable}</div>
+        {/if}
+      </div>
+    {/if}
+  </div>
 
-  <section class="block">
-    <label class="lbl" for="desc">{t.task.detailDescription}</label>
-    <textarea
-      id="desc"
-      class="desc"
-      bind:value={descDraft}
-      onblur={commitDescription}
-      rows="4"
-      placeholder={t.task.detailDescPlaceholder}
-    ></textarea>
-  </section>
-
-  <section class="block row">
-    <div class="col">
-      <label class="lbl" for="proj">{t.task.detailProject}</label>
+  <!-- 3. 信息行 -->
+  <div class="rows">
+    <!-- 优先级 -->
+    <div class="row">
+      <span class="row-label">
+        <span
+          class="pri-swatch"
+          style="background-color: {PRIORITY_COLORS[task.priority] ?? PRIORITY_COLORS.none}"
+        ></span>
+        {t.task.detailPriority}
+      </span>
       <select
-        id="proj"
+        class="ctrl"
+        value={task.priority}
+        onchange={(e) => {
+          const v = (e.currentTarget as HTMLSelectElement).value as Priority;
+          void patchTask({ priority: v });
+        }}
+      >
+        <option value="high">{t.priority.high}</option>
+        <option value="medium">{t.priority.medium}</option>
+        <option value="low">{t.priority.low}</option>
+        <option value="none">{t.priority.none}</option>
+      </select>
+    </div>
+
+    <!-- 番茄钟 -->
+    <div class="row">
+      <span class="row-label">
+        <Clock size={16} />
+        {t.task.detailPomodoro}
+      </span>
+      <span class="ctrl-group">
+        <span class="pomo-done">{task.completed_pomodoros}/</span>
+        <input
+          class="pomo-input"
+          type="number"
+          min="1"
+          max="99"
+          value={task.estimated_pomodoros}
+          onchange={onEstimatedChange}
+        />
+        <span class="pomo-minutes">= {estimatedMinutes}{t.task.minute}</span>
+      </span>
+    </div>
+
+    <!-- 到期日 -->
+    <div class="row">
+      <span class="row-label">
+        <Calendar size={16} />
+        {t.task.detailDueDate}
+      </span>
+      <input
+        class="ctrl ctrl-bare"
+        type="datetime-local"
+        bind:value={dueDraft}
+        oninput={(e) => {
+          // 选完日期+时间后自动关闭原生日历弹窗(v1:243-248)
+          if ((e.currentTarget as HTMLInputElement).value.length === 16) {
+            (e.currentTarget as HTMLInputElement).blur();
+          }
+        }}
+        onblur={commitDueDate}
+      />
+    </div>
+
+    <!-- 清单 -->
+    <div class="row">
+      <span class="row-label">
+        <List size={16} />
+        {t.task.detailProject}
+      </span>
+      <select
+        class="ctrl"
         value={task.project_id ?? ""}
         onchange={(e) => {
           const v = (e.currentTarget as HTMLSelectElement).value;
@@ -388,68 +469,15 @@
         {/each}
       </select>
     </div>
-    <div class="col">
-      <label class="lbl" for="pri">{t.task.detailPriority}</label>
+
+    <!-- 提醒 -->
+    <div class="row">
+      <span class="row-label">
+        <Bell size={16} />
+        {t.task.detailReminder}
+      </span>
       <select
-        id="pri"
-        value={task.priority}
-        onchange={(e) => {
-          const v = (e.currentTarget as HTMLSelectElement).value as Priority;
-          void patchTask({ priority: v });
-        }}
-      >
-        <option value="none">{t.priority.none}</option>
-        <option value="high">{t.priority.high}</option>
-        <option value="medium">{t.priority.medium}</option>
-        <option value="low">{t.priority.low}</option>
-      </select>
-    </div>
-  </section>
-
-  <!-- 预计番茄数编辑(v1 TaskDetailPanel:214-231):completed/ N = N 分钟 -->
-  <section class="block">
-    <label class="lbl" for="est">{t.task.detailPomodoro}</label>
-    <div class="pomo-row">
-      <span class="pomo-done">{task.completed_pomodoros}/</span>
-      <input
-        id="est"
-        class="pomo-input"
-        type="number"
-        min="1"
-        max="99"
-        value={task.estimated_pomodoros}
-        onchange={onEstimatedChange}
-      />
-      <span class="pomo-minutes">= {estimatedMinutes}{t.task.minute}</span>
-    </div>
-  </section>
-
-  <section class="block">
-    <label class="lbl" for="due">{t.task.detailDueDate}</label>
-    <div class="row-inline">
-      <input
-        id="due"
-        type="datetime-local"
-        bind:value={dueDraft}
-        oninput={(e) => {
-          // 选完日期+时间后自动关闭原生日历弹窗(v1 TaskDetailPanel:243-248)
-          if ((e.currentTarget as HTMLInputElement).value.length === 16) {
-            (e.currentTarget as HTMLInputElement).blur();
-          }
-        }}
-        onblur={commitDueDate}
-      />
-      {#if dueDraft}
-        <button type="button" class="link" onclick={clearDueDate}>{t.common.clear}</button>
-      {/if}
-    </div>
-  </section>
-
-  <section class="block row">
-    <div class="col">
-      <label class="lbl" for="reminder">{t.task.detailReminder}</label>
-      <select
-        id="reminder"
+        class="ctrl"
         value={task.reminder ?? "none"}
         onchange={(e) => {
           const v = (e.currentTarget as HTMLSelectElement).value as Reminder;
@@ -461,10 +489,15 @@
         {/each}
       </select>
     </div>
-    <div class="col">
-      <label class="lbl" for="repeat">{t.task.detailRepeat}</label>
+
+    <!-- 重复 -->
+    <div class="row">
+      <span class="row-label">
+        <RepeatIcon size={16} />
+        {t.task.detailRepeat}
+      </span>
       <select
-        id="repeat"
+        class="ctrl"
         value={task.repeat ?? "none"}
         onchange={(e) => {
           const v = (e.currentTarget as HTMLSelectElement).value as Repeat;
@@ -480,56 +513,49 @@
         {/each}
       </select>
     </div>
-  </section>
+  </div>
 
-  <section class="block">
-    <span class="lbl">{t.filter.tag}</span>
-    <TagPicker tags={allTags} selected={selectedTagIds} onChange={onTagsChange} />
-  </section>
-
-  <section class="block">
-    <span class="lbl">{t.task.detailSubtasks}</span>
-    <ul class="sub-list">
-      {#each subtasks as s (s.id)}
-        <SubTaskItem
-          subtask={s}
-          onChange={updateSubtask}
-          onDelete={removeSubtask}
-        />
-      {/each}
-    </ul>
-    <form
-      class="sub-add"
-      onsubmit={(e) => {
-        e.preventDefault();
-        void addSubtask();
-      }}
-    >
+  <!-- 4. 子任务 -->
+  <div class="subtasks">
+    {#each subtasks as s (s.id)}
+      <SubTaskItem subtask={s} onChange={updateSubtask} onDelete={removeSubtask} />
+    {/each}
+    <div class="sub-add">
+      <Plus size={14} class="sub-add-icon" />
       <input
         type="text"
-        bind:value={newSubtask}
+        bind:value={subtaskInput}
+        onkeydown={(e) => {
+          if (e.key === "Enter" && subtaskInput.trim()) {
+            e.preventDefault();
+            void addSubtask();
+          }
+        }}
         placeholder={t.task.detailAddSubtask}
         aria-label={t.task.newSubtaskAria}
       />
-      <button type="submit" disabled={!newSubtask.trim()}>{t.common.add}</button>
-    </form>
-  </section>
+    </div>
+  </div>
 
-  <!-- 删除任务(v1 TaskDetailPanel 底部同款) -->
-  <section class="block">
-    <button
-      class="delete"
-      onclick={() => {
-        if (confirm(fmt(t.task.deleteConfirm, { title: task.title }))) {
-          void deleteTask();
-        }
-      }}
-    >
+  <!-- 5. 备注 -->
+  <div class="notes">
+    <textarea
+      bind:value={noteDraft}
+      onblur={commitNote}
+      rows="3"
+      placeholder={t.task.detailAddNote}
+    ></textarea>
+  </div>
+
+  <!-- 6. 删除(右下角文字链) -->
+  <div class="del-wrap">
+    <button type="button" class="del-btn" onclick={() => void deleteTask()}>
+      <Trash2 size={14} />
       {t.task.detailDelete}
     </button>
-  </section>
+  </div>
 
-  <!-- 重复:自定义规则弹窗(v1 TaskDetailPanel:390-398) -->
+  <!-- 重复:自定义规则弹窗 -->
   <RepeatCustomDialog
     open={repeatDialogOpen}
     initialConfig={task.repeat_config}
@@ -542,224 +568,264 @@
 </aside>
 
 <style>
+  /* v1:全高列(w-80 + border-l + 内部滚动),不是悬浮卡片 —— 与左侧列表区对齐 */
   .panel {
-    width: 360px;
+    width: 320px;
     flex-shrink: 0;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-sm);
-    padding: 1rem 1.25rem 1.5rem;
+    height: 100%;
+    overflow-y: auto;
+    border-left: 1px solid var(--color-border, #e5e2dd);
+    background: var(--color-surface, #fff);
+    padding: 1rem 1.25rem;
     display: flex;
     flex-direction: column;
     gap: 1rem;
-    max-height: calc(100vh - 8rem);
-    overflow-y: auto;
-    align-self: flex-start;
   }
 
   .head {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    justify-content: space-between;
   }
-  .meta {
+  .head-left {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    color: var(--color-text-muted);
-    font-size: 0.85rem;
+    flex: 1;
+    min-width: 0;
   }
-  .proj {
-    padding: 0.1rem 0.5rem;
-    background: var(--color-bg);
-    border-radius: 999px;
+  .pri-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
   }
-  .pri {
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-    font-size: 0.75rem;
-  }
-  .pri-high { background: #fee2e2; color: #991b1b; }
-  .pri-medium { background: #fef3c7; color: #92400e; }
-  .pri-low { background: #dbeafe; color: #1e40af; }
-
-  .delete {
-    width: 100%;
-    padding: 0.5rem;
-    border: 1px solid var(--color-error, #c97b6e);
-    border-radius: var(--radius-md, 8px);
+  .title-input {
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+    color: var(--color-text, #1f1d1b);
+    outline: none;
     background: transparent;
-    color: var(--color-error, #c97b6e);
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    border: none;
+    font-size: 0.95rem;
+    font-family: inherit;
   }
-  .delete:hover {
-    background: var(--color-error, #c97b6e);
-    color: #fff;
-  }
-
   .close {
     background: transparent;
     border: none;
-    color: var(--color-text-muted);
-    font-size: 1.4rem;
-    line-height: 1;
+    color: var(--color-text-muted, #6b6864);
     cursor: pointer;
-    padding: 0 0.4rem;
-    border-radius: 4px;
+    padding: 0.15rem;
+    display: inline-flex;
   }
   .close:hover {
-    color: var(--color-text);
-    background: var(--color-bg);
+    color: var(--color-text, #1f1d1b);
   }
 
-  .title {
-    width: 100%;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    padding: 0.5rem 0.75rem;
-    font-size: 1.05rem;
-    font-weight: 600;
-    background: var(--color-surface);
-    color: var(--color-text);
-  }
-  .title:focus {
-    border-color: var(--color-accent);
-    outline: none;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
-  }
-
-  .block {
+  /* 标签 */
+  .tags {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    align-items: flex-start;
+    gap: 0.5rem;
   }
-  .lbl {
-    font-size: 0.8rem;
-    color: var(--color-text-muted);
-    font-weight: 500;
-  }
-  .desc {
-    width: 100%;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    padding: 0.5rem 0.75rem;
-    font-size: 0.9rem;
-    background: var(--color-surface);
-    color: var(--color-text);
-    font-family: inherit;
-    resize: vertical;
-  }
-  .desc:focus,
-  .block select:focus,
-  .block input:focus {
-    border-color: var(--color-accent);
-    outline: none;
-  }
-
-  .row {
+  .tag-chips {
     display: flex;
-    gap: 0.75rem;
+    flex-wrap: wrap;
+    gap: 0.375rem;
   }
-  .col {
-    flex: 1;
+  .tag-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    color: #fff;
+  }
+  .no-tags {
+    font-size: 0.75rem;
+    color: var(--color-text-muted, #6b6864);
+  }
+  .tags-toggle {
+    font-size: 0.75rem;
+    color: var(--color-text-muted, #6b6864);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+  }
+  .tags-toggle:hover {
+    color: var(--color-text, #1f1d1b);
+  }
+  .tags-editor {
+    width: 100%;
+    border: 1px solid var(--color-border, #e5e2dd);
+    border-radius: var(--radius-md, 8px);
+    padding: 0.5rem;
+    max-height: 10rem;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    gap: 0.25rem;
   }
-  .row-inline {
+  .tags-editor-row {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-  }
-  .pomo-row {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    color: var(--color-text);
-  }
-  .pomo-done {
-    font-size: 0.9rem;
-  }
-  .pomo-input {
-    width: 3.5rem;
-    text-align: right;
-    padding: 0.35rem 0.5rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
-    color: var(--color-text);
-    font-size: 0.9rem;
-  }
-  .pomo-input:focus {
-    border-color: var(--color-accent);
-    outline: none;
-  }
-  .pomo-minutes {
-    color: var(--color-text-muted);
-    font-size: 0.75rem;
-  }
-  .row-inline input {
-    flex: 1;
-  }
-  .link {
-    background: transparent;
-    border: none;
-    color: var(--color-accent);
-    cursor: pointer;
     font-size: 0.85rem;
-    padding: 0;
+    cursor: pointer;
+    color: var(--color-text, #1f1d1b);
   }
-  .link:hover {
-    text-decoration: underline;
+  .tags-editor-row input[type="checkbox"] {
+    accent-color: var(--color-accent, #e74c3c);
   }
-
-  .block select,
-  .block input[type="datetime-local"] {
-    width: 100%;
-    padding: 0.4rem 0.6rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
-    color: var(--color-text);
-    font-size: 0.9rem;
+  .tag-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
   }
 
-  .sub-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
+  /* 信息行(v1:py-2 + 底部细线分隔) */
+  .rows {
     display: flex;
     flex-direction: column;
-    gap: 0.15rem;
+    font-size: 0.875rem;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-border, #e5e2dd) 50%, transparent);
+    gap: 0.5rem;
+  }
+  .row-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--color-text-muted, #6b6864);
+  }
+  .pri-swatch {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px solid var(--color-border, #e5e2dd);
+  }
+  .ctrl {
+    font-size: 0.85rem;
+    color: var(--color-text, #1f1d1b);
+    background: var(--color-bg, #fafaf7);
+    border: none;
+    border-radius: var(--radius-md, 8px);
+    padding: 0.15rem 0.5rem;
+    cursor: pointer;
+    flex-shrink: 0;
+    max-width: 180px;
+  }
+  .ctrl:focus {
+    outline: 1px solid var(--color-accent, #e74c3c);
+  }
+  /* 到期日:v1 为透明背景右对齐,无框 */
+  .ctrl-bare {
+    background: transparent;
+    color: var(--color-text, #1f1d1b);
+    text-align: right;
+    cursor: text;
+  }
+  .ctrl-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--color-text, #1f1d1b);
+    flex-shrink: 0;
+  }
+  .pomo-done {
+    font-size: 0.875rem;
+  }
+  .pomo-input {
+    width: 2.5rem;
+    text-align: right;
+    outline: none;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--color-border, #e5e2dd);
+    font-size: 0.875rem;
+    color: var(--color-text, #1f1d1b);
+  }
+  .pomo-input:focus {
+    border-bottom-color: var(--color-accent, #e74c3c);
+  }
+  .pomo-minutes {
+    color: var(--color-text-muted, #6b6864);
+    font-size: 0.75rem;
+    margin-left: 0.25rem;
+  }
+
+  /* 子任务 */
+  .subtasks {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
   }
   .sub-add {
     display: flex;
-    gap: 0.4rem;
+    align-items: center;
+    gap: 0.5rem;
     margin-top: 0.5rem;
+  }
+  .sub-add-icon {
+    color: var(--color-text-muted, #6b6864);
+    flex-shrink: 0;
   }
   .sub-add input {
     flex: 1;
-    padding: 0.35rem 0.6rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
-    color: var(--color-text);
-    font-size: 0.85rem;
-  }
-  .sub-add button {
-    padding: 0.35rem 0.85rem;
-    background: var(--color-accent);
-    color: #fff;
+    font-size: 0.875rem;
+    color: var(--color-text, #1f1d1b);
+    outline: none;
+    background: transparent;
     border: none;
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    font-size: 0.85rem;
+    font-family: inherit;
   }
-  .sub-add button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+  .sub-add input::placeholder {
+    color: var(--color-text-muted, #6b6864);
+  }
+
+  /* 备注 */
+  .notes textarea {
+    width: 100%;
+    font-size: 0.875rem;
+    color: var(--color-text, #1f1d1b);
+    outline: none;
+    background: transparent;
+    border: none;
+    resize: none;
+    font-family: inherit;
+  }
+  .notes textarea::placeholder {
+    color: var(--color-text-muted, #6b6864);
+  }
+
+  /* 删除 */
+  .del-wrap {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 1.5rem;
+  }
+  .del-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    color: var(--color-text-muted, #6b6864);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    transition: color 0.15s;
+  }
+  .del-btn:hover {
+    color: var(--color-accent, #e74c3c);
   }
 </style>
