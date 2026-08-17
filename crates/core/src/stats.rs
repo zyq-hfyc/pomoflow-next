@@ -182,8 +182,8 @@ pub fn range_stats(
         })
         .count();
 
-    // --- 项目分布:完成任务 due_date 的 UTC 日 ∈ [start, end] ---
-    let projects = project_stats_by_completed_tasks(tasks, projects, start, end);
+    // --- 项目分布:已完成番茄钟的任务 due_date 的 UTC 日 ∈ [start, end] ---
+    let projects = project_stats_by_completed_pomodoros(tasks, projects, start, end);
 
     RangeStats {
         trend,
@@ -196,12 +196,14 @@ pub fn range_stats(
     }
 }
 
-/// 项目时间分布(v1 `_project_stats_by_completed_tasks`):
-/// 完成任务(due_date ∈ [start, end],UTC 日)按项目累加
-/// `completed_pomodoros × pomodoro_duration`(duration NULL 按 0)。
+/// 项目时间分布(v1 `_project_stats_by_completed_pomodoros`,v1 12bc45a 同步):
+/// 按 Task.due_date ∈ [start, end](UTC 日)且 `completed_pomodoros > 0` 过滤,
+/// 按项目累加 `completed_pomodoros × pomodoro_duration`(duration NULL 按 0)。
+/// 不要求任务整体完成 —— 8 个番茄已完成 7 个即计入 7 个番茄的时长;
+/// 没有清单的任务不计入(无 project_id 归属维度)。
 ///
 /// 输出按 total_minutes 降序、同名稳定(v1 是 DB 顺序,这里给确定序,不影响语义)。
-pub fn project_stats_by_completed_tasks(
+pub fn project_stats_by_completed_pomodoros(
     tasks: &[Task],
     projects: &[Project],
     start: NaiveDate,
@@ -211,7 +213,7 @@ pub fn project_stats_by_completed_tasks(
     let mut minutes_by_pid: HashMap<&str, u64> = HashMap::new();
     for t in tasks.iter().filter(|t| {
         t.deleted_at.is_none()
-            && t.status == TaskStatus::Completed
+            && t.completed_pomodoros > 0
             && t.project_id.is_some()
             && t.due_date
                 .map(|d| {
@@ -486,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn project_distribution_uses_task_semantics_not_sessions() {
+    fn project_distribution_counts_completed_pomodoros_not_whole_tasks() {
         let pid = Id::new();
         let other = Id::new();
         let mut proj = Project::new("工作");
@@ -495,16 +497,22 @@ mod tests {
         let mut proj2 = Project::new("生活");
         proj2.id = other.clone();
 
+        // 未整体完成的进行中任务:8 个番茄完成 7 个 → 计入 7×25=175 分钟(v1 12bc45a 口径)
+        let mut partial = Task::new("进行中,8 番茄完成 7");
+        partial.project_id = Some(other.clone());
+        partial.due_date = Some(dt("2026-01-20T12:00:00Z"));
+        partial.estimated_pomodoros = 8;
+        partial.completed_pomodoros = 7;
+        partial.pomodoro_duration = Some(25);
+
         let tasks = vec![
             completed_task("2026-01-10", Some(pid.clone()), 3, Some(25)), // 75 分钟
             completed_task("2026-01-20", Some(pid.clone()), 1, None), // duration NULL → 0 分钟(直译 v1 or 0)
             completed_task("2026-01-20", Some(other.clone()), 2, Some(30)), // 60 分钟
             completed_task("2026-02-05", Some(pid.clone()), 5, Some(25)), // due 区间外
             completed_task("2026-01-20", None, 9, Some(25)),          // 无项目 → 不计
+            partial,                                                    // active + 7 番茄 → 175 分钟
         ];
-        let mut active = Task::new("未完成任务");
-        active.project_id = Some(pid.clone());
-        active.due_date = Some(dt("2026-01-20T12:00:00Z"));
 
         let no_sessions: Vec<PomodoroSession> = Vec::new();
         let r = range_stats(
@@ -517,12 +525,12 @@ mod tests {
             UTC0,
         );
         assert_eq!(r.projects.len(), 2);
-        // 降序:工作 75 在前,生活 60 在后
-        assert_eq!(r.projects[0].project_name, "工作");
-        assert_eq!(r.projects[0].total_minutes, 75);
-        assert_eq!(r.projects[0].project_color, "#ff0000");
-        assert_eq!(r.projects[1].project_name, "生活");
-        assert_eq!(r.projects[1].total_minutes, 60);
+        // 降序:生活 60+175=235 在前,工作 75 在后
+        assert_eq!(r.projects[0].project_name, "生活");
+        assert_eq!(r.projects[0].total_minutes, 235);
+        assert_eq!(r.projects[1].project_name, "工作");
+        assert_eq!(r.projects[1].total_minutes, 75);
+        assert_eq!(r.projects[1].project_color, "#ff0000");
     }
 
     #[test]
