@@ -12,6 +12,7 @@
   import * as api from "../../lib/api";
   import type { Motto as ApiMotto } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
+  import { mottoVersion } from "../../lib/mottoVersion.svelte";
 
   const t = $derived(getDict());
 
@@ -29,6 +30,12 @@
 
   onMount(() => {
     loadCustom();
+  });
+
+  // 设置页增删自定义名言 → 立即重拉(v1 storage 事件广播语义)
+  $effect(() => {
+    void mottoVersion.n;
+    void loadCustom();
   });
 
   // 第一次拿到 custom 后初始化当前名言

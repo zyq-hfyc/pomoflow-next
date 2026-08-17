@@ -62,6 +62,18 @@
     initTodayStatsSync();
     // 任务提醒引擎(30s 轮询 + 专注抑制/补弹 + 启动补弹)
     initReminders();
+    // 通知权限预请求(v1 TimerPage:73-77 / useReminders:116-120:
+    // 进页面即请求,而不是等首次发通知时才弹权限框)
+    void (async () => {
+      try {
+        const { isPermissionGranted, requestPermission } = await import(
+          "@tauri-apps/plugin-notification"
+        );
+        if (!(await isPermissionGranted())) await requestPermission();
+      } catch {
+        // 权限请求失败不打断启动,发通知时还会再试
+      }
+    })();
   });
 
   // === 路由渲染 ===
@@ -77,7 +89,7 @@
   };
 </script>
 
-<main class="app">
+<main class="app app-bg">
   <header class="topbar">
     <!-- v1:logo(品牌番茄 SVG)+ 字标居左,导航紧跟其后靠左 -->
     <div class="brand">
@@ -118,19 +130,21 @@
 </main>
 
 <style>
+  /* 背景由全局 .app-bg(app.css)提供:var(--bg-page) = 主题渐变或
+     背景图(theme store 注入 <html> 内联)。这里绝不能再铺不透明底色,
+     否则会像 v2 早期 bug 一样把预设/自定义背景整层盖住 */
   .app {
     display: flex;
     flex-direction: column;
     width: 100%;
     height: 100vh;
-    background: var(--color-bg);
     color: var(--color-text);
   }
 
   .topbar {
     display: flex;
     align-items: center;
-    min-height: 45px;
+    min-height: var(--topbar-height, 50px);
     padding: 0 1.5rem;
     border-bottom: 1px solid var(--color-border);
     background: color-mix(in srgb, var(--color-surface) 85%, transparent);

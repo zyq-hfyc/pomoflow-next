@@ -9,6 +9,7 @@
   import * as api from "../../lib/api";
   import type { Motto } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
+  import { bumpMottoVersion } from "../../lib/mottoVersion.svelte";
 
   const t = $derived(getDict());
 
@@ -69,6 +70,8 @@
       text = "";
       author = "";
       await load();
+      // v1:storage 事件广播 → 番茄钟页 MottoCard 即时刷新
+      bumpMottoVersion();
     } catch (e) {
       error = String(e);
     }
@@ -78,6 +81,7 @@
     try {
       await api.deleteMotto(id);
       await load();
+      bumpMottoVersion();
     } catch (e) {
       error = String(e);
     }

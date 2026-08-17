@@ -145,7 +145,7 @@
   @media (min-width: 1024px) {
     .help-page {
       flex-direction: row;
-      height: calc(100vh - 4rem);
+      height: calc(100vh - var(--topbar-height, 50px));
     }
   }
 

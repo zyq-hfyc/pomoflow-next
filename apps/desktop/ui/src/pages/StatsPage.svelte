@@ -157,7 +157,10 @@
   <title>{t.page.stats}</title>
 </svelte:head>
 
-<div class="page">
+<!-- v1 StatsPage:146 结构 —— 外层全宽全高 page-veil,内容列居中(max-w)。
+     蒙层不能挂在内容列上,否则宽窗口左右留白和矮内容下方会裸露背景图 -->
+<div class="stats-veil page-veil">
+  <div class="page">
   <h2>{t.nav.stats}</h2>
 
   <!-- 维度 pill -->
@@ -251,9 +254,14 @@
       </section>
     </div>
   {/if}
+  </div>
 </div>
 
 <style>
+  /* 蒙层外层:至少铺满视口剩余高度(v1 min-h-[calc(100vh-4rem)]) */
+  .stats-veil {
+    min-height: calc(100vh - var(--topbar-height, 50px));
+  }
   .page {
     padding: 1.5rem 2rem 3rem;
     display: flex;

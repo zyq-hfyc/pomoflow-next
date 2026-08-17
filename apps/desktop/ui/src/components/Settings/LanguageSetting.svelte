@@ -10,11 +10,11 @@
   const t = $derived(getDict());
   const lang = $derived(getLang());
 
-  // v1 语义:label/sub 用语言**原生名**硬编码(不随界面语言变)——
-  // 英文界面下中文卡仍显示「中文 / Chinese」,不会出现重复文案
+  // v1 语义:label 用语言原生名、sub 用「另一门语言的名字」硬编码
+  // (v1 LanguageSetting.tsx:8-11:英文卡 sub='英文'),不随界面语言变
   const OPTIONS: { key: Lang; label: string; sub: string }[] = [
     { key: "zh", label: "中文", sub: "Chinese" },
-    { key: "en", label: "English", sub: "English" },
+    { key: "en", label: "English", sub: "英文" },
   ];
 </script>
 

@@ -1,12 +1,14 @@
 <script lang="ts">
   // 设置页 —— v1 SettingsPage.tsx 布局移植:左侧二级菜单 + 右侧表单卡。
   //
-  // 7 个标签(账号 tab 不移植):计时 / 清单 / 标签 / 主题 / 名言 / 通知 / 语言。
+  // 8 个标签(与 v1 一致,account 排第一,内容为占位文案):账号 / 计时 / 清单 /
+  // 标签 / 主题 / 名言 / 通知 / 语言。
   // 菜单激活态:accent-50 底 + accent-600 字 + 左侧指示条(词典 t.settings.tab.*)。
   // 各标签内容在 components/Settings/*(本文件只负责骨架与切换)。
 
   import type { Component } from "svelte";
   import {
+    UserRound,
     Clock,
     ListTodo,
     Tag,
@@ -27,6 +29,7 @@
   const t = $derived(getDict());
 
   type SettingTab =
+    | "account"
     | "timer"
     | "lists"
     | "tags"
@@ -40,6 +43,7 @@
   // lucide-svelte 1.x 导出 Svelte 4 SvelteComponentTyped,与 Svelte 5 Component
   // 类型不兼容 —— 与 ProjectSidebar 同款,赋值处 `as any` 绕过(运行期正常)。
   const tabs = $derived<{ key: SettingTab; icon: Component<any>; label: string }[]>([
+    { key: "account", icon: UserRound as any, label: t.settings.tab.account },
     { key: "timer", icon: Clock as any, label: t.settings.tab.timer },
     { key: "lists", icon: ListTodo as any, label: t.settings.tab.lists },
     { key: "tags", icon: Tag as any, label: t.settings.tab.tags },
@@ -78,7 +82,12 @@
   <!-- 右侧内容卡 -->
   <main class="content">
     <div class="card">
-      {#if activeTab === "timer"}
+      {#if activeTab === "account"}
+        <!-- v1 SettingsPage:156-160 —— 账号占位 -->
+        <div class="account-placeholder">
+          <p>{t.settings.accountNotOpen}</p>
+        </div>
+      {:else if activeTab === "timer"}
         <TimerSetting />
       {:else if activeTab === "lists"}
         <ProjectManager />
@@ -106,8 +115,20 @@
   @media (min-width: 1024px) {
     .settings-page {
       flex-direction: row;
-      height: calc(100vh - 4rem);
+      height: calc(100vh - var(--topbar-height, 50px));
     }
+  }
+
+  .account-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 16rem;
+    color: var(--color-text-muted);
+  }
+  .account-placeholder p {
+    margin: 0;
   }
 
   .menu {
