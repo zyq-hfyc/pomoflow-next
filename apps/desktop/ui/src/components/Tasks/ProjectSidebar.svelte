@@ -209,11 +209,10 @@
           <item.icon size={16} />
           {item.label}
         </span>
-        {#if stats.count > 0}
-          <span class="filter-stats">
-            {stats.timeStr} {stats.count}
-          </span>
-        {/if}
+        <!-- v1 ProjectSidebar:171 —— 统计恒显(空时 "0m 0") -->
+        <span class="filter-stats">
+          {stats.timeStr} {stats.count}
+        </span>
       </button>
     {/each}
   </div>

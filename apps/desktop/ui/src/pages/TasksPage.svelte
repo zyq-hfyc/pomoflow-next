@@ -31,7 +31,8 @@
     Repeat,
   } from "../lib/api";
   import { currentRoute, navigate } from "../lib/router.svelte";
-  import { startWithTask } from "../lib/timer.svelte";
+  import { startWithTaskFromList } from "../lib/timer.svelte";
+  import { checkRemindersNow } from "../lib/reminders.svelte";
   import { getDict, fmt } from "../lib/i18n.svelte";
   import { todayStr, tomorrowStr, datePart, hasTimePart, toIsoUtc } from "../lib/dueDate";
   import ProjectSidebar from "../components/Tasks/ProjectSidebar.svelte";
@@ -281,6 +282,8 @@
         const next = tasks.find((x) => x.id === selectedTask!.id);
         selectedTask = next ?? null;
       }
+      // 任务列表变化 → 提醒立即复查(v1 useReminders 依赖 [tasks] 的 effect)
+      checkRemindersNow();
     } catch (e) {
       error = String(e);
     } finally {
@@ -379,11 +382,11 @@
     void refresh();
   }
 
-  // 一键开始专注(v1:navigate + autostart):引擎先弃当前会话再开新专注,
-  // 会话全程由引擎驱动(修复旧实现 dispatch 无人监听的事件 + 孤儿会话行)
+  // 一键开始专注(v1 TasksPage:322-328 navigate + autostart):
+  // 不打断进行中的专注 —— running 时只切换活动任务并跳转;空闲才自动开新会话
   async function startTask(task: TaskWithTags) {
     try {
-      await startWithTask(task);
+      await startWithTaskFromList(task);
       navigate("/timer");
     } catch (e) {
       error = String(e);
@@ -478,7 +481,7 @@
   <title>{t.page.tasks}</title>
 </svelte:head>
 
-<div class="page">
+<div class="page page-veil">
   <!-- 左：ProjectSidebar -->
   <ProjectSidebar
     {projects}
@@ -652,7 +655,7 @@
         {:else if filter === "week" || filter === "planned" || filter === "completed"}
           <GroupedTaskList
             tasks={filtered}
-            groupBy={filter === "completed" ? "completed_at" : "due_date"}
+            groupBy="due_date"
             {selectedTask}
             onToggle={toggleStatus}
             onSelect={selectTask}

@@ -127,20 +127,38 @@ async function checkOnce(): Promise<void> {
 let _initialized = false;
 /// 专注结束标志:上一 tick 在专注、现在不在 → 立即补一次检查(v1 effect 重跑语义)
 let _wasFocusing = false;
+/// 并发护栏:checkOnce 各持一份 fired 快照,并发跑会双弹同一条
+let _inFlight = false;
+
+async function checkOnceGuarded(): Promise<void> {
+  if (_inFlight) return;
+  _inFlight = true;
+  try {
+    await checkOnce();
+  } finally {
+    _inFlight = false;
+  }
+}
+
+/// 任务列表变化后立即检查一次(v1 useReminders effect 依赖 [tasks]:
+/// 新建一个已过提醒时间的任务会立刻弹,不用等 30s tick)。
+export function checkRemindersNow(): void {
+  void checkOnceGuarded();
+}
 
 export function initReminders(): void {
   if (_initialized || typeof window === "undefined") return;
   _initialized = true;
 
   // 启动补弹(错过检查)+ 周期检查
-  void checkOnce();
-  window.setInterval(() => void checkOnce(), CHECK_INTERVAL);
+  void checkOnceGuarded();
+  window.setInterval(() => void checkOnceGuarded(), CHECK_INTERVAL);
 
   // 专注结束 → 立即补弹(200ms 轮询太重,用 1s 检查 focusing 翻转即可;30s 内
   // 也会自然覆盖,这里只是让"结束专注后马上看到被抑制的提醒"更即时)
   window.setInterval(() => {
     const f = isFocusing();
-    if (_wasFocusing && !f) void checkOnce();
+    if (_wasFocusing && !f) void checkOnceGuarded();
     _wasFocusing = f;
   }, 1000);
 }

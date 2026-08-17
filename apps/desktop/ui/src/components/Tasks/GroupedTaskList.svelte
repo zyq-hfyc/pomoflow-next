@@ -98,7 +98,7 @@
         onclick={() => toggleGroup(dateStr)}
         aria-expanded={!isCollapsed}
       >
-        <span>{dateStr === UNSCHEDULED ? t.task.unscheduled : formatHeader(dateStr, groupTasks)}</span>
+        <span>{dateStr === UNSCHEDULED ? t.task.noDate : formatHeader(dateStr, groupTasks)}</span>
         <span class="chev">
           {#if isCollapsed}<ChevronRight size={16} />{:else}<ChevronDown size={16} />{/if}
         </span>
