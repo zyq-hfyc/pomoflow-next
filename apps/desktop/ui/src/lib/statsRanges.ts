@@ -8,8 +8,7 @@
 //! - quarter  : 自然季度(季度首月 1 号 → 季度末月月末,按 3 个月推进)
 //! - halfyear : 自然半年(上半年 1/1–6/30,下半年 7/1–12/31,按 6 个月推进)
 //! - year     : 自然年(1/1 → 12/31)
-//! - prev     : 当前区间整体往前平移一个周期(prevEnd = start 前一天,
-//!              prevStart 再往前推 span-1 天;span 为当前区间实际天数)
+//! - prev     : 对齐日历边界取上一自然周期(昨日/上周/上月/上季/上半年/去年)
 //!
 //! 趋势粒度(group)按维度固定:today/week/month → day,quarter → week,
 //! halfyear/year → month。
@@ -122,20 +121,20 @@ export function getRange(dim: StatsDimension, now: Date = new Date()): Dimension
 /**
  * 维度 → 上一周期区间(环比取数)。
  *
- * 规则:prevEnd = 当前 start 前一天;prevStart = prevEnd 再往前 span-1 天
- * (span 为当前区间实际天数,按天平移)。
+ * 规则:对齐日历边界取上一个自然日/周/月/季/半年/年。
  *
- * ⚠️ v1 固有怪癖(保持原样,勿"修复"):长短周期不等时平移并不对齐上一自然
- * 周期 —— 季度(Q3 92 天)prev 会从 03-31 起多含 3 月 31 日;下半年(184 天)
- * prev 会从上一年 12-29 起多含 3 天;3 月看"本月"(31 天)prev 从 01-29 起。
+ * v1 原实现(v1 已同步修复)按「当前区间天数」整体回退:当前期与上期长度
+ * 不等(月有大小、季度 90-92 天、半年 181/184 天)时上期窗口漂移 1~3 天
+ * —— Q3 prev 从 03-31 起、下半年 prev 从上一年 12-29 起、3 月 prev 从
+ * 01-29 起,环比分母混入更早周期的数据。
  *
  * 单测式锚点(同上 2026-08-16 周日,已实测核对):
  * ```
  * getPrevRange("today",    sun) → { start:"2026-08-15", end:"2026-08-15" }
  * getPrevRange("week",     sun) → { start:"2026-08-03", end:"2026-08-09" }
  * getPrevRange("month",    sun) → { start:"2026-07-01", end:"2026-07-31" }
- * getPrevRange("quarter",  sun) → { start:"2026-03-31", end:"2026-06-30" } // 平移错位 1 天
- * getPrevRange("halfyear", sun) → { start:"2025-12-29", end:"2026-06-30" } // 平移错位 3 天
+ * getPrevRange("quarter",  sun) → { start:"2026-04-01", end:"2026-06-30" } // 自然 Q2
+ * getPrevRange("halfyear", sun) → { start:"2026-01-01", end:"2026-06-30" } // 自然 H1
  * getPrevRange("year",     sun) → { start:"2025-01-01", end:"2025-12-31" }
  * ```
  */
@@ -143,15 +142,44 @@ export function getPrevRange(
   dim: StatsDimension,
   now: Date = new Date(),
 ): { start: string; end: string } {
-  const cur = getRange(dim, now);
-  const startD = new Date(cur.start + "T00:00:00");
-  const endD = new Date(cur.end + "T00:00:00");
-  const span = Math.round((endD.getTime() - startD.getTime()) / 86400000) + 1;
-  const prevEnd = new Date(startD);
-  prevEnd.setDate(startD.getDate() - 1);
-  const prevStart = new Date(prevEnd);
-  prevStart.setDate(prevEnd.getDate() - span + 1);
-  return { start: isoDate(prevStart), end: isoDate(prevEnd) };
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dow = today.getDay();
+  const mondayOffset = dow === 0 ? -6 : 1 - dow;
+
+  if (dim === "today") {
+    const d = new Date(today);
+    d.setDate(today.getDate() - 1);
+    return { start: isoDate(d), end: isoDate(d) };
+  }
+  if (dim === "week") {
+    const monday = new Date(today);
+    monday.setDate(today.getDate() + mondayOffset - 7);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return { start: isoDate(monday), end: isoDate(sunday) };
+  }
+  if (dim === "month") {
+    // Date 自动进位:1 月的上月 = 上一年 12 月
+    const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const end = new Date(today.getFullYear(), today.getMonth(), 0);
+    return { start: isoDate(start), end: isoDate(end) };
+  }
+  if (dim === "quarter") {
+    const q = Math.floor(today.getMonth() / 3);
+    const start = new Date(today.getFullYear(), (q - 1) * 3, 1);
+    const end = new Date(today.getFullYear(), q * 3, 0);
+    return { start: isoDate(start), end: isoDate(end) };
+  }
+  if (dim === "halfyear") {
+    const half = today.getMonth() < 6 ? 0 : 6;
+    const start = new Date(today.getFullYear(), half - 6, 1);
+    const end = new Date(today.getFullYear(), half, 0);
+    return { start: isoDate(start), end: isoDate(end) };
+  }
+  // year
+  const start = new Date(today.getFullYear() - 1, 0, 1);
+  const end = new Date(today.getFullYear() - 1, 11, 31);
+  return { start: isoDate(start), end: isoDate(end) };
 }
 
 /**
