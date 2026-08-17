@@ -112,9 +112,6 @@ pub fn upsert_task(
     tag_ids: Option<Vec<String>>,
     state: State<'_, AppState>,
 ) -> Result<TaskView, String> {
-    // v1 TaskUpdate 的保护字段语义(status/completed_pomodoros/completed_at 只经
-    // complete/reopen/番茄钟逻辑变更)在 v2 由前端约定保证 —— 内部命令
-    // complete_task / stop_pomodoro 也走本入口,无法在 IPC 层强制区分。
     validate::validate_task(&task).map_err(map_err)?;
     let store = &state.store;
 
@@ -125,12 +122,22 @@ pub fn upsert_task(
         for raw in raw_ids {
             parsed.push(Id::parse(raw).ok_or_else(|| format!("invalid tag_id: {raw}"))?);
         }
-        store.set_tags_for_task(&task.id, &parsed).map_err(map_err)?;
+        store
+            .set_tags_for_task(&task.id, &parsed)
+            .map_err(map_err)?;
     }
 
     // === 重复编排(v1 create_task / update_task 翻译) ===
     let existing = store.get_task(&task.id).ok();
     let mut task = task;
+    // v1 TaskUpdate 保护字段语义:status / completed_pomodoros / completed_at
+    // 不允许编辑载荷直改,只能经 complete_task / reopen_task / 番茄钟链路
+    // (那两个内部命令走 store 直连,不经本入口)。更新时以库内现值覆盖回传值。
+    if let Some(e) = &existing {
+        task.status = e.status;
+        task.completed_pomodoros = e.completed_pomodoros;
+        task.completed_at = e.completed_at;
+    }
     if task.repeat_parent_id.is_none() {
         // 模板:每次 upsert 重算 repeat_end_date(v1 行为)
         task.repeat_end_date = if task.repeat != pomoflow_core::model::Repeat::None {
@@ -138,12 +145,19 @@ pub fn upsert_task(
         } else {
             None
         };
-        let repeat_changed = existing
-            .as_ref()
-            .is_some_and(|e| e.repeat != task.repeat);
+        // v1 crud.py:374-377:更新载荷带 repeat 键即删旧实例+重生成 —— 落到字段上
+        // 就是「规则/起始时间/自定义配置任一变化」都重排,否则只改模板 due_date
+        // 或 repeat_config 时旧实例日期会过期。两边都非重复模板则免无谓重排。
+        let regeneration_needed = existing.as_ref().is_some_and(|e| {
+            (e.repeat != task.repeat
+                || e.due_date != task.due_date
+                || e.repeat_config != task.repeat_config)
+                && (e.repeat != pomoflow_core::model::Repeat::None
+                    || task.repeat != pomoflow_core::model::Repeat::None)
+        });
         let saved = store.upsert_task(task.clone()).map_err(map_err)?;
-        if repeat_changed {
-            // 规则变化:删旧 active 实例(完成的保留),有新规则则重生成
+        if regeneration_needed {
+            // 规则/起点变化:删旧 active 实例(完成的保留),有新规则则重生成
             crate::repeat_service::delete_active_instances(store, &saved.id).map_err(map_err)?;
             if saved.repeat != pomoflow_core::model::Repeat::None {
                 crate::repeat_service::generate_instances(store, &saved).map_err(map_err)?;
@@ -449,10 +463,7 @@ pub fn list_weekly_reviews(
 
 /// 删除某周复盘(硬删)。
 #[tauri::command]
-pub fn delete_weekly_review(
-    week_start: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub fn delete_weekly_review(week_start: String, state: State<'_, AppState>) -> Result<(), String> {
     state
         .store
         .delete_weekly_review(&week_start)
@@ -477,10 +488,7 @@ pub fn upsert_monthly_review(
 
 /// 删除某月复盘(硬删)。
 #[tauri::command]
-pub fn delete_monthly_review(
-    year_month: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub fn delete_monthly_review(year_month: String, state: State<'_, AppState>) -> Result<(), String> {
     state
         .store
         .delete_monthly_review(&year_month)
