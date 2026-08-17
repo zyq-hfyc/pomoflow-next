@@ -15,6 +15,11 @@
   import { ChevronDown, ChevronRight, Play } from "lucide-svelte";
   import type { Project, SubTask, Tag, Task } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
+  import type {
+    TimerFilter,
+    Priority,
+    DateFilter,
+  } from "../../lib/timerFilter.svelte";
 
   const t = $derived(getDict());
 
@@ -24,21 +29,13 @@
     subtasks?: SubTask[];
   };
 
-  type Priority = "high" | "medium" | "low";
-  type DateFilter = "today" | "tomorrow" | "this_week";
-
-  export interface TimerFilter {
-    project: string | null;
-    tag: string | null;
-    priority: Priority | null;
-    date: DateFilter | null;
-  }
-
   interface Props {
     todayMinutes: number;
     projects: Project[];
     tags: Tag[];
     tasks: TaskWithExtras[];
+    /** 当前活动任务 id(v1:对应卡片 border-accent-200 + bg-accent-50 高亮) */
+    activeTaskId: string | null;
     filter: TimerFilter;
     onFilterChange: (next: Partial<TimerFilter>) => void;
     onStartTask: (task: TaskWithExtras) => void;
@@ -50,6 +47,7 @@
     projects,
     tags,
     tasks,
+    activeTaskId,
     filter,
     onFilterChange,
     onStartTask,
@@ -213,7 +211,7 @@
         ? (task.subtasks ?? []).filter((s) => s.is_completed).length
         : 0}
       {@const projName = projectName(task.project_id)}
-      <div class="task-card">
+      <div class="task-card" class:active={task.id === activeTaskId}>
         <!-- 任务行 -->
         <div class="task-row">
           <!-- 展开按钮 -->
@@ -460,6 +458,14 @@
   }
   .task-card:hover {
     border-color: color-mix(in srgb, var(--color-text-muted, #6b6864) 30%, var(--color-border, #e5e2dd));
+  }
+  /* v1:当前活动任务卡片 accent 描边 + 淡色底 */
+  .task-card.active {
+    border-color: var(--color-accent-200, #f0c4ae);
+    background: color-mix(in srgb, var(--color-accent, #e74c3c) 5%, var(--color-surface, #fff));
+  }
+  .task-card.active .task-row {
+    background: color-mix(in srgb, var(--color-accent, #e74c3c) 5%, transparent);
   }
   .task-row {
     display: flex;

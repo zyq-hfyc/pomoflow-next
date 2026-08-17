@@ -35,7 +35,8 @@
   >
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div class="icon-wrap">⏰</div>
-      <h3 id="modal-title" class="title">{t.timer.focusCompleteTitle}</h3>
+      <!-- v1 TimerPage:491 —— 专注/休息完成共用通用标题「提示」 -->
+      <h3 id="modal-title" class="title">{t.timer.modalTitle}</h3>
       <p class="msg">{message}</p>
       <button class="btn" onclick={onClose} type="button">{t.common.confirm}</button>
     </div>

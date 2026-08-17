@@ -19,6 +19,7 @@
   // 完成弹窗(CompletionModal):到点 / 主动停止时弹出。
 
   import { onMount } from "svelte";
+  import { Play, Pause, Square, SkipForward } from "lucide-svelte";
   import {
     getTimerState,
     start as engineStart,
@@ -31,6 +32,7 @@
     clearCompletionMessage,
   } from "../lib/timer.svelte";
   import { getSettings } from "../lib/settings.svelte";
+  import { timerFilter } from "../lib/timerFilter.svelte";
   import * as api from "../lib/api";
   import type {
     DailyReview,
@@ -42,9 +44,8 @@
   import { getDict } from "../lib/i18n.svelte";
   import ReviewTextarea from "../components/Timer/ReviewTextarea.svelte";
   import MottoCard from "../components/Timer/MottoCard.svelte";
-  import TimerRightSidebar, {
-    type TimerFilter,
-  } from "../components/Timer/TimerRightSidebar.svelte";
+  import TaskSelector from "../components/Timer/TaskSelector.svelte";
+  import TimerRightSidebar from "../components/Timer/TimerRightSidebar.svelte";
   import CompletionModal from "../components/Timer/CompletionModal.svelte";
 
   // 后端返回的 TaskView 会被拍平 → 字段直接挂在 task 上
@@ -64,12 +65,8 @@
   let error = $state<string | null>(null);
   let starting = $state<boolean>(false);
 
-  let filter = $state<TimerFilter>({
-    project: null,
-    tag: null,
-    priority: null,
-    date: null,
-  });
+  // 筛选器用模块级单例(v1 存 AppContext):切页再回来保留
+  const filter = timerFilter;
 
   // === Timer state(订阅全局引擎) ===
   const timer = $derived(getTimerState());
@@ -179,7 +176,7 @@
   async function refreshSidebarTasks() {
     try {
       const m = monthRange();
-      sidebarTasks = await api.listTasks({
+      const list = await api.listTasks({
         status: null, // 包含 active + completed(完成排在下方)
         month_start_ms: m.monthStartMs,
         month_end_ms: m.monthEndMs,
@@ -188,6 +185,17 @@
         priority: filter.priority,
         date: filter.date,
         limit: null,
+      });
+      // v1 TimerPage:130-138 —— 未完成在前 → 优先级 high>medium>low>none → 创建时间升序
+      const order: Record<string, number> = { high: 0, medium: 1, low: 2, none: 3 };
+      sidebarTasks = (list as TaskWithExtras[]).sort((a, b) => {
+        if (a.status !== b.status) return a.status === "active" ? -1 : 1;
+        const pa = order[a.priority ?? "none"] ?? 3;
+        const pb = order[b.priority ?? "none"] ?? 3;
+        if (pa !== pb) return pa - pb;
+        return (
+          new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime()
+        );
       });
     } catch (e) {
       console.warn("refresh tasks", e);
@@ -231,9 +239,12 @@
     }
   }
 
-  // 筛选器变化 → 重拉任务列表
+  // 筛选器变化 → 重拉任务列表(单例上的就地变更,需逐属性读取才能被追踪)
   $effect(() => {
-    void filter;
+    void filter.project;
+    void filter.tag;
+    void filter.priority;
+    void filter.date;
     refreshSidebarTasks();
   });
 
@@ -277,8 +288,8 @@
     }
   }
 
+  // v1 switchTimerMode:随时可切 —— 运行中点击即丢弃式切换(不写后端,会话不记录)
   function onSwitchMode(mode: "focus" | "short_break" | "long_break") {
-    if (timer.running) return;
     switchMode(mode);
   }
 
@@ -291,9 +302,8 @@
     }
   }
 
-  // 任务选择器变化 → 更新全局活动任务("" = 无特定任务)
-  function onPickTask(value: string) {
-    const task = value ? allActiveTasks.find((t) => t.id === value) ?? null : null;
+  // 任务选择器(v1 TaskSelector:计时中也不锁定,换任务不打断会话)
+  function onSelectTask(task: TaskWithExtras | null) {
     setActiveTask(task);
   }
 
@@ -364,17 +374,16 @@
   <title>{t.page.timer}</title>
 </svelte:head>
 
-<div class="layout">
+<div class="layout page-veil">
   <!-- 左列:计时器主体 -->
   <div class="main">
     <div class="main-inner">
-      <!-- 模式切换 -->
+      <!-- 模式切换(v1:运行中也可切,丢弃式切换) -->
       <div class="mode-tabs" role="tablist" aria-label={t.timer.modeTabsAria}>
         <button
           class="mode-tab"
           class:active={timer.mode === "focus"}
           onclick={() => onSwitchMode("focus")}
-          disabled={timer.running}
           role="tab"
           aria-selected={timer.mode === "focus"}
         >{t.mode.focus}</button>
@@ -382,7 +391,6 @@
           class="mode-tab"
           class:active={timer.mode === "short_break"}
           onclick={() => onSwitchMode("short_break")}
-          disabled={timer.running}
           role="tab"
           aria-selected={timer.mode === "short_break"}
         >{t.mode.shortBreak}</button>
@@ -390,31 +398,16 @@
           class="mode-tab"
           class:active={timer.mode === "long_break"}
           onclick={() => onSwitchMode("long_break")}
-          disabled={timer.running}
           role="tab"
           aria-selected={timer.mode === "long_break"}
         >{t.mode.longBreak}</button>
       </div>
 
       {#if isFocus}
-        <div class="task-picker">
-          <select
-            id="task-select"
-            value={selectedTask?.id ?? ""}
-            disabled={timer.running || timer.sessionId !== null}
-            onchange={(e) => onPickTask((e.currentTarget as HTMLSelectElement).value)}
-          >
-            <!-- v1:显式"无特定任务"选项,允许无任务专注;
-                 候选=全部 active 任务(优先级→创建时间),不受右侧栏筛选影响 -->
-            <option value="">{t.timer.noSpecificTask}</option>
-            {#each allActiveTasks as task (task.id)}
-              <option value={task.id}>{task.title}</option>
-            {/each}
-          </select>
-        </div>
+        <TaskSelector tasks={allActiveTasks} activeTask={selectedTask} onSelect={onSelectTask} />
       {/if}
 
-      <!-- 圆环 -->
+      <!-- 圆环(v1 CircleTimer:渐变描边 + 圆头 + 发光) -->
       <div class="ring-wrap">
         <svg
           class="ring"
@@ -423,6 +416,12 @@
           viewBox="0 0 {SIZE} {SIZE}"
           aria-hidden="true"
         >
+          <defs>
+            <linearGradient id="ring-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="var(--color-accent-400, #e29676)" />
+              <stop offset="100%" stop-color="var(--color-accent-600, #c9552d)" />
+            </linearGradient>
+          </defs>
           <circle
             class="ring-track"
             cx={SIZE / 2}
@@ -438,6 +437,8 @@
             r={RADIUS}
             stroke-width={STROKE}
             fill="none"
+            stroke-linecap="round"
+            stroke="url(#ring-gradient)"
             stroke-dasharray={CIRCUMFERENCE}
             stroke-dashoffset={offset}
             transform="rotate(-90 {SIZE / 2} {SIZE / 2})"
@@ -460,19 +461,33 @@
         <div class="error" role="alert">⚠ {error}</div>
       {/if}
 
+      <!-- 控制按钮(v1 TimerControls:运行中=暂停+跳过,暂停中=继续+放弃) -->
       <div class="controls">
         {#if timer.running}
-          <button class="btn primary" onclick={timerPause}>{t.timer.pause}</button>
-          <button class="btn danger" onclick={onAbandon}>{t.timer.abandon}</button>
+          <button class="btn pause" onclick={timerPause}>
+            <Pause size={18} fill="currentColor" />
+            {t.timer.pause}
+          </button>
+          <button class="btn secondary" onclick={onAbandon}>
+            <SkipForward size={16} />
+            {t.timer.skip}
+          </button>
         {:else if timer.sessionId}
-          <button class="btn primary" onclick={timerResume}>{t.timer.resume}</button>
-          <button class="btn danger" onclick={onAbandon}>{t.timer.abandon}</button>
+          <button class="btn primary" onclick={timerResume}>
+            <Play size={18} fill="currentColor" />
+            {t.timer.resume}
+          </button>
+          <button class="btn secondary" onclick={onAbandon}>
+            <Square size={16} />
+            {t.timer.abandon}
+          </button>
         {:else}
           <button
             class="btn primary"
             onclick={onStart}
             disabled={!canStart}
           >
+            <Play size={18} fill="currentColor" />
             {starting ? t.timer.starting : isFocus ? t.timer.start : t.timer.startBreak}
           </button>
         {/if}
@@ -507,8 +522,9 @@
     {projects}
     {tags}
     tasks={sidebarTasks}
+    activeTaskId={timer.activeTask?.id ?? null}
     {filter}
-    onFilterChange={(next) => (filter = { ...filter, ...next })}
+    onFilterChange={(next) => Object.assign(filter, next)}
     onStartTask={handleStartTask}
     onToggleSubtask={handleToggleSubtask}
   />
@@ -531,7 +547,7 @@
   @media (min-width: 1024px) {
     .layout {
       flex-direction: row;
-      height: calc(100vh - 4rem);
+      height: calc(100vh - var(--topbar-height, 50px));
     }
   }
 
@@ -602,7 +618,7 @@
     stroke: var(--timer-ring-track, var(--color-accent-100, #faebe2));
   }
   .ring-progress {
-    stroke: var(--timer-ring-progress, var(--color-accent-400, #e29676));
+    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--color-accent-400, #e29676) 45%, transparent));
     transition: stroke-dashoffset 1s linear;
   }
   .ring-center {
@@ -637,32 +653,14 @@
     color: var(--color-text-muted, #6b6864);
   }
 
-  .task-picker {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-  .task-picker select {
-    padding: 0.4rem 0.75rem;
-    border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
-    background: var(--color-surface, #fff);
-    color: var(--color-text, #1f1d1b);
-    min-width: 220px;
-  }
-  .task-picker select:focus {
-    outline: none;
-    border-color: var(--color-accent, #e74c3c);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent, #e74c3c) 12%, transparent);
-  }
-
   .controls {
     display: flex;
     gap: 0.75rem;
   }
   .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
     padding: 0.55rem 1.75rem;
     border: none;
     border-radius: var(--radius-md, 8px);
@@ -679,14 +677,23 @@
     background: var(--color-accent, #e74c3c);
     color: #fff;
   }
-  .btn.danger {
-    background: transparent;
+  /* v1 TimerControls:暂停为 warning 色主按钮 */
+  .btn.pause {
+    background: var(--color-warning, #d4a574);
+    color: #fff;
+  }
+  .btn.pause:hover {
+    background: color-mix(in srgb, var(--color-warning, #d4a574) 88%, #000);
+  }
+  /* v1 SECONDARY:白底描边次按钮 */
+  .btn.secondary {
+    background: var(--color-surface, #fff);
     color: var(--color-text-muted, #6b6864);
     border: 1px solid var(--color-border, #e5e2dd);
   }
-  .btn.danger:hover:not(:disabled) {
-    color: #dc2626;
-    border-color: #dc2626;
+  .btn.secondary:hover:not(:disabled) {
+    background: var(--color-bg, #fafaf7);
+    color: var(--color-text, #1f1d1b);
   }
 
   .today-stats {

@@ -152,6 +152,22 @@ export async function startWithTask(task: Task): Promise<void> {
   await start(task.id, task.project_id ?? null, task.pomodoro_duration ?? undefined);
 }
 
+/// 从任务清单页「开始」按钮进入(v1 TasksPage handleStartTask + TimerPage
+/// autostart effect):**不打断进行中的专注** —— running 时只切换活动任务并跳转;
+/// 空闲(含暂停遗留会话,统一停干净)才自动开新会话。
+export async function startWithTaskFromList(task: Task): Promise<void> {
+  _state.activeTask = task;
+  if (_state.running) {
+    return; // 会话继续,选择器已切到新任务
+  }
+  if (_state.sessionId !== null) {
+    await stop(false);
+  }
+  _state.mode = "focus";
+  snapIfIdle();
+  await start(task.id, task.project_id ?? null, task.pomodoro_duration ?? undefined);
+}
+
 export function pause(): void {
   if (!_state.running) return;
   _state.running = false;
