@@ -3,8 +3,12 @@
   //
   // 结构:
   //   - 标题 "YYYY年M月 · 复盘"
-  //   - 上方:当月各周周复盘只读卡片(按周一日期排序;编辑在手账每周区块内做)
+  //   - 上方:按自然周展示当月各周的周复盘(只读)
   //   - 下方:月度复盘可编辑 ReviewTextarea(upsert/delete by "YYYY-MM")
+  //
+  // 周序号由周一在当月的位置计算(与左侧手账区块一致),未写复盘的周显示为空 ——
+  // 不能按"已保存复盘的下标"编号,否则第一周未写时第二周的复盘会被错标成
+  // 第一周(v1 12bc45a 修复,v2 同步)。
   //
   // props.reviewVersion 由父组件(TasksPage)计数;手账内周复盘保存后会 +1,
   // 本组件监听变化重新拉取。
@@ -12,6 +16,7 @@
   import * as api from "../../lib/api";
   import type { MonthlyReview, WeeklyReview } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
+  import { getMondays, toISO, pad } from "../../lib/calendar";
   import ReviewTextarea from "../Timer/ReviewTextarea.svelte";
 
   const t = $derived(getDict());
@@ -26,10 +31,6 @@
 
   let weeklyReviews = $state<WeeklyReview[]>([]);
   let monthly = $state<MonthlyReview | null>(null);
-
-  function pad(n: number): string {
-    return String(n).padStart(2, "0");
-  }
 
   async function load(y: number, m: number) {
     try {
@@ -52,9 +53,13 @@
     void load(y, m);
   });
 
-  const sorted = $derived(
-    [...weeklyReviews].sort((a, b) => a.week_start.localeCompare(b.week_start)),
-  );
+  // 当月全部自然周(周一日期);周序号 = 周一在列表中的位置 + 1
+  const mondays = $derived(getMondays(year, month));
+  const weeklyMap = $derived.by(() => {
+    const m = new Map<string, string | null>();
+    for (const w of weeklyReviews) m.set(w.week_start, w.content);
+    return m;
+  });
 
   async function saveMonthly(text: string) {
     try {
@@ -87,23 +92,23 @@
 <aside class="panel" aria-label={fmt(t.monthPanel.title, { year, month })}>
   <h2 class="title">{fmt(t.monthPanel.title, { year, month })}</h2>
 
-  <!-- 各周周复盘(只读) -->
+  <!-- 各周周复盘(只读,未写的周显示为空) -->
   <div class="weekly-block">
     <div class="label">{t.monthPanel.weeklyReadonly}</div>
-    {#if sorted.length === 0}
-      <div class="empty">{t.monthPanel.noWeekly}</div>
-    {:else}
-      <div class="week-list">
-        {#each sorted as w, i (w.week_start)}
-          <div class="week-card">
-            <div class="week-head">{fmt(t.monthPanel.weekRange, { n: i + 1, date: w.week_start })}</div>
-            <div class="week-content">
-              {w.content?.trim() ? w.content : t.monthPanel.empty}
-            </div>
+    <div class="week-list">
+      {#each mondays as monday, i (toISO(monday))}
+        {@const weekStartISO = toISO(monday)}
+        {@const content = weeklyMap.get(weekStartISO)}
+        <div class="week-card">
+          <div class="week-head">
+            {fmt(t.monthPanel.weekRange, { n: i + 1, date: weekStartISO })}
           </div>
-        {/each}
-      </div>
-    {/if}
+          <div class="week-content" class:dimmed={!content?.trim()}>
+            {content?.trim() ? content : t.monthPanel.empty}
+          </div>
+        </div>
+      {/each}
+    </div>
   </div>
 
   <!-- 月度复盘(可编辑) -->
@@ -148,8 +153,8 @@
     color: var(--color-text-muted, #6b6864);
     margin-bottom: 0.5rem;
   }
-  .empty {
-    font-size: 0.75rem;
+  /* 未写复盘的周:内容置灰(v1 text-gray-300) */
+  .week-content.dimmed {
     color: color-mix(in srgb, var(--color-text-muted, #6b6864) 55%, transparent);
   }
 

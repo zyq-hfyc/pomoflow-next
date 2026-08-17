@@ -407,7 +407,6 @@ export const en: Dict = {
   monthPanel: {
     title: '{month}/{year} · Review',
     weeklyReadonly: 'Weekly reviews (read-only · edited in each week block)',
-    noWeekly: 'No weekly reviews this month',
     weekRange: 'Week {n} (from {date})',
     empty: '(empty)',
     monthlyReview: '📋 Monthly review',

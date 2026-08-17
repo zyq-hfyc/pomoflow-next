@@ -406,7 +406,6 @@ export const zh = {
   monthPanel: {
     title: '{year}年{month}月 · 复盘',
     weeklyReadonly: '周复盘（只读 · 在手账模式每周区块内编辑）',
-    noWeekly: '本月暂无周复盘',
     weekRange: '第 {n} 周（周一起 {date}）',
     empty: '（空）',
     monthlyReview: '📋 月度复盘',
