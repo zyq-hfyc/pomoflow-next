@@ -60,6 +60,10 @@ pub struct TaskQuery {
     /// 番茄钟页右侧任务清单限定"当月任务"。month_end 单独传,跟 `date` 互不冲突。
     pub month_start_ms: Option<i64>,
     pub month_end_ms: Option<i64>,
+    /// 请求方本地时区偏移(分钟,东正西负;东八区 +480)。`date` 过滤按此取
+    /// 本地日界 —— due_date 存 UTC,纯日期任务(本地午夜转 UTC)在东八区会
+    /// 落在 UTC 前一天,按 UTC 日界过滤会错一天(v1 存本地日期字符串无此问题)。
+    pub tz_offset_min: Option<i32>,
     /// 按重复模板过滤(重复编排层用):列出该模板的全部实例。
     pub repeat_parent: Option<Id>,
 }
