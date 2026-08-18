@@ -549,7 +549,7 @@
   @media (min-width: 1024px) {
     .layout {
       flex-direction: row;
-      height: calc(100vh - var(--topbar-height, 50px));
+      height: calc(100vh - var(--topbar-height, 43px));
     }
   }
 

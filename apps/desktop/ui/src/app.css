@@ -144,8 +144,8 @@ html[data-theme="teal"] {
 /* 中性色 / 语义色 / 优先级 / 尺度(所有主题共享) */
 :root {
   /* 顶栏高度:App.svelte .topbar 与各页面的 calc(100vh - …) 共用同一口径,
-     改高度只动这一处 */
-  --topbar-height: 64px;
+     改高度只动这一处(43px = 64px 的 2/3,紧凑窗口基准) */
+  --topbar-height: 43px;
 
   --color-neutral-0: #ffffff;
   --color-neutral-50: #fbfaf8;

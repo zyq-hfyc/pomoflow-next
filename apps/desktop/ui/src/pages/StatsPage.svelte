@@ -258,7 +258,7 @@
 <style>
   /* 蒙层外层:至少铺满视口剩余高度(v1 min-h-[calc(100vh-4rem)]) */
   .stats-veil {
-    min-height: calc(100vh - var(--topbar-height, 50px));
+    min-height: calc(100vh - var(--topbar-height, 43px));
   }
   .page {
     padding: 4rem 1rem 1.25rem; /* v1 px-4 page-pt pb-5 */

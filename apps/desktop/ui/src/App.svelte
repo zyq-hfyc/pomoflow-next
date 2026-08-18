@@ -146,7 +146,7 @@
   .topbar {
     display: flex;
     align-items: center;
-    min-height: var(--topbar-height, 64px);
+    min-height: var(--topbar-height, 43px);
     padding: 0 1.5rem;
     border-bottom: 1px solid var(--color-border);
     background: color-mix(in srgb, var(--color-surface) 85%, transparent);

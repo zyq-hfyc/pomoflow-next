@@ -141,7 +141,7 @@
   .help-page {
     display: flex;
     flex-direction: row;
-    height: calc(100vh - var(--topbar-height, 64px));
+    height: calc(100vh - var(--topbar-height, 43px));
   }
 
   .menu {
