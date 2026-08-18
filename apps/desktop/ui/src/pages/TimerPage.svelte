@@ -363,7 +363,7 @@
   }
 
   // === 圆环几何 ===
-  const SIZE = 300; /* v1 直径 300px */
+  const SIZE = 262; /* v1 300px × 14/16 紧凑比例 */
   const STROKE = 8; /* v1 描边 8px */
   const RADIUS = (SIZE - STROKE) / 2;
   const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -553,7 +553,9 @@
     }
   }
 
-  /* 左列 */
+  /* 左列:内容放得下时垂直居中(margin auto),超高时可滚动 ——
+     不能用 justify-content:center + overflow:hidden,内容一超高就会
+     上下两头裁掉(tab 顶进顶栏、名言卡超出窗口底) */
   .main {
     flex: 1 1 auto;
     display: flex;
@@ -562,7 +564,8 @@
     justify-content: flex-start;
     padding: 2rem 1rem;
     position: relative;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
   /* v1 TimerPage:207 —— w-96 h-96 白色 40% 大光晕 blur-3xl,位于圆环后方 */
   .halo {
@@ -579,19 +582,22 @@
   }
   @media (min-width: 1024px) {
     .main {
-      padding: 0 1rem;
-      justify-content: center;
+      /* 顶部/底部留呼吸,防超高时首元素贴顶栏、末元素贴窗口底 */
+      padding: 0.75rem 1rem 0.75rem;
     }
   }
   .main-inner {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2rem; /* v1 gap-8 */
+    gap: 1.25rem; /* 紧凑窗口基准(14px 字号下内容高 ≈ 740px,800 高窗口可完整放下) */
     width: 100%;
     max-width: 720px;
     position: relative;
     z-index: 1;
+    /* margin auto:有富余时垂直居中(替代 justify-content:center),
+       超高时自动退化为顶部对齐 + 滚动,不再裁切 */
+    margin: auto 0;
   }
 
   /* v1 TimerPage:211 —— 浅灰毛玻璃槽 + 白色浮起激活片(accent 字) */
@@ -630,8 +636,8 @@
 
   .ring-wrap {
     position: relative;
-    width: 300px; /* v1 300/描边 8 */
-    height: 300px;
+    width: 262px; /* v1 300px 的 14/16 紧凑比例 */
+    height: 262px;
   }
   .ring-track {
     stroke: var(--timer-ring-track, var(--color-accent-100, #faebe2));
@@ -684,7 +690,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    height: 48px;
+    height: 42px; /* v1 h-12 的 14/16 紧凑比例 */
     padding: 0 2rem;
     border: none;
     border-radius: var(--radius-xl, 16px);
@@ -775,7 +781,7 @@
     background: var(--color-surface, #fff);
     border: 1px solid var(--color-border, #e5e2dd);
     border-radius: var(--radius-2xl, 24px);
-    padding: 1.25rem;
+    padding: 0.875rem;
     box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.06));
   }
   .review-title {
