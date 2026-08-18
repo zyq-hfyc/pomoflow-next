@@ -214,8 +214,10 @@ body {
   height: 100%;
   color: var(--color-text);
   font-family: var(--font-family-sans);
-  /* 根字号保持浏览器默认 16px(v1 基准)——此前曾设 14px,导致全站
-     rem 值(字号/间距/卡片宽度)相对 v1 系统性缩水 12.5% */
+  font-size: 14px;
+  /* 根字号 14px(紧凑基准):桌面窗口(默认 1200×800)比 v1 运行的浏览器
+     视口小,16px 基准下文字显大 —— 14px 让全站(v1 同款 rem 值)等比缩小
+     12.5%,比例关系与 v1 完全一致,只是整体更紧凑 */
   line-height: 1.5;
   letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
