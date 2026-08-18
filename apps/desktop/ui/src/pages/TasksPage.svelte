@@ -462,7 +462,7 @@
         title: task.title,
         project: projects.find((p) => p.id === task.project_id)?.name ?? "",
         priority: t.priority[task.priority ?? "none"] ?? task.priority ?? "",
-        dueDate: task.due_date ? task.due_date.slice(0, 10) : "",
+        dueDate: datePart(task.due_date),
         // v1 只导 estimated(数字单元格)
         estimated: task.estimated_pomodoros ?? 0,
         tags: (task.tags ?? []).map((x) => x.name).join(", "),

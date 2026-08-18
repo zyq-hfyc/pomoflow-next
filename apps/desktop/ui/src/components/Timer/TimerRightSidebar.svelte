@@ -15,6 +15,7 @@
   import { ChevronDown, ChevronRight, Play } from "lucide-svelte";
   import type { Project, SubTask, Tag, Task } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
+  import { datePart } from "../../lib/dueDate";
   import type {
     TimerFilter,
     Priority,
@@ -249,7 +250,7 @@
                 <span class="meta-item">{projName}</span>
               {/if}
               {#if task.due_date}
-                <span class="meta-item">{task.due_date.slice(0, 10)}</span>
+                <span class="meta-item">{datePart(task.due_date)}</span>
               {/if}
             </div>
           </div>

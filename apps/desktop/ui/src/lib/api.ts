@@ -163,6 +163,8 @@ export interface TaskQuery {
   date?: "today" | "tomorrow" | "this_week" | null;
   /** 番茄钟页右侧任务清单限定"当月任务" */
   month_start_ms?: number | null;
+  /** 请求方本地时区偏移(分钟,东正西负):date 过滤按本地日界展开 */
+  tz_offset_min?: number | null;
   month_end_ms?: number | null;
 }
 

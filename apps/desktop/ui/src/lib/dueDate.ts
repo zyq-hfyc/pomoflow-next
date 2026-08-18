@@ -18,9 +18,14 @@ export function hasTimePart(dueDate: string | null | undefined): boolean {
   return !!dueDate && dueDate.includes("T");
 }
 
-/** 取日期部分 "YYYY-MM-DD"（兼容纯日期与 datetime 字符串）。 */
+/** 取日期部分 "YYYY-MM-DD"。
+ *  纯日期串原样返回;UTC RFC3339(存储格式)先转本地时区再取日期 ——
+ *  直接截 UTC 前 10 位会把东八区本地午夜的任务错归前一天
+ *  (v1 存本地日期字符串无此问题,所有按日过滤/分组必须走这里)。 */
 export function datePart(dueDate: string | null | undefined): string {
-  return (dueDate || "").slice(0, 10);
+  if (!dueDate) return "";
+  if (!dueDate.includes("T")) return dueDate.slice(0, 10);
+  return toLocal(dueDate).slice(0, 10);
 }
 
 /** 今天的 "YYYY-MM-DD"。 */

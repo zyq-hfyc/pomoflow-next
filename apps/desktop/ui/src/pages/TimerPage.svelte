@@ -184,6 +184,7 @@
         tag_id: filter.tag,
         priority: filter.priority,
         date: filter.date,
+        tz_offset_min: -new Date().getTimezoneOffset(),
         limit: null,
       });
       // v1 TimerPage:130-138 —— 未完成在前 → 优先级 high>medium>low>none → 创建时间升序
