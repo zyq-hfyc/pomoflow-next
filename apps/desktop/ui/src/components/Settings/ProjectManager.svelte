@@ -17,7 +17,7 @@
   import * as api from "../../lib/api";
   import type { Project, ReorderItem } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
-  import { PRESET_COLORS, DEFAULT_PROJECT_COLOR } from "../../lib/presetColors";
+  import { DEFAULT_PROJECT_COLOR } from "../../lib/presetColors";
 
   const t = $derived(getDict());
 
@@ -457,6 +457,8 @@
       {@const isDraggable = !isEditing && !isAddingChild && node.depth > 0}
       <div class="row-wrap" style="padding-left: {node.depth * 24}px">
         {#if isEditing}
+          <!-- v1 ProjectManager:401-417 —— 编辑态是一条裸 input,Enter/blur 保存、
+               Esc 取消,不改颜色(色板属 v2 增强,按 v1 复刻移除) -->
           <div class="edit-box">
             <input
               type="text"
@@ -468,33 +470,12 @@
                   editName = "";
                 }
               }}
+              onblur={() => {
+                if (editingId === node.id) void handleUpdate();
+              }}
               placeholder={node.name}
               class="text-input"
             />
-            <div class="color-row">
-              {#each PRESET_COLORS as c (c)}
-                <button
-                  type="button"
-                  class="swatch"
-                  class:active={editColor === c}
-                  style="background-color: {c}"
-                  aria-label={fmt(t.settings.tag.colorAria, { color: c })}
-                  onclick={() => (editColor = c)}
-                ></button>
-              {/each}
-            </div>
-            <div class="edit-actions">
-              <button
-                type="button"
-                class="link-btn"
-                onclick={() => {
-                  editingId = null;
-                  editName = "";
-                }}>{t.settings.repeatCustom.cancel}</button>
-              <button type="button" class="save-btn" onclick={handleUpdate}>
-                {t.settings.notification.save}
-              </button>
-            </div>
           </div>
         {:else}
           <div
@@ -755,11 +736,18 @@
     text-overflow: ellipsis;
   }
 
+  /* v1 ProjectManager:453 —— 操作按钮默认透明,行 hover 时浮现 */
   .actions {
     display: inline-flex;
     align-items: center;
     gap: 2px;
     flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .row:hover .actions,
+  .row:focus-within .actions {
+    opacity: 1;
   }
   .icon-btn {
     display: inline-flex;

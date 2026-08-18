@@ -1,14 +1,13 @@
 <script lang="ts">
   // 手写 SVG 柱状图(专注趋势) —— 代替 v1 的 Recharts BarChart,零依赖。
   //
-  // 规格:
-  // - 数据 RangeTrendPoint[](key:日/周一日期/YYYY-MM);柱高按 niceMax 归一
-  // - 有数据的柱填 var(--color-accent),0 值柱用 var(--color-border) 中性色
-  // - max=0(全区间无数据)时所有柱画最小高度 2px
-  // - day 粒度给"今天"的柱描边高亮(v1 行为;week/month 桶不高亮)
-  // - x 轴标签:v1 keyLabel —— day/week → "M/D",month → 月份数字;数量多时抽样 + 兜底末桶
-  // - hover:命中槽(整列高透明热区)→ 绝对定位 tooltip(key + N 分钟)
-  // - SVG viewBox 600×240,width:100% 等比自适应容器宽度
+  // 视觉规格对齐 v1 Recharts(ResponsiveContainer height=234):
+  // - 高度固定 234px、宽度满容器(bind:clientWidth 动态坐标系,文字不拉伸)
+  // - 柱仅顶部圆角(radius [4,4,0,0]),maxBarSize 32px
+  // - y 轴 5 档刻度(0/25/50/75/100%)+ 左轴线 + 刻度短线 + 底部轴线
+  // - 0 值柱高度 0 不可见(同 v1);轴字 11px neutral-400
+  // - hover:整列热区 → 白底 tooltip(key + N 分钟);柱本体无 opacity 变化
+  // - day 粒度给"今天"的柱 accent-700 描边高亮(v1 行为)
   // - 空数据 → 空态文案
 
   import type { RangeTrendPoint, StatsGroup } from "../../lib/api";
@@ -25,20 +24,25 @@
 
   let { data, group, emptyText }: Props = $props();
 
-  const VB_W = 600;
-  const VB_H = 240;
-  const MARGIN = { top: 14, right: 8, bottom: 26, left: 42 };
-  const PLOT_W = VB_W - MARGIN.left - MARGIN.right;
-  const PLOT_H = VB_H - MARGIN.top - MARGIN.bottom;
-  /** 柱最小高度(px,viewBox 单位);0 值柱与全零区间都至少画到这个高度 */
-  const MIN_BAR_H = 2;
+  /** v1 ResponsiveContainer height={234} —— 图表高度固定,不随容器宽缩放 */
+  const VB_H = 234;
+  const MARGIN = { top: 8, right: 8, bottom: 24, left: 44 };
   /** x 轴最多显示的标签数(超出按步长抽样) */
   const MAX_LABELS = 10;
-  const MAX_BAR_W = 34;
+  /** v1 maxBarSize=32(实际像素) */
+  const MAX_BAR_W = 32;
+  /** 柱顶圆角(v1 radius [4,4,0,0]) */
+  const BAR_R = 4;
+
+  /** 容器实测宽(bind:clientWidth);0 = 首帧未量到 */
+  let cw = $state(0);
+  const W = $derived(cw > 0 ? cw : 600);
+  const PLOT_W = $derived(W - MARGIN.left - MARGIN.right);
+  const PLOT_H = VB_H - MARGIN.top - MARGIN.bottom;
 
   let hovered = $state<number | null>(null);
 
-  /** 向上取整到 1/2/5×10^k 的"好看"刻度(y 轴归一基准,避免 37/456 这种碎刻度) */
+  /** 向上取整到 1/2/5×10^k 的"好看"刻度(y 轴归一基准) */
   function niceCeil(v: number): number {
     if (v <= 0) return 0;
     const base = Math.pow(10, Math.floor(Math.log10(v)));
@@ -47,9 +51,10 @@
     return niceF * base;
   }
 
-  /** 轴标签:v1 keyLabel 原样 —— day/week → "M/D",month → 月份数字("8") */
-  function axisLabel(key: string, g: StatsGroup): string {
-    return keyLabel(key, g);
+  /** 仅顶部圆角的矩形 path(v1 radius=[4,4,0,0],平底贴轴线) */
+  function topRoundedRect(x: number, y: number, w: number, h: number, r: number): string {
+    const rr = Math.min(r, w / 2, Math.max(0, h));
+    return `M ${x} ${y + h} L ${x} ${y + rr} Q ${x} ${y} ${x + rr} ${y} L ${x + w - rr} ${y} Q ${x + w} ${y} ${x + w} ${y + rr} L ${x + w} ${y + h} Z`;
   }
 
   interface BarModel {
@@ -60,6 +65,7 @@
     y: number;
     w: number;
     h: number;
+    path: string;
     hitX: number;
     hitW: number;
     label: string;
@@ -74,40 +80,37 @@
     const slot = n > 0 ? PLOT_W / n : PLOT_W;
     const barW = Math.min(slot * 0.62, MAX_BAR_W);
     const step = Math.max(1, Math.ceil(n / MAX_LABELS));
-    // v1:仅 day 粒度高亮"今天"(week/month 桶不高亮)。
-    // today key 用本地日期(v1 用 toISOString 的 UTC 日期,东八区早 8 点前会错标昨天 —— 顺带修正)
     const currentKey = group === "day" ? currentBucketKey("day") : null;
 
     const bars: BarModel[] = data.map((t, i) => {
-      const h =
-        t.minutes > 0 && niceMax > 0
-          ? Math.max(MIN_BAR_H, (t.minutes / niceMax) * PLOT_H)
-          : MIN_BAR_H;
+      // v1:0 值柱高度 0,画面上不可见
+      const h = t.minutes > 0 && niceMax > 0 ? (t.minutes / niceMax) * PLOT_H : 0;
       const x = MARGIN.left + slot * i + (slot - barW) / 2;
+      const y = MARGIN.top + PLOT_H - h;
       return {
         i,
         key: t.key,
         minutes: t.minutes,
         x,
-        y: MARGIN.top + PLOT_H - h,
+        y,
         w: barW,
         h,
+        path: topRoundedRect(x, y, barW, h, BAR_R),
         hitX: MARGIN.left + slot * i,
         hitW: slot,
-        label: axisLabel(t.key, group),
+        label: keyLabel(t.key, group),
         showLabel: i % step === 0 || i === n - 1,
         isCurrent: currentKey !== null && t.key === currentKey,
       };
     });
 
-    // 水平网格线 + y 刻度(只标 0 / 半值 / 满值,避免拥挤)
-    const gridlines = [0, 0.25, 0.5, 0.75, 1].map((f) => ({
+    // y 轴 5 档刻度(Recharts 默认)+ 轴线/刻度短线坐标
+    const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => ({
       y: MARGIN.top + PLOT_H - f * PLOT_H,
       value: Math.round(niceMax * f),
-      labeled: f === 0 || f === 0.5 || f === 1,
     }));
 
-    return { bars, gridlines };
+    return { bars, ticks, baseline: MARGIN.top + PLOT_H };
   });
 
   const hoveredBar = $derived(hovered !== null ? model.bars[hovered] : null);
@@ -116,33 +119,36 @@
 {#if data.length === 0}
   <div class="empty">{emptyText ?? t.stats.noData}</div>
 {:else}
-  <div class="chart-wrap">
+  <div class="chart-wrap" bind:clientWidth={cw}>
     <svg
-      viewBox="0 0 {VB_W} {VB_H}"
+      viewBox="0 0 {W} {VB_H}"
+      width="{W}"
+      height={VB_H}
       role="img"
       aria-label={t.stats.trendChartAria}
       onpointerleave={() => (hovered = null)}
     >
-      {#each model.gridlines as g}
-        <line class="grid" x1={MARGIN.left} x2={VB_W - MARGIN.right} y1={g.y} y2={g.y} />
-        {#if g.labeled}
-          <text class="tick" text-anchor="end" x={MARGIN.left - 6} y={g.y + 3}>{g.value}</text>
-        {/if}
+      <!-- 网格(水平虚线,仅内部 4 条;0 线由轴线承担) -->
+      {#each model.ticks.slice(1, -1) as g}
+        <line class="grid" x1={MARGIN.left} x2={W - MARGIN.right} y1={g.y} y2={g.y} />
       {/each}
 
+      <!-- y 轴:竖轴线 + 5 档刻度短线与标签(Recharts 默认) -->
+      <line class="axis" x1={MARGIN.left} x2={MARGIN.left} y1={MARGIN.top} y2={model.baseline} />
+      {#each model.ticks as g}
+        <line class="tick-line" x1={MARGIN.left - 4} x2={MARGIN.left} y1={g.y} y2={g.y} />
+        <text class="tick" text-anchor="end" x={MARGIN.left - 6} y={g.y + 3.5}>{g.value}</text>
+      {/each}
+
+      <!-- 底部 x 轴线 -->
+      <line class="axis" x1={MARGIN.left} x2={W - MARGIN.right} y1={model.baseline} y2={model.baseline} />
+
       {#each model.bars as b (b.key)}
-        <rect
-          class="bar"
-          class:zero={b.minutes === 0}
-          class:current={b.isCurrent}
-          x={b.x}
-          y={b.y}
-          width={b.w}
-          height={b.h}
-          rx="3"
-        />
+        {#if b.h > 0}
+          <path class="bar" class:current={b.isCurrent} d={b.path} />
+        {/if}
         {#if b.showLabel}
-          <text class="tick" text-anchor="middle" x={b.x + b.w / 2} y={VB_H - 8}>
+          <text class="tick" text-anchor="middle" x={b.x + b.w / 2} y={VB_H - 6}>
             {b.label}
           </text>
         {/if}
@@ -163,7 +169,7 @@
     {#if hoveredBar}
       <div
         class="tooltip"
-        style:left={Math.min(88, Math.max(12, ((hoveredBar.x + hoveredBar.w / 2) / VB_W) * 100)) + "%"}
+        style:left={Math.min(88, Math.max(12, ((hoveredBar.x + hoveredBar.w / 2) / W) * 100)) + "%"}
         style:top={(hoveredBar.y / VB_H) * 100 + "%"}
       >
         {hoveredBar.label} · {hoveredBar.minutes} {t.stats.unitMin}
@@ -179,34 +185,32 @@
   svg {
     display: block;
     width: 100%;
-    height: auto;
+    height: 234px; /* v1 固定高 */
   }
 
   .grid {
-    stroke: var(--color-border, #e5e2dd);
+    stroke: var(--color-neutral-200, #e8e5e0);
     stroke-dasharray: 3 3;
   }
+  .axis {
+    stroke: var(--color-neutral-200, #e8e5e0);
+  }
+  .tick-line {
+    stroke: var(--color-neutral-200, #e8e5e0);
+  }
   .tick {
-    font-size: 10px;
-    fill: var(--color-text-muted, #6b6864);
+    font-size: 11px; /* v1 tick fontSize 11 */
+    fill: var(--color-neutral-400, #a8a298);
     font-variant-numeric: tabular-nums;
   }
 
   .bar {
-    fill: var(--color-accent, #e74c3c);
-    transition: opacity 0.1s;
+    fill: var(--color-accent-500, #d17b5c);
   }
-  /* 0 值柱:中性色,只在基线上露出最小高度 */
-  .bar.zero {
-    fill: var(--color-border, #e5e2dd);
-  }
-  /* 当前桶(今天/本周/本月):描边加深 */
+  /* 当前桶(今天):v1 accent-700 描边 1.5 */
   .bar.current {
-    stroke: var(--color-accent-hover, #c0392b);
+    stroke: var(--color-accent-700, #9a523b);
     stroke-width: 1.5;
-  }
-  .bar:hover {
-    opacity: 0.82;
   }
 
   .hit {
@@ -214,19 +218,21 @@
     pointer-events: all;
   }
 
+  /* v1 Recharts 默认 tooltip:白底 + 浅灰边 + 12px */
   .tooltip {
     position: absolute;
     transform: translate(-50%, calc(-100% - 6px));
-    background: var(--color-text, #1f1d1b);
-    color: var(--color-surface, #fff);
+    background: var(--color-surface, #fff);
+    color: var(--color-text, #1f1d1b);
+    border: 1px solid var(--color-neutral-200, #e8e5e0);
     padding: 0.25rem 0.5rem;
-    border-radius: 6px;
+    border-radius: 4px;
     font-size: 0.75rem;
     line-height: 1.4;
     white-space: nowrap;
     pointer-events: none;
     font-variant-numeric: tabular-nums;
-    box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.08));
+    box-shadow: var(--shadow-xs, 0 1px 2px rgba(89, 47, 34, 0.04));
     z-index: 2;
   }
 
