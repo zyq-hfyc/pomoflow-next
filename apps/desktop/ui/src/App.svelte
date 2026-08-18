@@ -94,7 +94,7 @@
     <!-- v1:logo(品牌番茄 SVG)+ 字标居左,导航紧跟其后靠左 -->
     <div class="brand">
       <span class="logo" aria-hidden="true"><TomatoIcon size={26} /></span>
-      <h1>PomoFlow</h1>
+      <h1 class="brand-name">PomoFlow</h1>
     </div>
     <nav class="nav" aria-label={t.nav.mainNav}>
       {#each ROUTES as r (r.path)}
@@ -107,7 +107,7 @@
           aria-current={route === r.path ? "page" : undefined}
         >
           <Icon size={18} />
-          {t.nav[r.labelKey]}
+          <span class="nav-label">{t.nav[r.labelKey]}</span>
         </button>
       {/each}
     </nav>
@@ -210,6 +210,21 @@
     height: 2px;
     border-radius: 1px;
     background: var(--color-accent-500);
+  }
+
+  /* v1 Navbar 响应式:菜单文字 lg(≥1024) 才显示,品牌字 sm(≥640) 才显示 */
+  @media (max-width: 1023px) {
+    .nav-label {
+      display: none;
+    }
+    .nav-item {
+      padding: 0 0.75rem;
+    }
+  }
+  @media (max-width: 639px) {
+    .brand-name {
+      display: none;
+    }
   }
 
   .outlet {

@@ -363,8 +363,8 @@
   }
 
   // === 圆环几何 ===
-  const SIZE = 280;
-  const STROKE = 12;
+  const SIZE = 300; /* v1 直径 300px */
+  const STROKE = 8; /* v1 描边 8px */
   const RADIUS = (SIZE - STROKE) / 2;
   const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
   const offset = $derived(CIRCUMFERENCE * (1 - progress));
@@ -377,6 +377,8 @@
 <div class="layout page-veil">
   <!-- 左列:计时器主体 -->
   <div class="main">
+    <!-- v1 TimerPage:207 —— 圆环背后的柔和白光晕(层次感) -->
+    <div class="halo" aria-hidden="true"></div>
     <div class="main-inner">
       <!-- 模式切换(v1:运行中也可切,丢弃式切换) -->
       <div class="mode-tabs" role="tablist" aria-label={t.timer.modeTabsAria}>
@@ -562,6 +564,19 @@
     position: relative;
     overflow: hidden;
   }
+  /* v1 TimerPage:207 —— w-96 h-96 白色 40% 大光晕 blur-3xl,位于圆环后方 */
+  .halo {
+    position: absolute;
+    top: 25%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 384px;
+    height: 384px;
+    border-radius: 50%;
+    background: color-mix(in srgb, #fff 40%, transparent);
+    filter: blur(48px);
+    pointer-events: none;
+  }
   @media (min-width: 1024px) {
     .main {
       padding: 0 1rem;
@@ -572,37 +587,41 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 1.25rem;
+    gap: 2rem; /* v1 gap-8 */
     width: 100%;
     max-width: 720px;
     position: relative;
     z-index: 1;
   }
 
+  /* v1 TimerPage:211 —— 浅灰毛玻璃槽 + 白色浮起激活片(accent 字) */
   .mode-tabs {
     display: flex;
     gap: 0.25rem;
-    background: var(--color-surface, #fff);
+    background: color-mix(in srgb, var(--color-neutral-100, #f5f3f0) 80%, transparent);
+    backdrop-filter: blur(4px);
     padding: 0.25rem;
     border-radius: var(--radius-xl, 16px);
-    box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.06));
+    box-shadow: var(--shadow-xs, 0 1px 2px rgba(89, 47, 34, 0.04));
   }
   .mode-tab {
-    padding: 0.4rem 1.1rem;
+    padding: 0.375rem 1.25rem; /* v1 px-5 py-1.5 */
     border: none;
     background: transparent;
-    color: var(--color-text-muted, #6b6864);
+    color: var(--color-neutral-500, #78716c);
     border-radius: var(--radius-lg, 12px);
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 0.875rem;
     transition: background 0.15s, color 0.15s;
   }
   .mode-tab:hover:not(:disabled) {
-    color: var(--color-text, #1f1d1b);
+    color: var(--color-neutral-800, #26221e);
   }
   .mode-tab.active {
-    background: var(--color-accent, #e74c3c);
-    color: #fff;
+    background: var(--color-surface, #fff);
+    color: var(--color-accent-600, #b86649);
+    font-weight: 600;
+    box-shadow: var(--shadow-sm, 0 2px 4px rgba(89, 47, 34, 0.04));
   }
   .mode-tab:disabled {
     cursor: not-allowed;
@@ -611,14 +630,14 @@
 
   .ring-wrap {
     position: relative;
-    width: 280px;
-    height: 280px;
+    width: 300px; /* v1 300/描边 8 */
+    height: 300px;
   }
   .ring-track {
     stroke: var(--timer-ring-track, var(--color-accent-100, #faebe2));
   }
   .ring-progress {
-    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--color-accent-400, #e29676) 45%, transparent));
+    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-accent-500, #d17b5c) 30%, transparent));
     transition: stroke-dashoffset 1s linear;
   }
   .ring-center {
@@ -630,15 +649,17 @@
     justify-content: center;
     pointer-events: none;
   }
+  /* v1 CircleTimer:68 —— text-6xl(60px) bold tracking-tight + 数字字体 */
   .time {
-    font-size: 3.5rem;
-    font-weight: 600;
-    color: var(--color-text, #1f1d1b);
+    font-size: 3.75rem;
+    font-weight: 700;
+    color: var(--color-neutral-800, #26221e);
+    font-family: var(--font-family-num);
     font-variant-numeric: tabular-nums;
-    letter-spacing: 0.02em;
+    letter-spacing: -0.025em;
   }
   .mode-row {
-    margin-top: 0.25rem;
+    margin-top: 0.5rem; /* v1 mt-2 */
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -649,51 +670,73 @@
     color: var(--color-text-muted, #6b6864);
   }
   .pomo-count {
-    font-size: 0.9rem;
+    font-size: 0.875rem; /* v1 text-sm */
     color: var(--color-text-muted, #6b6864);
   }
 
   .controls {
     display: flex;
-    gap: 0.75rem;
+    gap: 1rem; /* v1 gap-4 */
   }
+  /* v1 TimerControls —— h-12(48px)/rounded-xl(16px)/text-base semibold/
+     shadow-md → hover shadow-lg + 上浮 2px;主钮 hover-600 active-700 */
   .btn {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.55rem 1.75rem;
+    height: 48px;
+    padding: 0 2rem;
     border: none;
     border-radius: var(--radius-xl, 16px);
-    font-size: 0.95rem;
-    font-weight: 500;
+    font-size: 1rem;
+    font-weight: 600;
     cursor: pointer;
-    transition: opacity 0.15s, background 0.15s;
+    box-shadow: var(--shadow-md, 0 4px 12px rgba(89, 47, 34, 0.06));
+    transition: background 0.15s, box-shadow 0.15s, transform 0.15s;
+  }
+  .btn:hover:not(:disabled) {
+    box-shadow: var(--shadow-lg, 0 12px 24px rgba(89, 47, 34, 0.08));
+    transform: translateY(-2px);
+  }
+  .btn:active:not(:disabled) {
+    transform: none;
   }
   .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    transform: none;
   }
   .btn.primary {
-    background: var(--color-accent, #e74c3c);
+    background: var(--color-accent-500, #d17b5c);
     color: #fff;
+  }
+  .btn.primary:hover:not(:disabled) {
+    background: var(--color-accent-600, #b86649);
+  }
+  .btn.primary:active:not(:disabled) {
+    background: var(--color-accent-700, #9a523b);
   }
   /* v1 TimerControls:暂停为 warning 色主按钮 */
   .btn.pause {
     background: var(--color-warning, #d4a574);
     color: #fff;
   }
-  .btn.pause:hover {
-    background: color-mix(in srgb, var(--color-warning, #d4a574) 88%, #000);
+  .btn.pause:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-warning, #d4a574) 92%, #000);
   }
-  /* v1 SECONDARY:白底描边次按钮 */
+  /* v1 SECONDARY:白底 neutral-300 描边、medium 字重、内边距收窄(px-6) */
   .btn.secondary {
     background: var(--color-surface, #fff);
-    color: var(--color-text-muted, #6b6864);
-    border: 1px solid var(--color-border, #e5e2dd);
+    color: var(--color-neutral-600, #57534e);
+    border: 1px solid var(--color-neutral-300, #d2ccc2);
+    font-weight: 500;
+    padding: 0 1.5rem;
+    box-shadow: var(--shadow-xs, 0 1px 2px rgba(89, 47, 34, 0.04));
   }
   .btn.secondary:hover:not(:disabled) {
-    background: var(--color-bg, #fafaf7);
-    color: var(--color-text, #1f1d1b);
+    background: var(--color-neutral-50, #fbfaf8);
+    border-color: var(--color-neutral-400, #a8a298);
+    color: var(--color-neutral-600, #57534e);
   }
 
   .today-stats {

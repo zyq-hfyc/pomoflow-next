@@ -336,6 +336,7 @@
 <style>
   .journal {
     width: 100%;
+    padding: 1.25rem 1.5rem; /* v1 组件自身 py-5 px-6(与外层 .main 双层叠加) */
   }
   .inner {
     max-width: 72rem; /* v1 max-w-6xl */

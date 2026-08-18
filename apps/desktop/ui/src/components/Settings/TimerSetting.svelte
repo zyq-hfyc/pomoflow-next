@@ -340,9 +340,11 @@
     color: var(--color-text-muted);
   }
 
+  /* v1 SettingsPage:236-250 —— appearance-none + 绝对定位自绘 ▼ */
   .select {
+    position: relative;
     min-width: 120px;
-    padding: 0.35rem 0.75rem;
+    padding: 0.35rem 2rem 0.35rem 0.75rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     background: var(--color-surface);
@@ -350,6 +352,11 @@
     font-size: 0.875rem;
     cursor: pointer;
     transition: border-color 0.15s;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6z" fill="%23a8a298"/></svg>');
+    background-repeat: no-repeat;
+    background-position: right 0.6rem center;
   }
   .select:hover {
     border-color: var(--color-neutral-300);

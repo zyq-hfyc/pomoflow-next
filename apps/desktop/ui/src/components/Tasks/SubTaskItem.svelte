@@ -106,7 +106,7 @@
       aria-label={t.task.editSubtask}
       title={t.task.editSubtask}
     >
-      <Pencil size={13} />
+      <Pencil size={14} />
     </button>
   {/if}
   <button
@@ -116,7 +116,7 @@
     aria-label={t.task.deleteSubtask}
     title={t.task.deleteSubtask}
   >
-    <Trash2 size={13} />
+    <Trash2 size={14} />
   </button>
 </li>
 
@@ -143,16 +143,16 @@
     cursor: pointer;
     border-radius: 4px;
   }
-  .title-btn:hover {
-    background: var(--color-bg);
-  }
+  /* v1 显示态是无 hover 的 span */
+  /* v1 SubtaskItem:103 —— 行内下划线式编辑(border-b accent-300,透明底) */
   .title-input {
     flex: 1;
-    border: 1px solid var(--color-accent);
-    border-radius: 4px;
-    padding: 0.2rem 0.4rem;
-    font-size: 0.9rem;
-    background: var(--color-surface);
+    border: none;
+    border-bottom: 1px solid var(--color-accent-300, #ecb89d);
+    border-radius: 0;
+    padding: 0.15rem 0;
+    font-size: 0.875rem;
+    background: transparent;
     color: var(--color-text);
     outline: none;
   }
@@ -173,9 +173,9 @@
   }
   .icon-btn:hover {
     color: var(--color-accent);
-    background: var(--color-bg);
   }
+  /* v1 hover:text-red-500 + red→accent 映射 → 跟随主题主色 */
   .icon-btn.danger:hover {
-    color: #dc2626;
+    color: var(--color-accent-500, #d17b5c);
   }
 </style>

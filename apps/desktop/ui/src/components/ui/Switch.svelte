@@ -29,24 +29,21 @@
 </button>
 
 <style>
+  /* v1 Switch:30-38 —— 轨道 neutral-300 无边框,滑块 18px */
   .switch {
     position: relative;
     width: 40px;
     height: 22px;
     flex-shrink: 0;
     padding: 0;
-    border: 1px solid var(--color-border);
+    border: none;
     border-radius: 999px;
-    background: var(--color-neutral-200);
+    background: var(--color-neutral-300, #d2ccc2);
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-  .switch:hover:not(:disabled) {
-    border-color: var(--color-neutral-300);
+    transition: background 0.15s;
   }
   .switch.on {
     background: var(--color-accent-500);
-    border-color: var(--color-accent-500);
   }
   .switch:focus-visible {
     outline: none;
@@ -60,8 +57,8 @@
     position: absolute;
     top: 2px;
     left: 2px;
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     background: var(--color-neutral-0);
     box-shadow: var(--shadow-xs);

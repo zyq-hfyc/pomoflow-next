@@ -137,30 +137,19 @@
 </div>
 
 <style>
+  /* v1 HelpPage:133 —— 恒左右分栏(无纵向堆叠断点,桌面端) */
   .help-page {
     display: flex;
-    flex-direction: column;
-    height: auto;
-  }
-  @media (min-width: 1024px) {
-    .help-page {
-      flex-direction: row;
-      height: calc(100vh - var(--topbar-height, 50px));
-    }
+    flex-direction: row;
+    height: calc(100vh - var(--topbar-height, 64px));
   }
 
   .menu {
     flex-shrink: 0;
+    width: 224px;
     background: var(--color-surface);
-    border-bottom: 1px solid var(--color-border);
+    border-right: 1px solid var(--color-neutral-100, #f5f3f0);
     padding: 1rem 0.5rem;
-  }
-  @media (min-width: 1024px) {
-    .menu {
-      width: 224px;
-      border-bottom: none;
-      border-right: 1px solid var(--color-border);
-    }
   }
   .menu-item {
     width: 100%;
@@ -176,14 +165,16 @@
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
   }
+  .menu-item {
+    color: var(--color-neutral-600, #57534e); /* v1 text-gray-600 恒定 */
+  }
   .menu-item:hover {
     background: var(--color-neutral-50);
-    color: var(--color-text);
   }
   .menu-item.active {
     background: var(--color-accent-50);
     color: var(--color-accent-600);
-    font-weight: 600;
+    font-weight: 500; /* v1 font-medium */
   }
 
   .content {
@@ -192,14 +183,14 @@
     overflow-y: auto;
     padding: 4rem 2rem 1.25rem; /* v1 px-8 page-pt pb-5 */
   }
+  /* v1 HelpPage:160 —— max-w-3xl + border-neutral-100 + p-6,无阴影 */
   .card {
     max-width: 48rem;
     margin: 0 auto;
     background: var(--color-surface);
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--color-neutral-100, #f5f3f0);
     border-radius: var(--radius-xl);
     padding: 1.5rem;
-    box-shadow: var(--shadow-sm);
   }
 
   .card h2 {
@@ -223,6 +214,16 @@
     color: var(--color-text-muted);
     line-height: 1.6;
   }
+  /* v1 HelpPage:23/54/71 —— manual/faq 内容列 max-w-2xl(672px),
+     contact max-w-xl(576px),比卡片再窄一档控制行长 */
+  .manual,
+  .faq {
+    max-width: 42rem;
+  }
+  .contact {
+    max-width: 36rem;
+  }
+
   .manual ul,
   .body-items {
     margin: 0;

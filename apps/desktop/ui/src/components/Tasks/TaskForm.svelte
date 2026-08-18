@@ -454,8 +454,7 @@
     grid-template-columns: 1fr 1fr;
     gap: 0.75rem;
     font-size: 0.875rem;
-    padding-top: 0.5rem;
-    border-top: 1px dashed var(--color-border, #e5e2dd);
+
   }
   .field {
     display: flex;

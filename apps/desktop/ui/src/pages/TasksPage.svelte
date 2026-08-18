@@ -645,13 +645,7 @@
         {#if loading}
           <p class="loading">{t.common.loading}</p>
         {:else if filtered.length === 0}
-          <p class="empty">
-            {#if tasks.length === 0}
-              {t.task.emptyAll}
-            {:else}
-              {t.task.emptyFiltered}
-            {/if}
-          </p>
+          <p class="empty">{t.task.noTask}</p>
         {:else if filter === "week" || filter === "planned" || filter === "completed"}
           <GroupedTaskList
             tasks={filtered}

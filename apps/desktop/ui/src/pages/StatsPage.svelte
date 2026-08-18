@@ -161,8 +161,6 @@
      蒙层不能挂在内容列上,否则宽窗口左右留白和矮内容下方会裸露背景图 -->
 <div class="stats-veil page-veil">
   <div class="page">
-  <h2>{t.nav.stats}</h2>
-
   <!-- 维度 pill -->
   <div class="dims">
     {#each DIMENSIONS as d (d.key)}
@@ -266,7 +264,7 @@
     padding: 4rem 1rem 1.25rem; /* v1 px-4 page-pt pb-5 */
     display: flex;
     flex-direction: column;
-    gap: 1.25rem;
+    gap: 1.5rem; /* v1 space-y-6 */
     /* 图表双栏需要比设置页更宽的画布(v1 max-w-5xl) */
     max-width: 1040px;
     margin: 0 auto;
@@ -294,18 +292,19 @@
     transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
   .dim-pill:hover {
+    background: var(--color-neutral-50, #fbfaf8); /* v1 hover:bg-gray-50 */
     color: var(--color-text);
   }
   .dim-pill.active {
-    background: var(--color-accent);
-    border-color: var(--color-accent);
+    background: var(--color-accent-500, #d17b5c);
+    border-color: transparent; /* v1 激活态无描边 */
     color: #fff;
   }
 
   .stats-4 {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    gap: 1rem;
+    gap: 0.5rem; /* v1 gap-2 */
   }
   /* v1 断点:Tailwind md = 768px(卡片 2→4 列与双图拆分同点) */
   @media (min-width: 768px) {
@@ -317,7 +316,7 @@
   .charts {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 1rem;
+    gap: 0.5rem; /* v1 gap-2 */
   }
   @media (min-width: 768px) {
     .charts.split {

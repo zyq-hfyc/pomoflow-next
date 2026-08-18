@@ -579,13 +579,14 @@
     padding: 1rem 1.25rem;
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0; /* v1 用 mb-4/mt-5/mt-6 梯度,不用统一 gap */
   }
 
   .head {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    margin-bottom: 1rem; /* v1 mb-4 */
   }
   .head-left {
     display: flex;
@@ -608,7 +609,7 @@
     outline: none;
     background: transparent;
     border: none;
-    font-size: 0.95rem;
+    font-size: 1rem; /* v1 继承 text-base=16px */
     font-family: inherit;
   }
   .close {
@@ -629,6 +630,7 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 0.5rem;
+    margin-bottom: 1rem; /* v1 mb-4 */
   }
   .tag-chips {
     display: flex;
@@ -691,6 +693,7 @@
   .rows {
     display: flex;
     flex-direction: column;
+    gap: 0.75rem; /* v1 space-y-3 */
     font-size: 0.875rem;
   }
   .row {
@@ -763,11 +766,12 @@
     margin-left: 0.25rem;
   }
 
-  /* 子任务 */
+  /* 子任务(v1 mt-5) */
   .subtasks {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+    margin-top: 1.25rem;
   }
   .sub-add {
     display: flex;
@@ -792,7 +796,10 @@
     color: var(--color-text-muted, #6b6864);
   }
 
-  /* 备注 */
+  /* 备注(v1 mt-5) */
+  .notes {
+    margin-top: 1.25rem;
+  }
   .notes textarea {
     width: 100%;
     font-size: 0.875rem;

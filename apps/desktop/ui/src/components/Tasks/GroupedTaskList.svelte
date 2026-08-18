@@ -140,9 +140,9 @@
     font-size: 0.85rem;
     font-weight: 600;
     color: var(--color-text, #1f1d1b);
-    background: transparent;
+    background: var(--color-neutral-50, #fbfaf8); /* v1 bg-gray-50 整条底 */
     border: none;
-    border-bottom: 1px solid var(--color-border, #e5e2dd);
+    border-bottom: 1px solid var(--color-neutral-100, #f5f3f0);
     cursor: pointer;
     margin-bottom: 0.25rem;
   }

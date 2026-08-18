@@ -495,9 +495,9 @@
     outline: none;
     transition: background 0.12s, border-color 0.12s;
   }
+  /* v1 focus:bg-gray-100 —— 聚焦底色加深,无 accent 边框 */
   .search-input:focus {
-    background: var(--color-surface, #fff);
-    border-color: var(--color-accent, #e74c3c);
+    background: var(--color-neutral-100, #f5f3f0);
   }
 
   .time-filters {

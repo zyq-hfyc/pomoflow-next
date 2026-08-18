@@ -42,12 +42,12 @@
     border: 1px solid var(--color-border, #e5e2dd);
     border-radius: var(--radius-lg, 12px);
     padding: 0.875rem;
-    box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.06));
+    box-shadow: var(--shadow-xs, 0 1px 2px rgba(89, 47, 34, 0.04)); /* v1 shadow-xs */
     transition: border-color 0.12s, box-shadow 0.12s;
   }
   .stat-card:hover {
-    border-color: color-mix(in srgb, var(--color-accent, #e74c3c) 50%, var(--color-border, #e5e2dd));
-    box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.06)), 0 0 0 3px color-mix(in srgb, var(--color-accent, #e74c3c) 8%, transparent);
+    border-color: var(--color-accent-200, #f4d5c4); /* v1 hover accent-200 */
+    box-shadow: var(--shadow-sm, 0 2px 4px rgba(89, 47, 34, 0.04));
   }
 
   .icon-block {
@@ -72,9 +72,6 @@
     line-height: 1.15;
     color: var(--color-text, #1f1d1b);
     font-variant-numeric: tabular-nums;
-  }
-  .stat-card.accent .value {
-    color: var(--color-accent, #e74c3c);
   }
   .unit {
     font-size: 0.75rem;
