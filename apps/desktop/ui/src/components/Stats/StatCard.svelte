@@ -40,7 +40,7 @@
   .stat-card {
     background: var(--color-surface, #fff);
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     padding: 0.875rem;
     box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.06));
     transition: border-color 0.12s, box-shadow 0.12s;

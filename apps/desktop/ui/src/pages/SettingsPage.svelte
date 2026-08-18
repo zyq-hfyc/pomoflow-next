@@ -157,7 +157,7 @@
     gap: 0.75rem;
     padding: 0.5rem 0.75rem;
     border: none;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     background: transparent;
     color: var(--color-text-muted);
     font-size: 0.875rem;
@@ -188,11 +188,11 @@
     flex: 1;
     min-width: 0;
     overflow-y: auto;
-    padding: 1.5rem 1.5rem 3rem;
+    padding: 4rem 1.5rem 1.25rem;
   }
   @media (min-width: 1024px) {
     .content {
-      padding: 2rem 2rem 3rem;
+      padding: 4rem 2rem 1.25rem;
     }
   }
   .card {

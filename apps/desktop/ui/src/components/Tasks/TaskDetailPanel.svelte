@@ -661,7 +661,7 @@
   .tags-editor {
     width: 100%;
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     padding: 0.5rem;
     max-height: 10rem;
     overflow-y: auto;
@@ -718,7 +718,7 @@
     color: var(--color-text, #1f1d1b);
     background: var(--color-bg, #fafaf7);
     border: none;
-    border-radius: var(--radius-md, 8px);
+    border-radius: 4px;
     padding: 0.15rem 0.5rem;
     cursor: pointer;
     flex-shrink: 0;

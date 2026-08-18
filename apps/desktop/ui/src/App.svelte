@@ -103,6 +103,7 @@
           class="nav-item"
           class:active={route === r.path}
           onclick={() => navigate(r.path)}
+          title={t.nav[r.labelKey]}
           aria-current={route === r.path ? "page" : undefined}
         >
           <Icon size={18} />
@@ -141,15 +142,15 @@
     color: var(--color-text);
   }
 
+  /* v1 Navbar:19 —— h-16 / bg-white/85 + blur + 底边框,无阴影 */
   .topbar {
     display: flex;
     align-items: center;
-    min-height: var(--topbar-height, 50px);
+    min-height: var(--topbar-height, 64px);
     padding: 0 1.5rem;
     border-bottom: 1px solid var(--color-border);
     background: color-mix(in srgb, var(--color-surface) 85%, transparent);
     backdrop-filter: blur(8px);
-    box-shadow: var(--shadow-sm);
     flex-shrink: 0;
     gap: 1.25rem;
   }
@@ -159,11 +160,12 @@
     align-items: center;
     gap: 0.6rem;
   }
+  /* v1:字标 text-lg(18px) font-semibold tracking-tight accent-700 */
   .brand h1 {
     margin: 0;
-    font-size: 1.1rem;
+    font-size: 1.125rem; /* 18px */
     font-weight: 600;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.025em;
     color: var(--color-accent-700);
   }
   .logo {
@@ -187,7 +189,8 @@
     border-radius: 0;
     background: transparent;
     color: var(--color-text-muted);
-    font-size: 0.9rem;
+    font-size: 0.875rem;
+    font-weight: 500; /* v1 非激活 font-medium,激活 font-semibold */
     cursor: pointer;
     transition: color 0.15s;
   }

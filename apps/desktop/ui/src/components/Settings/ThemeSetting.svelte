@@ -204,7 +204,7 @@
     position: relative;
     height: 64px;
     border: 2px solid var(--color-border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     background-size: cover;
     background-position: center;
     cursor: pointer;
@@ -284,7 +284,7 @@
     gap: 0.5rem;
     padding: 0.5rem 1rem;
     border: none;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     background: var(--color-accent-500);
     color: #fff;
     font-size: 0.875rem;
@@ -299,7 +299,7 @@
   .thumb {
     width: 40px;
     height: 40px;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     border: 1px solid var(--color-border);
     background-size: cover;
     background-position: center;

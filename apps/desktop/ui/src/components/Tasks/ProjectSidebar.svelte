@@ -490,7 +490,7 @@
     font-size: 0.85rem;
     background: var(--color-bg, #fafaf7);
     border: 1px solid transparent;
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     color: var(--color-text, #1f1d1b);
     outline: none;
     transition: background 0.12s, border-color 0.12s;
@@ -514,7 +514,7 @@
     padding: 0.4rem 0.75rem;
     font-size: 0.85rem;
     border: none;
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     background: transparent;
     color: var(--color-text, #1f1d1b);
     cursor: pointer;
@@ -589,7 +589,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.3rem 0.75rem;
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     cursor: pointer;
     transition: background 0.12s;
     font-size: 0.85rem;
@@ -657,7 +657,7 @@
     font-size: 0.85rem;
     background: var(--color-bg, #fafaf7);
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     padding: 0.3rem 0.5rem;
     color: var(--color-text, #1f1d1b);
     outline: none;
@@ -673,7 +673,7 @@
     z-index: 10;
     background: var(--color-surface, #fff);
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.08));
     padding: 0.25rem 0;
     min-width: 144px;

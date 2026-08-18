@@ -166,7 +166,7 @@
   }
   .week-card {
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     padding: 0.5rem;
   }
   .week-head {

@@ -154,7 +154,7 @@
     overflow-y: auto;
     background: var(--color-surface, #fff);
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-lg, 12px);
+    border-radius: var(--radius-xl, 16px);
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
     z-index: 20;
     padding: 0.25rem;

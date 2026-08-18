@@ -142,7 +142,7 @@
     align-items: center;
     gap: 0.75rem;
     padding: 0.75rem 1rem;
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px); /* v1 rounded-lg */
     background: var(--color-surface, #fff);
     border: 1px solid var(--color-border, #e5e2dd);
     cursor: pointer;
@@ -166,7 +166,7 @@
   .check {
     width: 18px;
     height: 18px;
-    border-radius: 6px;
+    border-radius: 8px; /* v1 rounded-md */
     border: 1.5px solid var(--color-border, #e5e2dd);
     background: transparent;
     display: flex;

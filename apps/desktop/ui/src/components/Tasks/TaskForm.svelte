@@ -376,7 +376,7 @@
   .task-form {
     background: var(--color-surface, #fff);
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: 12px;
+    border-radius: var(--radius-xl, 16px);
     padding: 0.75rem;
     display: flex;
     flex-direction: column;
@@ -476,7 +476,7 @@
     width: 100%;
     background: color-mix(in srgb, var(--color-bg, #fafaf7) 50%, transparent);
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: 8px;
+    border-radius: var(--radius-lg, 12px);
     padding: 0.375rem 0.5rem;
     font-size: 0.875rem;
     color: var(--color-text, #1f1d1b);
@@ -526,7 +526,7 @@
     font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
-    border-radius: 8px;
+    border-radius: var(--radius-lg, 12px);
     transition: background 0.12s;
   }
   .submit-btn:hover {

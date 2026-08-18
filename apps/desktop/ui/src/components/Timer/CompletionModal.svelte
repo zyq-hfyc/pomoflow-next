@@ -56,7 +56,7 @@
   }
   .modal {
     background: var(--color-surface, #fff);
-    border-radius: var(--radius-lg, 12px);
+    border-radius: var(--radius-2xl, 24px);
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
     padding: 1.5rem;
     width: 20rem;
@@ -91,7 +91,7 @@
     background: var(--color-accent, #e74c3c);
     color: #fff;
     border: none;
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;

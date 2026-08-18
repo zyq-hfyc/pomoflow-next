@@ -322,7 +322,7 @@
   .today-focus {
     background: var(--color-surface, #fff);
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-lg, 12px);
+    border-radius: var(--radius-xl, 16px);
     padding: 1rem;
     box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.06));
   }
@@ -376,7 +376,7 @@
     width: 100%;
     font-size: 0.875rem;
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     padding: 0.375rem 0.75rem;
     background: var(--color-surface, #fff);
     color: var(--color-text, #1f1d1b);
@@ -401,7 +401,7 @@
     flex: 1;
     font-size: 0.75rem;
     padding: 0.375rem 0;
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     border: 1px solid var(--color-border, #e5e2dd);
     background: var(--color-surface, #fff);
     color: var(--color-text-muted, #6b6864);
@@ -452,7 +452,7 @@
   }
   .task-card {
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     background: var(--color-surface, #fff);
     transition: border-color 0.12s;
   }

@@ -103,7 +103,7 @@
     width: 100%;
     background: color-mix(in srgb, var(--color-surface, #fff) 70%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-border, #e5e2dd) 70%, transparent);
-    border-radius: var(--radius-lg, 12px);
+    border-radius: var(--radius-xl, 16px);
     padding: 1rem 1.25rem;
     backdrop-filter: blur(4px);
   }

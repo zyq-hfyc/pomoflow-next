@@ -188,7 +188,7 @@
   .filter-bar {
     background: var(--color-surface, #fff);
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-xl, 16px);
     padding: 1rem;
     box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.06));
     margin-bottom: 1.25rem;
@@ -208,7 +208,7 @@
   .select {
     font-size: 0.85rem;
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     padding: 0.4rem 0.75rem;
     background: var(--color-surface, #fff);
     color: var(--color-text, #1f1d1b);
@@ -224,7 +224,7 @@
   .preset-btn {
     font-size: 0.85rem;
     padding: 0.4rem 0.75rem;
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     border: 1px solid var(--color-border, #e5e2dd);
     background: var(--color-surface, #fff);
     color: var(--color-text, #1f1d1b);
@@ -265,7 +265,7 @@
   .date {
     font-size: 0.85rem;
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     padding: 0.35rem 0.6rem;
     background: var(--color-surface, #fff);
     color: var(--color-text, #1f1d1b);
@@ -283,7 +283,7 @@
     gap: 0.4rem;
     font-size: 0.85rem;
     padding: 0.4rem 0.75rem;
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     background: var(--color-accent, #e74c3c);
     color: #fff;
     border: none;

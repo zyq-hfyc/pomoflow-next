@@ -263,7 +263,7 @@
     min-height: calc(100vh - var(--topbar-height, 50px));
   }
   .page {
-    padding: 1.5rem 2rem 3rem;
+    padding: 4rem 1rem 1.25rem; /* v1 px-4 page-pt pb-5 */
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
@@ -286,7 +286,7 @@
   .dim-pill {
     padding: 0.35rem 1rem;
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     background: var(--color-surface);
     color: var(--color-text-muted);
     font-size: 0.85rem;
@@ -328,7 +328,7 @@
   .chart-card {
     background: var(--color-surface);
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-xl);
     padding: 0.875rem 0.9rem;
     box-shadow: var(--shadow-sm);
     min-width: 0;

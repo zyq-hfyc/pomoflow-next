@@ -66,7 +66,7 @@
     color: var(--color-text, #1f1d1b);
     background: var(--color-bg, #fafaf7);
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px); /* v1 rounded-lg */
     padding: 0.5rem 0.75rem;
     resize: none;
     transition: border-color 0.12s, background 0.12s;

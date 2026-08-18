@@ -509,8 +509,8 @@
     tasks={tasks}
   />
 
-  <!-- 中：主内容 -->
-  <div class="main">
+  <!-- 中：主内容(v1 手账视图顶部留白特例 pt-[30px]) -->
+  <div class="main" class:journal={filter === "journal"}>
     {#if filter === "journal"}
       <JournalView
         year={journalYear}
@@ -707,7 +707,11 @@
     flex: 1;
     min-width: 0;
     overflow-y: auto;
-    padding: 1.5rem 2rem 2rem;
+    padding: 4rem 1.5rem 1.25rem; /* v1 page-pt 64px + px-6 pb-5 */
+  }
+  /* v1 TasksPage:375 手账视图特例 pt-[30px](手账自带 py-5) */
+  .main.journal {
+    padding-top: 30px;
   }
 
   /* v1:未选中任务时右侧保留全高空态列(点击任务查看详情) */

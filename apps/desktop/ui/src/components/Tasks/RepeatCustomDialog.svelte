@@ -221,7 +221,7 @@
   }
   .dialog {
     background: var(--color-surface, #fff);
-    border-radius: 16px;
+    border-radius: var(--radius-2xl, 24px); /* v1 rounded-2xl */
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
     padding: 1.5rem;
     width: 420px;
@@ -275,7 +275,7 @@
   .input {
     width: 100%;
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: 8px;
+    border-radius: var(--radius-lg, 12px);
     padding: 0.375rem 0.5rem;
     background: color-mix(in srgb, var(--color-bg, #fafaf7) 50%, transparent);
     color: var(--color-text, #1f1d1b);
@@ -348,7 +348,7 @@
     padding: 0.375rem 1rem;
     font-size: 0.875rem;
     cursor: pointer;
-    border-radius: 8px;
+    border-radius: var(--radius-lg, 12px);
   }
   .btn-cancel:hover {
     color: var(--color-text, #1f1d1b);
@@ -361,7 +361,7 @@
     font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
-    border-radius: 8px;
+    border-radius: var(--radius-lg, 12px);
     transition: background 0.12s;
   }
   .btn-confirm:hover:not(:disabled) {

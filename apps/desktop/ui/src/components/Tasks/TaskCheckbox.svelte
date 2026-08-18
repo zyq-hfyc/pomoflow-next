@@ -38,7 +38,7 @@
   .checkbox {
     width: 18px;
     height: 18px;
-    border-radius: 4px;
+    border-radius: 2px; /* v1 rounded-sm */
     border: 1.5px solid var(--color-border, #e5e2dd);
     background: transparent;
     display: flex;

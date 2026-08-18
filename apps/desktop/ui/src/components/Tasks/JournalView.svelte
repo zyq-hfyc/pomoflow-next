@@ -365,7 +365,7 @@
     justify-content: center;
     padding: 0.35rem;
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     background: var(--color-surface, #fff);
     color: var(--color-text-muted, #6b6864);
     cursor: pointer;
@@ -378,7 +378,7 @@
   .select {
     font-size: 0.85rem;
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     padding: 0.3rem 0.5rem;
     background: var(--color-surface, #fff);
     color: var(--color-text, #1f1d1b);
@@ -397,7 +397,7 @@
   .week-card {
     background: var(--color-surface, #fff);
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-xl, 16px);
     box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.06));
     padding: 1rem;
   }
@@ -416,7 +416,7 @@
   .day-cell {
     min-height: 80px;
     border: 1px dashed color-mix(in srgb, var(--color-text, #1f1d1b) 22%, transparent);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     padding: 0.5rem;
   }
   .day-head {

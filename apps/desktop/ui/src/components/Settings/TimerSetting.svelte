@@ -309,7 +309,7 @@
   }
   .group-body {
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-xl);
     background: var(--color-surface);
     overflow: hidden;
   }
@@ -344,7 +344,7 @@
     min-width: 120px;
     padding: 0.35rem 0.75rem;
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     background: var(--color-surface);
     color: var(--color-text);
     font-size: 0.875rem;
@@ -363,7 +363,7 @@
   .action {
     padding: 0.4rem 1rem;
     border: 1px solid var(--color-accent-500);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     background: var(--color-surface);
     color: var(--color-accent-600);
     cursor: pointer;
@@ -387,7 +387,7 @@
     color: #991b1b;
     background: #fee2e2;
     padding: 0.5rem 0.75rem;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     font-size: 0.875rem;
   }
 </style>

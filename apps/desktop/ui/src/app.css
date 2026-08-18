@@ -145,7 +145,7 @@ html[data-theme="teal"] {
 :root {
   /* 顶栏高度:App.svelte .topbar 与各页面的 calc(100vh - …) 共用同一口径,
      改高度只动这一处 */
-  --topbar-height: 50px;
+  --topbar-height: 64px;
 
   --color-neutral-0: #ffffff;
   --color-neutral-50: #fbfaf8;
@@ -214,7 +214,8 @@ body {
   height: 100%;
   color: var(--color-text);
   font-family: var(--font-family-sans);
-  font-size: 14px;
+  /* 根字号保持浏览器默认 16px(v1 基准)——此前曾设 14px,导致全站
+     rem 值(字号/间距/卡片宽度)相对 v1 系统性缩水 12.5% */
   line-height: 1.5;
   letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;

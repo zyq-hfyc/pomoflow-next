@@ -584,7 +584,7 @@
     gap: 0.25rem;
     background: var(--color-surface, #fff);
     padding: 0.25rem;
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-xl, 16px);
     box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.06));
   }
   .mode-tab {
@@ -592,7 +592,7 @@
     border: none;
     background: transparent;
     color: var(--color-text-muted, #6b6864);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     cursor: pointer;
     font-size: 0.9rem;
     transition: background 0.15s, color 0.15s;
@@ -663,7 +663,7 @@
     gap: 0.5rem;
     padding: 0.55rem 1.75rem;
     border: none;
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-xl, 16px);
     font-size: 0.95rem;
     font-weight: 500;
     cursor: pointer;
@@ -731,7 +731,7 @@
     width: 100%;
     background: var(--color-surface, #fff);
     border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-lg, 12px);
+    border-radius: var(--radius-2xl, 24px);
     padding: 1.25rem;
     box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.06));
   }
@@ -746,7 +746,7 @@
     color: #991b1b;
     background: #fee2e2;
     padding: 0.5rem 0.75rem;
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-lg, 12px);
     font-size: 0.875rem;
   }
 </style>
