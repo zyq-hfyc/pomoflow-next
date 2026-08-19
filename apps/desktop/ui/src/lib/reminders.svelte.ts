@@ -17,7 +17,6 @@ import type { Task } from "./api";
 import {
   isPermissionGranted,
   requestPermission,
-  sendNotification,
 } from "@tauri-apps/plugin-notification";
 
 const FIRED_KEY = "pomoflow-fired-reminders";
@@ -74,7 +73,8 @@ async function fireNotification(task: Task): Promise<void> {
       granted = perm === "granted";
     }
     if (!granted) return;
-    sendNotification({ title: resolved.reminder_title, body });
+    // 走自有命令(显式 AUMID):dev 下插件发送会显示"Windows PowerShell"签名
+    void api.sendSystemNotification(resolved.reminder_title, body);
   } catch (e) {
     console.warn("reminder notification failed", e);
   }

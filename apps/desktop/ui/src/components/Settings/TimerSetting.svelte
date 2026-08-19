@@ -22,10 +22,9 @@
   import {
     isPermissionGranted,
     requestPermission,
-    sendNotification,
   } from "@tauri-apps/plugin-notification";
   import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
-  import { listTasks } from "../../lib/api";
+  import { listTasks, sendSystemNotification } from "../../lib/api";
 
   const t = $derived(getDict());
   const settings = $derived(getSettings());
@@ -119,10 +118,11 @@
         error = t.settings.notifPermDenied;
         return;
       }
-      sendNotification({
-        title: t.settings.testNotifTitle,
-        body: fmt(t.settings.testNotifBody, { n: activeTaskCount }),
-      });
+      // 自有命令(显式 AUMID):dev 下插件发送会显示"Windows PowerShell"签名
+      void sendSystemNotification(
+        t.settings.testNotifTitle,
+        fmt(t.settings.testNotifBody, { n: activeTaskCount }),
+      );
     } catch (e) {
       error = fmt(t.settings.notifSendFail, { err: String(e) });
     }

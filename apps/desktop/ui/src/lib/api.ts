@@ -401,6 +401,16 @@ export const statsOverview = (
     tzOffsetMin,
   });
 
+// === 系统通知 ===
+
+/**
+ * 发送系统通知(替代 @tauri-apps/plugin-notification 的 sendNotification)。
+ * 后端显式带 AUMID 并在启动时注册其显示名 —— dev 与安装态的签名都显示
+ * "PomoFlow";走插件则 dev 下回落 PowerShell 标识。权限查询仍用插件。
+ */
+export const sendSystemNotification = (title: string, body: string) =>
+  invoke<void>("send_notification", { title, body });
+
 // === Export(xlsx) ===
 
 /** 导出一行(展示字段全部本地化/格式化后传入;Rust 不做 i18n) */

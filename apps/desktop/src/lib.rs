@@ -12,6 +12,7 @@ use crate::commands::{ensure_parent, store_path, AppState};
 
 pub mod commands;
 pub mod export;
+pub mod notify;
 pub mod repeat_service;
 pub mod tray;
 
@@ -102,9 +103,13 @@ pub fn run() {
             commands::today_completed_minutes,
             commands::stats_range,
             commands::stats_overview,
+            notify::send_notification,
             export::export_tasks_xlsx,
         ])
         .setup(|app| {
+            // 注册通知 AUMID 显示名:dev 模式下插件不给 toast 设 AUMID,
+            // Windows 回落 PowerShell 标识 → 通知签名显示错误(见 notify.rs)
+            notify::register_aumid(&app.config().identifier);
             info!("Tauri app setup complete, building tray...");
             tray::build(app)?;
             Ok(())

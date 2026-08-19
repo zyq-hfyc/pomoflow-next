@@ -28,7 +28,6 @@ import type { Task } from "./api";
 import {
   isPermissionGranted,
   requestPermission,
-  sendNotification,
 } from "@tauri-apps/plugin-notification";
 
 export type TimerMode = "focus" | "short_break" | "long_break";
@@ -353,7 +352,8 @@ async function sendSystemNotification(title: string, body: string): Promise<void
       granted = perm === "granted";
     }
     if (!granted) return;
-    sendNotification({ title, body });
+    // 走自有命令(显式 AUMID):dev 下插件发送会显示"Windows PowerShell"签名
+    void api.sendSystemNotification(title, body);
   } catch (e) {
     console.warn("notification failed", e);
   }
