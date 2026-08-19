@@ -1631,12 +1631,15 @@ impl Store for SqliteStore {
 
     fn today_completed_minutes(&self, start_ms: i64, end_ms: i64) -> CoreResult<u32> {
         let conn = self.lock()?;
+        // 按 started_at 分桶(与 stats::overview / range 一致;v1 全部按 started_at):
+        // 若按 ended_at,23:55 开始、次日 0:20 结束的会话会在番茄钟页算"今天"、
+        // 统计页算"昨天",两页数字对不上
         let total: i64 = conn
             .query_row(
                 "SELECT COALESCE(SUM(duration_minutes), 0) FROM pomodoros
                  WHERE deleted_at_ms IS NULL
                    AND is_completed = 1
-                   AND ended_at_ms >= ? AND ended_at_ms < ?",
+                   AND started_at_ms >= ? AND started_at_ms < ?",
                 params![start_ms, end_ms],
                 |row| row.get(0),
             )
@@ -1726,5 +1729,39 @@ mod tests {
         let dup = Tag::new("urgent");
         let err = store.upsert_tag(dup).unwrap_err();
         assert!(matches!(err, CoreError::Conflict(_)));
+    }
+
+    #[test]
+    fn today_minutes_buckets_by_started_at() {
+        // 23:50 开始、次日 00:15 结束的会话归**开始日**(v1/stats 一致;
+        // 修复前按 ended_at 会归到次日)
+        let store = SqliteStore::open_in_memory().unwrap();
+        let mut s = PomodoroSession::new(None, None, 25);
+        s.started_at = Utc.with_ymd_and_hms(2026, 8, 18, 15, 50, 0).unwrap();
+        s.ended_at = Utc.with_ymd_and_hms(2026, 8, 18, 16, 15, 0).unwrap();
+        s.is_completed = true;
+        store.upsert_pomodoro(s).unwrap();
+
+        let day1_start = Utc.with_ymd_and_hms(2026, 8, 18, 0, 0, 0).unwrap();
+        let day2_start = Utc.with_ymd_and_hms(2026, 8, 19, 0, 0, 0).unwrap();
+        assert_eq!(
+            store
+                .today_completed_minutes(
+                    day1_start.timestamp_millis(),
+                    day2_start.timestamp_millis()
+                )
+                .unwrap(),
+            25
+        );
+        let day3_start = Utc.with_ymd_and_hms(2026, 8, 20, 0, 0, 0).unwrap();
+        assert_eq!(
+            store
+                .today_completed_minutes(
+                    day2_start.timestamp_millis(),
+                    day3_start.timestamp_millis()
+                )
+                .unwrap(),
+            0
+        );
     }
 }

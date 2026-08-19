@@ -181,9 +181,10 @@ pub trait Store: std::fmt::Debug {
     ) -> CoreResult<NotificationTemplate>;
 
     // --- Pomodoro stats(番茄钟页"今日专注分钟"用) ---
-    /// 返回今日完成的番茄分钟数(把所有 is_completed=1 且 ended_at 在当天区间内的
-    /// session 的 duration_minutes 求和)。后端按本地"今天 00:00 ~ 次日 00:00 UTC"
-    /// 区间聚合。
+    /// 返回今日完成的番茄分钟数(把所有 is_completed=1 且 started_at 在当天区间内
+    /// [start_ms, end_ms) 的 session 的 duration_minutes 求和)。start/end 是前端按
+    /// 本地时区算好的 UTC 毫秒窗口;按 started_at 分桶与 stats::overview / range
+    /// 一致(v1 语义),跨午夜会话归到开始日。
     fn today_completed_minutes(&self, start_ms: i64, end_ms: i64) -> CoreResult<u32>;
 }
 
@@ -893,8 +894,9 @@ impl Store for InMemoryStore {
             if s.deleted_at.is_some() || !s.is_completed {
                 continue;
             }
-            let ended_ms = s.ended_at.timestamp_millis();
-            if ended_ms >= start_ms && ended_ms < end_ms {
+            // 按 started_at 分桶(与 SqliteStore / stats 一致)
+            let started_ms = s.started_at.timestamp_millis();
+            if started_ms >= start_ms && started_ms < end_ms {
                 total = total.saturating_add(s.duration as u64);
             }
         }
