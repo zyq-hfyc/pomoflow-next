@@ -133,14 +133,30 @@ pub fn upsert_task(
     // === 重复编排(v1 create_task / update_task 翻译) ===
     let existing = store.get_task(&task.id).ok();
     let mut task = task;
-    // v1 TaskUpdate 保护字段语义:status / completed_pomodoros / completed_at
-    // 不允许编辑载荷直改,只能经 complete_task / reopen_task / 番茄钟链路
-    // (那两个内部命令走 store 直连,不经本入口)。更新时以库内现值覆盖回传值。
-    if let Some(e) = &existing {
-        task.status = e.status;
-        task.completed_pomodoros = e.completed_pomodoros;
-        task.completed_at = e.completed_at;
+    // v1 TaskCreate/TaskUpdate 保护字段语义:status / completed_pomodoros /
+    // completed_at 不允许编辑载荷直改(v1 schema 干脆不暴露这三个字段),只能经
+    // complete_task / reopen_task / 番茄钟链路(那些内部命令走 store 直连)。
+    // 更新:以库内现值覆盖回传值;创建:强制业务默认值。
+    match &existing {
+        Some(e) => {
+            task.status = e.status;
+            task.completed_pomodoros = e.completed_pomodoros;
+            task.completed_at = e.completed_at;
+        }
+        None => {
+            task.status = TaskStatus::Active;
+            task.completed_pomodoros = 0;
+            task.completed_at = None;
+            task.deleted_at = None;
+        }
     }
+    // LWW 同步就绪:revision 单调递增由服务端分配(v1 updated_date 同款服务端
+    // 管理),updated_at 以服务端时钟为准 —— 客户端回传值仅作展示参考。
+    task.revision = match &existing {
+        Some(e) => e.revision.saturating_add(1),
+        None => 1,
+    };
+    task.updated_at = Timestamp::now();
 
     if task.repeat_parent_id.is_none() {
         // 模板:每次 upsert 重算 repeat_end_date(v1 行为)
@@ -194,6 +210,17 @@ pub fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>, String>
 #[tauri::command]
 pub fn upsert_project(project: Project, state: State<'_, AppState>) -> Result<Project, String> {
     validate::validate_project(&project).map_err(map_err)?;
+    let mut project = project;
+    // revision/updated_at 服务端管理(与任务族一致,LWW 同步就绪)
+    let existing = state.store.get_project(&project.id).ok();
+    project.revision = match &existing {
+        Some(e) => e.revision.saturating_add(1),
+        None => 1,
+    };
+    if existing.is_none() {
+        project.deleted_at = None;
+    }
+    project.updated_at = Timestamp::now();
     state.store.upsert_project(project).map_err(map_err)
 }
 
@@ -222,6 +249,17 @@ pub fn list_tags(state: State<'_, AppState>) -> Result<Vec<Tag>, String> {
 #[tauri::command]
 pub fn upsert_tag(tag: Tag, state: State<'_, AppState>) -> Result<Tag, String> {
     validate::validate_tag(&tag).map_err(map_err)?;
+    let mut tag = tag;
+    // revision/updated_at 服务端管理(与任务族一致,LWW 同步就绪)
+    let existing = state.store.get_tag(&tag.id).ok();
+    tag.revision = match &existing {
+        Some(e) => e.revision.saturating_add(1),
+        None => 1,
+    };
+    if existing.is_none() {
+        tag.deleted_at = None;
+    }
+    tag.updated_at = Timestamp::now();
     state.store.upsert_tag(tag).map_err(map_err)
 }
 
@@ -329,6 +367,7 @@ pub fn stop_pomodoro(
 
     session.ended_at = Utc::now();
     session.is_completed = is_completed;
+    session.revision = session.revision.saturating_add(1);
     session.updated_at = Timestamp::now();
 
     let result = state.store.upsert_pomodoro(session).map_err(map_err)?;
@@ -346,6 +385,7 @@ pub fn stop_pomodoro(
                 task.status = TaskStatus::Completed;
                 task.completed_at = Some(Utc::now());
             }
+            task.revision = task.revision.saturating_add(1);
             task.updated_at = Timestamp::now();
             let _ = state.store.upsert_task(task);
         }
@@ -371,6 +411,7 @@ pub fn complete_task(id: String, state: State<'_, AppState>) -> Result<TaskView,
     let mut task = state.store.get_task(&id).map_err(map_err)?;
     task.status = TaskStatus::Completed;
     task.completed_at = Some(Utc::now());
+    task.revision = task.revision.saturating_add(1);
     task.updated_at = Timestamp::now();
     let saved = state.store.upsert_task(task).map_err(map_err)?;
     embed_views(&state, vec![saved]).map(|mut v| v.pop().unwrap())
@@ -382,6 +423,7 @@ pub fn reopen_task(id: String, state: State<'_, AppState>) -> Result<TaskView, S
     let mut task = state.store.get_task(&id).map_err(map_err)?;
     task.status = TaskStatus::Active;
     task.completed_at = None;
+    task.revision = task.revision.saturating_add(1);
     task.updated_at = Timestamp::now();
     let saved = state.store.upsert_task(task).map_err(map_err)?;
     embed_views(&state, vec![saved]).map(|mut v| v.pop().unwrap())
