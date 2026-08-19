@@ -331,6 +331,8 @@ fn full_migration_round_trip() -> Result<()> {
         from: v1_path.clone(),
         to: v2_path.clone(),
         dry_run: false,
+        // 东八区:due "2026-01-15 00:00:00" 本地墙钟 → UTC 2026-01-14T16:00Z
+        tz_offset_min: Some(480),
     })?;
 
     let v2 = SqliteStore::open(&v2_path)?;
@@ -366,6 +368,14 @@ fn full_migration_round_trip() -> Result<()> {
     assert_eq!(t100.completed_pomodoros, 0);
     assert_eq!(t100.pomodoro_duration, Some(25));
     assert!(t100.due_date.is_some(), "due_date mapped");
+    // v1 due 是本地墙钟:+8 换算后应为 UTC 前一天 16:00
+    assert_eq!(
+        t100.due_date
+            .unwrap()
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string(),
+        "2026-01-14T16:00:00Z"
+    );
     assert!(t100.completed_at.is_none());
     assert_eq!(t100.description, "整理需求");
     // 关联到 v1 project_id=2 (Child) → v2 应该指向 child 的新 UUID
@@ -378,6 +388,14 @@ fn full_migration_round_trip() -> Result<()> {
     assert_eq!(t101.repeat, Repeat::None); // 不重复 → None
     assert_eq!(t101.completed_pomodoros, 2);
     assert!(t101.completed_at.is_some(), "completed_at mapped");
+    // completed_at 在 v1 是 utcnow 的 UTC 值 → 不做时区换算,原样 17:00Z
+    assert_eq!(
+        t101.completed_at
+            .unwrap()
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string(),
+        "2026-01-14T17:00:00Z"
+    );
     assert_eq!(t101.description, "");
 
     let t102 = tasks.iter().find(|t| t.title == "低优任务").unwrap();
@@ -489,12 +507,52 @@ fn dry_run_does_not_write_v2() -> Result<()> {
         from: v1_path.clone(),
         to: v2_path.clone(),
         dry_run: true,
+        tz_offset_min: None,
     })?;
 
     // dry-run 不写 v2
     assert!(!v2_path.exists(), "dry-run must not create v2 db");
 
     let _ = std::fs::remove_file(&v1_path);
+    Ok(())
+}
+
+/// 确定性 UUID:同一 v1 库重跑迁移不产生重复数据(upsert 命中同一行)。
+#[test]
+fn rerun_is_idempotent() -> Result<()> {
+    let v1_path = temp_path("v1-idem.db");
+    let v2_path = temp_path("v2-idem.db");
+    build_v1_fixture(&v1_path)?;
+
+    for _ in 0..2 {
+        run(Args {
+            from: v1_path.clone(),
+            to: v2_path.clone(),
+            dry_run: false,
+            tz_offset_min: Some(480),
+        })?;
+    }
+
+    let v2 = SqliteStore::open(&v2_path)?;
+    assert_eq!(v2.list_projects()?.len(), 2, "projects 不翻倍");
+    assert_eq!(v2.list_tags()?.len(), 3, "tags 不翻倍");
+    assert_eq!(
+        v2.list_tasks(&TaskQuery::default())?.len(),
+        6,
+        "tasks 不翻倍"
+    );
+    assert_eq!(v2.list_pomodoros()?.len(), 3, "pomodoros 不翻倍");
+    assert_eq!(v2.list_mottos()?.len(), 1, "mottos 不翻倍");
+
+    // 外键重映射在重跑后仍正确(确定性 ID 稳定)
+    let tasks = v2.list_tasks(&TaskQuery::default())?;
+    let projects = v2.list_projects()?;
+    let child = projects.iter().find(|p| p.name == "Child").unwrap();
+    let t100 = tasks.iter().find(|t| t.title == "写方案").unwrap();
+    assert_eq!(t100.project_id.as_ref().unwrap(), &child.id);
+
+    let _ = std::fs::remove_file(&v1_path);
+    let _ = std::fs::remove_file(&v2_path);
     Ok(())
 }
 
@@ -511,6 +569,7 @@ fn schema_check_rejects_non_v1_db() {
         from: bogus_path.clone(),
         to: v2_path.clone(),
         dry_run: false,
+        tz_offset_min: None,
     })
     .unwrap_err();
     let msg = format!("{err}");

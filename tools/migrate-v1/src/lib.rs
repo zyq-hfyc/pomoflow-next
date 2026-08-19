@@ -5,15 +5,20 @@
 //! - **两步走**:开 v1 只读(`rusqlite::Connection`)→ 写 v2 走 `pomoflow-core::Store`
 //!   trait(`pomoflow_core::store::SqliteStore` 实现,P1.5 起 SqliteStore 已迁入
 //!   core crate,desktop + migrate-v1 都直接复用),保证 v2 写入严格走业务字段映射。
-//! - **ID 重映射**:v1 用 `INTEGER PK`,v2 必须 UUID v4(`Id::new()`)。维持
-//!   `HashMap<i64, Id>` 把 v1 外键转 v2 引用;先 projects → tags → tasks
-//!   → task_tag → pomodoros 这个顺序,确保前向引用已可解析。
+//! - **ID 重映射**:v1 用 `INTEGER PK`,v2 用**确定性 UUID v5**(`det_id`,
+//!   由「表名 + v1 主键」哈希而来)。维持 `HashMap<i64, Id>` 把 v1 外键转 v2
+//!   引用;先 projects → tags → tasks → task_tag → pomodoros 这个顺序,确保
+//!   前向引用已可解析。确定性 ID 的意义:**同一 v1 库重复迁移时 upsert 命中
+//!   同一行,重跑幂等**(随机 v4 会把全部数据翻倍)。
+//! - **时区**:v1 的 `due_date` / `repeat_end_date` 存的是前端 datetime-local
+//!   的**本地墙钟**字符串,而 created/updated/started/ended/completed_at 是
+//!   `datetime.utcnow` 的 UTC 值 —— 两种语义混在一个库里。迁移时墙钟列按
+//!   `tz_offset_min`(缺省取迁移机本地时区)换算成 UTC,其余列保持 UTC。
 //! - **enum 字符串映射**:v1 priority/status/reminder/repeat 都是字符串(含中文),
 //!   用显式 `match` 映射到 v2 enum,未知值 fallback 到 `None` 安全降级。
 //! - **dry-run**:开 v1 仍然,完全跳过 v2 写入,只打印统计。
-//! - **回滚**:不自动备份(避免拷大型 db);输出建议 "先备份 v2 目录",
-//!   失败时不破坏 v2 库(SqliteStore 单条 INSERT 失败 → 整批退出,已写的行
-//!   留在 v2 db,管理员手动用 SQL 删 record 或重新跑)。
+//! - **失败恢复**:不自动备份(避免拷大型 db);失败时直接重跑即可 ——
+//!   确定性 ID + upsert 让已迁移的行原样覆盖,不会产生重复数据。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -44,6 +49,11 @@ pub struct Args {
     /// 只统计不写
     #[arg(long, default_value_t = false)]
     pub dry_run: bool,
+
+    /// v1 due_date/repeat_end_date 是本地墙钟字符串,换算 UTC 用的工作时区偏移
+    /// (分钟,东正西负,东八区 +480)。缺省取迁移机本地时区。
+    #[arg(long)]
+    pub tz_offset_min: Option<i32>,
 }
 
 /// 二进制入口 —— 由 `src/main.rs` 调用。
@@ -93,7 +103,8 @@ pub fn run(args: Args) -> Result<()> {
 
     let v1 = Connection::open(&args.from).context("open v1 db")?;
     check_v1_schema(&v1)?;
-    info!("v1 schema OK");
+    let tz = args.tz_offset_min.unwrap_or_else(local_offset_minutes);
+    info!("v1 schema OK; tz_offset_min={tz} (due_date 按本地墙钟换算)");
 
     let v2: Option<SqliteStore> = if args.dry_run {
         None
@@ -122,6 +133,7 @@ pub fn run(args: Args) -> Result<()> {
         &mut stats,
         &mut task_id_map,
         &id_map.project,
+        tz,
     )?;
     id_map.task = task_id_map;
 
@@ -138,6 +150,7 @@ pub fn run(args: Args) -> Result<()> {
         "  mode:         {}",
         if args.dry_run { "DRY-RUN" } else { "WRITE" }
     );
+    println!("  tz_offset_min: {tz}");
     println!("  projects:     {}", stats.projects);
     println!("  tags:         {}", stats.tags);
     println!("  tasks:        {}", stats.tasks);
@@ -229,6 +242,64 @@ fn parse_datetime(s: &str) -> Option<DateTime<Utc>> {
         .map(|d| d.with_timezone(&Utc))
 }
 
+/// 宽松解析**本地墙钟**字符串(v1 due_date/repeat_end_date 列):日期 /
+/// 日期T时分 / 带秒带微秒均可,返回 naive 墙钟。
+fn parse_wall_naive(s: &str) -> Option<NaiveDateTime> {
+    let s = s.trim();
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return d.and_hms_opt(0, 0, 0);
+    }
+    let trimmed = s
+        .trim_end_matches('Z')
+        .split_once("+")
+        .map(|(a, _)| a)
+        .unwrap_or(s);
+    for fmt in [
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+    ] {
+        if let Ok(n) = NaiveDateTime::parse_from_str(trimmed, fmt) {
+            return Some(n);
+        }
+    }
+    None
+}
+
+/// v1 **本地墙钟**字符串(due_date / repeat_end_date)→ UTC 时刻。
+/// 东八区 "2026-08-19 00:00" 墙钟 → 2026-08-18T16:00Z;带显式时区偏移的
+/// RFC3339 串已是明确时刻,按原样解析。
+fn parse_local_datetime(s: &str, tz_offset_min: i32) -> Option<DateTime<Utc>> {
+    if let Some(wall) = parse_wall_naive(s) {
+        return Some(DateTime::<Utc>::from_naive_utc_and_offset(
+            wall - chrono::Duration::minutes(i64::from(tz_offset_min)),
+            Utc,
+        ));
+    }
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
+}
+
+/// 迁移机本地时区偏移(分钟,东正西负)。
+fn local_offset_minutes() -> i32 {
+    // 同一时刻的本地墙钟 - UTC 墙钟 = 偏移(不走 Offset trait,避免惯用歧义)
+    let now = chrono::Local::now();
+    (now.naive_local() - now.naive_utc()).num_minutes() as i32
+}
+
+// === ID 重映射 ===
+
+/// 由「v1 表名 + 整型主键」确定性生成 v2 UUID v5。
+/// 同一 v1 库重跑迁移时 upsert 命中同一行 → **幂等**(随机 v4 会全库翻倍)。
+fn det_id(source: &str, v1_id: i64) -> Id {
+    let name = format!("pomoflow-v1/{source}/{v1_id}");
+    Id(uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, name.as_bytes()).to_string())
+}
+
 fn parse_date(s: &str) -> Option<String> {
     let formats = ["%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"];
     for f in formats {
@@ -316,7 +387,7 @@ fn migrate_projects(
             }
         };
 
-        let new_id = Id::new();
+        let new_id = det_id("projects", v1_id);
         let parent_id = v1_parent.and_then(|pid| id_map.get(&pid).cloned());
         let updated_at = updated
             .as_deref()
@@ -381,7 +452,7 @@ fn migrate_tags(
             }
         };
 
-        let new_id = Id::new();
+        let new_id = det_id("tags", v1_id);
         let updated_at = updated
             .as_deref()
             .and_then(parse_datetime)
@@ -430,6 +501,7 @@ fn migrate_tasks(
     stats: &mut Stats,
     task_id_map: &mut HashMap<i64, Id>,
     project_map: &HashMap<i64, Id>,
+    tz_offset_min: i32,
 ) -> Result<()> {
     let mut stmt = v1.prepare(
         "SELECT id, title, description, project_id, priority, status, due_date,
@@ -490,7 +562,7 @@ fn migrate_tasks(
             }
         };
 
-        let new_id = Id::new();
+        let new_id = det_id("tasks", v1_id);
         let project_id = v1_project.and_then(|pid| project_map.get(&pid).cloned());
         let updated_at = updated
             .as_deref()
@@ -512,7 +584,11 @@ fn migrate_tasks(
             project_id,
             priority: priority_v1_to_v2(&priority),
             status: status_v1_to_v2(&status),
-            due_date: due_date.as_deref().and_then(parse_datetime),
+            // due/repeat_end 在 v1 是前端 datetime-local 的本地墙钟 → 按 tz 换算;
+            // completed_at 等其余列是 utcnow 的 UTC 值,继续 parse_datetime
+            due_date: due_date
+                .as_deref()
+                .and_then(|s| parse_local_datetime(s, tz_offset_min)),
             estimated_pomodoros: estimated.unwrap_or(0).max(0) as u32,
             completed_pomodoros: completed.max(0) as u32,
             pomodoro_duration: pomodoro_duration.map(|v| v.max(0) as u32),
@@ -526,7 +602,9 @@ fn migrate_tasks(
                 .unwrap_or(Repeat::None),
             repeat_config,
             repeat_parent_id,
-            repeat_end_date: repeat_end_date.as_deref().and_then(parse_datetime),
+            repeat_end_date: repeat_end_date
+                .as_deref()
+                .and_then(|s| parse_local_datetime(s, tz_offset_min)),
             completed_at: completed_at.as_deref().and_then(parse_datetime),
             created_at,
             revision: 1,
@@ -640,7 +718,7 @@ fn migrate_pomodoros(
             .unwrap_or(updated_at);
 
         let session = PomodoroSession {
-            id: Id::new(),
+            id: det_id("pomodoro_sessions", v1_id),
             task_id,
             project_id,
             duration: duration.max(0) as u32,
@@ -697,7 +775,7 @@ fn migrate_daily_reviews(
             .unwrap_or_else(Timestamp::now);
 
         let review = DailyReview {
-            id: Id::new(),
+            id: det_id("daily_reviews", id),
             date: date_str,
             content: content.unwrap_or_default(),
             revision: 1,
@@ -750,7 +828,7 @@ fn migrate_weekly_reviews(
             .unwrap_or_else(Timestamp::now);
 
         let review = WeeklyReview {
-            id: Id::new(),
+            id: det_id("weekly_reviews", id),
             week_start: week_str,
             content: content.unwrap_or_default(),
             revision: 1,
@@ -782,6 +860,7 @@ fn migrate_subtasks(
     )?;
     let rows = stmt.query_map([], |r| {
         Ok((
+            r.get::<_, i64>(0)?, // rowid(确定性 ID 的源)
             r.get::<_, i64>(1)?,
             r.get::<_, String>(2)?,
             r.get::<_, bool>(3)?,
@@ -792,7 +871,7 @@ fn migrate_subtasks(
 
     let mut position_by_task: HashMap<Id, u32> = HashMap::new();
     for row in rows {
-        let (v1_task, title, is_completed, created, updated) = match row {
+        let (rowid, v1_task, title, is_completed, created, updated) = match row {
             Ok(x) => x,
             Err(e) => {
                 warn!("subtask row read: {e}");
@@ -816,7 +895,7 @@ fn migrate_subtasks(
         let position = position_by_task.entry(task_id.clone()).or_insert(0);
 
         let subtask = SubTask {
-            id: Id::new(),
+            id: det_id("subtasks", rowid),
             task_id,
             title,
             is_completed,
@@ -873,7 +952,7 @@ fn migrate_mottos(v1: &Connection, v2: Option<&SqliteStore>, stats: &mut Stats) 
             .unwrap_or(updated_at);
 
         let motto = Motto {
-            id: Id::new(),
+            id: det_id("mottos", v1_id),
             text,
             author,
             created_at,
@@ -884,8 +963,6 @@ fn migrate_mottos(v1: &Connection, v2: Option<&SqliteStore>, stats: &mut Stats) 
 
         if let Some(store) = v2 {
             store.upsert_motto(motto)?;
-        } else {
-            let _ = v1_id; // dry-run 下消掉未使用告警
         }
         stats.mottos += 1;
     }
@@ -909,7 +986,7 @@ fn migrate_monthly_reviews(
     })?;
 
     for row in rows {
-        let (_id, year_month, content, updated) = match row {
+        let (id, year_month, content, updated) = match row {
             Ok(x) => x,
             Err(e) => {
                 warn!("monthly_review row read: {e}");
@@ -924,7 +1001,7 @@ fn migrate_monthly_reviews(
             .unwrap_or_else(Timestamp::now);
 
         let review = MonthlyReview {
-            id: Id::new(),
+            id: det_id("monthly_reviews", id),
             year_month,
             content: content.unwrap_or_default(),
             revision: 1,
