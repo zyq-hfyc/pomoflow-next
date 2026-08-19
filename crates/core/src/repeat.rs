@@ -19,14 +19,38 @@
 //! - [`compute_repeat_end_date`]:yearly → due+5 年(2/29 **钳制到 2/28**,
 //!   与实例生成的"跳过"不同,v1 两处行为就不一致,保持);custom → endDate;
 //!   其余 → 当年 12-31 23:59。
+//!
+//! ## 本地墙钟日历(v2 关键差异)
+//!
+//! v1 的 due_date 是**本地 naive** datetime,上面所有"当年 12-31 / +5 年 /
+//! 同月同日"都落在用户本地日历上。v2 把 due 存成 UTC 时刻(纯日期任务存本地
+//! 午夜,东八区落在 UTC 前一天 16:00),若直接拿 UTC 年份做年界,1 月 1 日到期的
+//! 任务会算出 **0 个**实例、12 月 31 日到期的会**多出**一个跨年实例。因此本引擎
+//! 的全部日期算术先换算到**本地墙钟**(`tz_offset_min`,东正西负,东八区 +480)
+//! 再做,产出的墙钟时刻最后换回 UTC;core 保持纯算术,不引 chrono::Local。
 
-use chrono::{DateTime, Datelike, NaiveDate, Timelike, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, Timelike, Utc};
 use serde::Deserialize;
 
 use crate::model::{Repeat, Task};
 
 /// 单个模板最多预生成的实例数(v1 REPEAT_MAX_INSTANCES)。
 pub const REPEAT_MAX_INSTANCES: usize = 50;
+
+// === 墙钟 ↔ UTC 换算(tz_offset_min 东正西负,东八区 +480) ===
+
+/// UTC 时刻 → 请求方本地墙钟。
+fn to_wall(dt: DateTime<Utc>, tz_offset_min: i32) -> NaiveDateTime {
+    (dt + chrono::Duration::minutes(i64::from(tz_offset_min))).naive_utc()
+}
+
+/// 本地墙钟 → UTC 时刻。
+fn from_wall(wall: NaiveDateTime, tz_offset_min: i32) -> Option<DateTime<Utc>> {
+    Some(DateTime::<Utc>::from_naive_utc_and_offset(
+        wall - chrono::Duration::minutes(i64::from(tz_offset_min)),
+        Utc,
+    ))
+}
 
 // === 安全日期构造 ===
 
@@ -35,29 +59,26 @@ fn safe_date(y: i32, m: u32, d: u32) -> Option<NaiveDate> {
     NaiveDate::from_ymd_opt(y, m, d)
 }
 
-/// 替换年份;2/29 等边界回退到 2/28(v1 `_safe_dt_replace_year`)。
-fn replace_year(dt: DateTime<Utc>, year: i32) -> Option<DateTime<Utc>> {
-    let naive = dt.naive_utc();
-    NaiveDate::from_ymd_opt(year, naive.month(), naive.day())
-        .or_else(|| NaiveDate::from_ymd_opt(year, naive.month(), 28))
-        .and_then(|d| d.and_hms_opt(naive.hour(), naive.minute(), 0))
-        .map(|n| DateTime::<Utc>::from_naive_utc_and_offset(n, Utc))
+/// 墙钟替换年份;2/29 等边界回退到 2/28(v1 `_safe_dt_replace_year`)。
+fn replace_year_wall(wall: NaiveDateTime, year: i32) -> Option<NaiveDateTime> {
+    NaiveDate::from_ymd_opt(year, wall.month(), wall.day())
+        .or_else(|| NaiveDate::from_ymd_opt(year, wall.month(), 28))
+        .and_then(|d| d.and_hms_opt(wall.hour(), wall.minute(), 0))
 }
 
-/// 由日期 + 时:分构造 UTC 时刻(秒归零,对齐 v1 `make()`)。
-fn at_hm(d: NaiveDate, hour: u32, minute: u32) -> Option<DateTime<Utc>> {
+/// 由日期 + 时:分构造墙钟时刻(秒归零,对齐 v1 `make()`)。
+fn at_hm(d: NaiveDate, hour: u32, minute: u32) -> Option<NaiveDateTime> {
     d.and_hms_opt(hour, minute, 0)
-        .map(|n| DateTime::<Utc>::from_naive_utc_and_offset(n, Utc))
 }
 
-/// 宽松解析 v1 存的 ISO 字符串:日期 / 日期T时分 / 带秒带 Z 均可,naive 视作 UTC。
-fn parse_dt(s: &str) -> Option<DateTime<Utc>> {
+/// 宽松解析 v1/前端存的 ISO 字符串为**本地墙钟**:日期 / 日期T时分 /
+/// 带秒 / 带时区后缀均可;naive 串按墙钟理解(v1 fromisoformat 语义),
+/// 带偏移的 RFC3339 换算到请求方墙钟。
+fn parse_wall(s: &str, tz_offset_min: i32) -> Option<NaiveDateTime> {
     let s = s.trim();
     if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return at_hm(d, 0, 0);
+        return d.and_hms_opt(0, 0, 0);
     }
-    // 去掉可能的时区后缀(Z / +08:00)按 naive 解析再视为 UTC(v1 fromisoformat
-    // 语义:存的都是 naive 本地时钟值)
     let trimmed = s
         .trim_end_matches('Z')
         .split_once("+")
@@ -69,13 +90,15 @@ fn parse_dt(s: &str) -> Option<DateTime<Utc>> {
         "%Y-%m-%dT%H:%M:%S",
         "%Y-%m-%d %H:%M:%S",
     ] {
-        if let Ok(n) = chrono::NaiveDateTime::parse_from_str(trimmed, fmt) {
-            return Some(DateTime::<Utc>::from_naive_utc_and_offset(n, Utc));
+        if let Ok(n) = NaiveDateTime::parse_from_str(trimmed, fmt) {
+            return Some(n);
         }
     }
-    DateTime::parse_from_rfc3339(s)
-        .ok()
-        .map(|d| d.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(s).ok().map(|d| {
+        let offset = FixedOffset::east_opt(tz_offset_min * 60)
+            .unwrap_or_else(|| FixedOffset::east_opt(0).unwrap());
+        d.with_timezone(&offset).naive_local()
+    })
 }
 
 // === 自定义规则 ===
@@ -146,25 +169,34 @@ impl CustomConfig {
     }
 }
 
-/// 自定义规则实例日期(v1 `_compute_custom_dates`)。
+/// 自定义规则实例墙钟日期(v1 `_compute_custom_dates`)。
 fn compute_custom_dates(
-    due: DateTime<Utc>,
+    due_wall: NaiveDateTime,
     config: Option<&str>,
+    tz_offset_min: i32,
     max_count: usize,
-) -> Vec<DateTime<Utc>> {
+) -> Vec<NaiveDateTime> {
     let Some(cfg) = CustomConfig::parse(config) else {
         return Vec::new();
     };
     let step = cfg.step();
-    let start = cfg.start_date.as_deref().and_then(parse_dt).unwrap_or(due);
-    let Some(end) = cfg.end_date.as_deref().and_then(parse_dt) else {
+    let start = cfg
+        .start_date
+        .as_deref()
+        .and_then(|s| parse_wall(s, tz_offset_min))
+        .unwrap_or(due_wall);
+    let Some(end) = cfg
+        .end_date
+        .as_deref()
+        .and_then(|s| parse_wall(s, tz_offset_min))
+    else {
         return Vec::new(); // 无 endDate → 不生成(v1 语义)
     };
-    let start_d = start.date_naive();
-    let end_d = end.date_naive();
+    let start_d = start.date();
+    let end_d = end.date();
     let (hour, minute) = (start.hour(), start.minute());
 
-    let mut dates: Vec<DateTime<Utc>> = Vec::new();
+    let mut dates: Vec<NaiveDateTime> = Vec::new();
 
     match cfg.rtype.as_str() {
         "day" => {
@@ -246,26 +278,34 @@ fn compute_custom_dates(
 
 // === 入口 ===
 
-/// 计算重复实例日期(不含 due 当天),上限 [`REPEAT_MAX_INSTANCES`]。
+/// 计算重复实例日期(不含 due 当天,UTC 时刻),上限 [`REPEAT_MAX_INSTANCES`]。
 ///
-/// `rule == None`(不重复)或无 due → 空。
+/// `rule == None`(不重复)或无 due → 空。日期算术在 `tz_offset_min` 的
+/// **本地墙钟**日历上进行(见模块注释)。
 pub fn compute_repeat_dates(
     rule: Repeat,
     due: Option<DateTime<Utc>>,
     config: Option<&str>,
+    tz_offset_min: i32,
 ) -> Vec<DateTime<Utc>> {
     let Some(due) = due else {
         return Vec::new();
     };
-    let (hour, minute) = (due.hour(), due.minute());
-    let mut dates: Vec<DateTime<Utc>> = Vec::new();
-    let end_of_year = NaiveDate::from_ymd_opt(due.year(), 12, 31).unwrap_or(due.date_naive());
+    let wall = to_wall(due, tz_offset_min);
+    let (hour, minute) = (wall.hour(), wall.minute());
+    let mut dates: Vec<NaiveDateTime> = Vec::new();
+    let end_of_year = NaiveDate::from_ymd_opt(wall.year(), 12, 31).unwrap_or(wall.date());
 
     match rule {
         Repeat::None => {}
-        Repeat::Custom => return compute_custom_dates(due, config, REPEAT_MAX_INSTANCES),
+        Repeat::Custom => {
+            return compute_custom_dates(wall, config, tz_offset_min, REPEAT_MAX_INSTANCES)
+                .into_iter()
+                .filter_map(|n| from_wall(n, tz_offset_min))
+                .collect();
+        }
         Repeat::Daily | Repeat::Weekdays => {
-            let mut cur = due.date_naive() + chrono::Duration::days(1);
+            let mut cur = wall.date() + chrono::Duration::days(1);
             while cur <= end_of_year && dates.len() < REPEAT_MAX_INSTANCES {
                 if rule == Repeat::Daily || cur.weekday().num_days_from_monday() < 5 {
                     if let Some(dt) = at_hm(cur, hour, minute) {
@@ -276,7 +316,7 @@ pub fn compute_repeat_dates(
             }
         }
         Repeat::Weekly => {
-            let mut cur = due.date_naive() + chrono::Duration::days(7);
+            let mut cur = wall.date() + chrono::Duration::days(7);
             while cur <= end_of_year && dates.len() < REPEAT_MAX_INSTANCES {
                 if let Some(dt) = at_hm(cur, hour, minute) {
                     dates.push(dt);
@@ -285,7 +325,7 @@ pub fn compute_repeat_dates(
             }
         }
         Repeat::Monthly => {
-            let (day, mut y, mut m) = (due.day(), due.year(), due.month());
+            let (day, mut y, mut m) = (wall.day(), wall.year(), wall.month());
             while dates.len() < REPEAT_MAX_INSTANCES {
                 m += 1;
                 if m > 12 {
@@ -304,11 +344,11 @@ pub fn compute_repeat_dates(
             }
         }
         Repeat::Yearly => {
-            let mut y = due.year() + 1;
-            let end_year = due.year() + 5;
+            let mut y = wall.year() + 1;
+            let end_year = wall.year() + 5;
             while y <= end_year && dates.len() < REPEAT_MAX_INSTANCES {
                 // 2/29 在非闰年 _safe_date 返回 None → 跳过该年
-                if let Some(d) = safe_date(y, due.month(), due.day()) {
+                if let Some(d) = safe_date(y, wall.month(), wall.day()) {
                     if let Some(dt) = at_hm(d, hour, minute) {
                         dates.push(dt);
                     }
@@ -318,21 +358,31 @@ pub fn compute_repeat_dates(
         }
     }
     dates
+        .into_iter()
+        .filter_map(|n| from_wall(n, tz_offset_min))
+        .collect()
 }
 
-/// 模板任务的重复终止时间(v1 `_compute_repeat_end_date`)。
+/// 模板任务的重复终止时间(v1 `_compute_repeat_end_date`,墙钟算术后回 UTC)。
 ///
 /// yearly → due+5 年(2/29 钳制 2/28);custom → config.endDate;
 /// 其余 → 当年 12-31 23:59;无 due / 不重复 → None。
-pub fn compute_repeat_end_date(task: &Task) -> Option<DateTime<Utc>> {
-    let due = task.due_date?;
+pub fn compute_repeat_end_date(task: &Task, tz_offset_min: i32) -> Option<DateTime<Utc>> {
+    let wall = to_wall(task.due_date?, tz_offset_min);
     match task.repeat {
-        Repeat::Yearly => Some(replace_year(due, due.year() + 5).unwrap_or(due)),
+        Repeat::Yearly => replace_year_wall(wall, wall.year() + 5)
+            .and_then(|n| from_wall(n, tz_offset_min))
+            .or(Some(task.due_date?)),
         Repeat::Custom => CustomConfig::parse(task.repeat_config.as_deref())
-            .and_then(|c| c.end_date.as_deref().and_then(parse_dt)),
-        _ => NaiveDate::from_ymd_opt(due.year(), 12, 31)?
+            .and_then(|c| {
+                c.end_date
+                    .as_deref()
+                    .and_then(|s| parse_wall(s, tz_offset_min))
+            })
+            .and_then(|n| from_wall(n, tz_offset_min)),
+        _ => NaiveDate::from_ymd_opt(wall.year(), 12, 31)?
             .and_hms_opt(23, 59, 0)
-            .map(|n| DateTime::<Utc>::from_naive_utc_and_offset(n, Utc)),
+            .and_then(|n| from_wall(n, tz_offset_min)),
     }
 }
 
@@ -341,21 +391,30 @@ mod tests {
     use super::*;
     use crate::model::Task;
 
-    fn dt(s: &str) -> DateTime<Utc> {
-        parse_dt(s).unwrap()
+    /// 墙钟字符串 → UTC 时刻(在 tz 时区下)。
+    fn due_at(s: &str, tz: i32) -> DateTime<Utc> {
+        from_wall(parse_wall(s, tz).unwrap(), tz).unwrap()
+    }
+
+    /// 实例日期以墙钟字符串输出(断言可读;tz=0 时墙钟 == UTC)。
+    fn wall_dates_of(rule: Repeat, due: &str, tz: i32) -> Vec<String> {
+        compute_repeat_dates(rule, Some(due_at(due, tz)), None, tz)
+            .iter()
+            .map(|d| to_wall(*d, tz).format("%Y-%m-%d %H:%M").to_string())
+            .collect()
     }
 
     fn dates_of(rule: Repeat, due: &str) -> Vec<String> {
-        compute_repeat_dates(rule, Some(dt(due)), None)
-            .iter()
-            .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
-            .collect()
+        wall_dates_of(rule, due, 0)
     }
 
     #[test]
     fn no_due_or_no_rule_yields_empty() {
-        assert!(compute_repeat_dates(Repeat::Daily, None, None).is_empty());
-        assert!(compute_repeat_dates(Repeat::None, Some(dt("2026-08-16T09:00")), None).is_empty());
+        assert!(compute_repeat_dates(Repeat::Daily, None, None, 0).is_empty());
+        assert!(
+            compute_repeat_dates(Repeat::None, Some(due_at("2026-08-16T09:00", 0)), None, 0)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -372,19 +431,43 @@ mod tests {
         );
         // 秒归零(v1 make() 只传时分)
         assert_eq!(
-            compute_repeat_dates(Repeat::Daily, Some(dt("2026-08-16T09:30:45")), None)[0]
-                .format("%H:%M:%S")
-                .to_string(),
+            compute_repeat_dates(
+                Repeat::Daily,
+                Some(due_at("2026-08-16T09:30:45", 0)),
+                None,
+                0
+            )[0]
+            .format("%H:%M:%S")
+            .to_string(),
             "09:30:00"
         );
     }
 
     #[test]
     fn daily_caps_at_50() {
-        let out = compute_repeat_dates(Repeat::Daily, Some(dt("2026-01-01T09:00")), None);
+        let out = compute_repeat_dates(Repeat::Daily, Some(due_at("2026-01-01T09:00", 0)), None, 0);
         assert_eq!(out.len(), 50);
         // 从 1-02 起 50 个:第 50 个 = 1-02 + 49 天 = 2-20
         assert_eq!(out[49].format("%Y-%m-%d").to_string(), "2026-02-20");
+    }
+
+    #[test]
+    fn daily_new_year_boundary_uses_local_calendar() {
+        // 东八区纯日期 due 2026-01-01(本地午夜 → UTC 2025-12-31T16:00):
+        // 修复前"当年 12-31"按 UTC 年(2025)算 → 0 实例;修复后按本地年正常生成,
+        // 1/2 起步、50 个到 2/20(v1 上限语义)
+        let out = wall_dates_of(Repeat::Daily, "2026-01-01T00:00", 480);
+        assert_eq!(out.len(), 50);
+        assert_eq!(out[0], "2026-01-02 00:00");
+        assert_eq!(out.last().unwrap(), "2026-02-20 00:00");
+
+        // 12-31 到期:年内已无剩余日期 → 0 实例(修复前会多出次年 1-1)
+        assert!(wall_dates_of(Repeat::Daily, "2026-12-31T00:00", 480).is_empty());
+        // 12-30 到期:恰好剩 12-31 一个
+        assert_eq!(
+            wall_dates_of(Repeat::Daily, "2026-12-30T00:00", 480),
+            ["2026-12-31 00:00"]
+        );
     }
 
     #[test]
@@ -447,9 +530,9 @@ mod tests {
     // === custom ===
 
     fn custom_dates(due: &str, cfg: &str) -> Vec<String> {
-        compute_repeat_dates(Repeat::Custom, Some(dt(due)), Some(cfg))
+        compute_repeat_dates(Repeat::Custom, Some(due_at(due, 0)), Some(cfg), 0)
             .iter()
-            .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+            .map(|d| to_wall(*d, 0).format("%Y-%m-%d %H:%M").to_string())
             .collect()
     }
 
@@ -581,21 +664,31 @@ mod tests {
     fn task_with(rule: Repeat, due: &str, config: Option<&str>) -> Task {
         let mut t = Task::new("模板");
         t.repeat = rule;
-        t.due_date = Some(dt(due));
+        t.due_date = Some(due_at(due, 0));
         t.repeat_config = config.map(|s| s.to_string());
         t
+    }
+
+    fn end_of(t: &Task, tz: i32) -> String {
+        to_wall(compute_repeat_end_date(t, tz).unwrap(), tz)
+            .format("%Y-%m-%d %H:%M")
+            .to_string()
     }
 
     #[test]
     fn end_date_yearly_clamps_feb29() {
         let t = task_with(Repeat::Yearly, "2028-02-29T09:00", None);
-        assert_eq!(
-            compute_repeat_end_date(&t)
-                .unwrap()
-                .format("%Y-%m-%d")
-                .to_string(),
-            "2033-02-28"
-        );
+        assert_eq!(end_of(&t, 0), "2033-02-28 09:00");
+    }
+
+    #[test]
+    fn end_date_yearly_new_year_boundary_local() {
+        // 东八区 2026-01-01 本地午夜 → UTC 2025-12-31T16:00;终止时间应在
+        // 本地 2031-01-01(修复前按 UTC 年会落到 2030-12-31)
+        let mut t = Task::new("跨年模板");
+        t.repeat = Repeat::Yearly;
+        t.due_date = Some(due_at("2026-01-01T00:00", 480));
+        assert_eq!(end_of(&t, 480), "2031-01-01 00:00");
     }
 
     #[test]
@@ -605,28 +698,14 @@ mod tests {
             "2026-08-16T09:00",
             Some(r#"{"type":"week","endDate":"2026-10-01","weekdays":[1]}"#),
         );
-        assert_eq!(
-            compute_repeat_end_date(&t)
-                .unwrap()
-                .format("%Y-%m-%d")
-                .to_string(),
-            "2026-10-01"
-        );
+        assert_eq!(end_of(&t, 0), "2026-10-01 00:00");
     }
 
     #[test]
     fn end_date_regular_rules_dec31() {
         let t = task_with(Repeat::Daily, "2026-08-16T09:00", None);
-        assert_eq!(
-            compute_repeat_end_date(&t)
-                .unwrap()
-                .format("%Y-%m-%d %H:%M")
-                .to_string(),
-            "2026-12-31 23:59"
-        );
-        let none = task_with(Repeat::Daily, "2026-08-16T09:00", None);
-        let _ = none; // (rule 无 due 的分支)
+        assert_eq!(end_of(&t, 0), "2026-12-31 23:59");
         let no_due = Task::new("无 due");
-        assert!(compute_repeat_end_date(&no_due).is_none());
+        assert!(compute_repeat_end_date(&no_due, 0).is_none());
     }
 }

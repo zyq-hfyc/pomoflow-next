@@ -25,9 +25,17 @@ fn is_template(task: &Task) -> bool {
 
 /// 按模板预生成重复实例(v1 generate_repeat_instances)。
 ///
+/// `tz_offset_min`(东正西负)决定日期算术用的**本地墙钟**日历 —— v2 把 due
+/// 存成 UTC,纯日期任务(本地午夜)的 UTC 年份会差一年,年界(当年 12-31 /
+/// +5 年)必须按本地年算,见 core::repeat 模块注释。
+///
 /// 调用时机:模板创建后 / repeat 规则变化重生成(此时模板已落库,标签为最新)。
 /// 返回生成的实例数。
-pub fn generate_instances(store: &dyn Store, parent: &Task) -> CoreResult<usize> {
+pub fn generate_instances(
+    store: &dyn Store,
+    parent: &Task,
+    tz_offset_min: i32,
+) -> CoreResult<usize> {
     if !is_template(parent) {
         return Ok(0);
     }
@@ -35,16 +43,21 @@ pub fn generate_instances(store: &dyn Store, parent: &Task) -> CoreResult<usize>
         parent.repeat,
         parent.due_date,
         parent.repeat_config.as_deref(),
+        tz_offset_min,
     );
     if dates.is_empty() {
         return Ok(0);
     }
     let parent_tags = store.list_tags_for_task(&parent.id)?;
     let parent_subtasks = store.list_subtasks_for_task(&parent.id)?;
-    let now = Timestamp::now();
+    let base = Timestamp::now();
     let count = dates.len();
 
-    for due in dates {
+    // v1 每实例独立 datetime.utcnow(微秒递增)→ 同批实例按 due 升序拥有递增
+    // created_at,列表(created_at 排序)天然按到期日排列。v2 若共用同一时间戳,
+    // 排序退化到随机 UUID 序 → 同模板实例在列表里乱序。这里按序号 +1ms 复刻。
+    for (idx, due) in dates.into_iter().enumerate() {
+        let stamp = Timestamp(base.0 + chrono::Duration::milliseconds(idx as i64));
         let inst = Task {
             id: Id::new(),
             title: parent.title.clone(),
@@ -62,10 +75,10 @@ pub fn generate_instances(store: &dyn Store, parent: &Task) -> CoreResult<usize>
             repeat_parent_id: Some(parent.id.clone()),
             repeat_end_date: None,
             completed_at: None,
-            created_at: now,
+            created_at: stamp,
             revision: 1,
             deleted_at: None,
-            updated_at: now,
+            updated_at: stamp,
         };
         let saved = store.upsert_task(inst)?;
         // 复制模板当前标签
@@ -81,10 +94,10 @@ pub fn generate_instances(store: &dyn Store, parent: &Task) -> CoreResult<usize>
                 title: st.title.clone(),
                 is_completed: false,
                 position: st.position,
-                created_at: now,
+                created_at: stamp,
                 revision: 1,
                 deleted_at: None,
-                updated_at: now,
+                updated_at: stamp,
             })?;
         }
     }
@@ -152,7 +165,7 @@ mod tests {
             .upsert_subtask(SubTask::new(pid.clone(), "第一步"))
             .unwrap();
 
-        let n = generate_instances(&store, &parent).unwrap();
+        let n = generate_instances(&store, &parent, 0).unwrap();
         // 12-29 起:daily 到年底 = 12-30、12-31 两实例
         assert_eq!(n, 2);
         let insts = store
@@ -183,7 +196,7 @@ mod tests {
         let parent = template(Repeat::Daily, "2026-12-29T09:00");
         let pid = parent.id.clone();
         store.upsert_task(parent.clone()).unwrap();
-        generate_instances(&store, &parent).unwrap();
+        generate_instances(&store, &parent, 0).unwrap();
 
         let insts = store
             .list_tasks(&TaskQuery {
@@ -209,13 +222,46 @@ mod tests {
     }
 
     #[test]
+    fn instances_ordered_by_due_within_batch() {
+        // 同批实例共享毫秒级 Timestamp 会让列表排序退化到随机 UUID 序;
+        // 修复后 due 早的实例 created_at 也早,list(created_at DESC)呈到期日降序
+        let store = InMemoryStore::new();
+        let parent = template(Repeat::Daily, "2026-12-01T09:00");
+        let pid = parent.id.clone();
+        store.upsert_task(parent.clone()).unwrap();
+        generate_instances(&store, &parent, 0).unwrap();
+
+        let insts = store
+            .list_tasks(&TaskQuery {
+                repeat_parent: Some(pid),
+                ..TaskQuery::default()
+            })
+            .unwrap();
+        assert!(insts.len() >= 2);
+        // created_at 严格递增(due 升序分配)
+        let created: Vec<_> = insts.iter().map(|t| t.created_at.0).collect();
+        let mut asc = created.clone();
+        asc.reverse();
+        assert!(
+            asc.windows(2).all(|w| w[0] < w[1]),
+            "created_at 应随 due 严格递增:{created:?}"
+        );
+        // 列表(DESC)即到期日降序
+        let dues: Vec<_> = insts.iter().filter_map(|t| t.due_date).collect();
+        let mut sorted_desc = dues.clone();
+        sorted_desc.sort();
+        sorted_desc.reverse();
+        assert_eq!(dues, sorted_desc);
+    }
+
+    #[test]
     fn non_template_yields_nothing() {
         let store = InMemoryStore::new();
         let mut inst = template(Repeat::Daily, "2026-12-29T09:00");
         inst.repeat_parent_id = Some(Id::new()); // 自身是实例
-        assert_eq!(generate_instances(&store, &inst).unwrap(), 0);
+        assert_eq!(generate_instances(&store, &inst, 0).unwrap(), 0);
         let mut plain = Task::new("普通任务"); // 无规则
         plain.due_date = inst.due_date;
-        assert_eq!(generate_instances(&store, &plain).unwrap(), 0);
+        assert_eq!(generate_instances(&store, &plain, 0).unwrap(), 0);
     }
 }

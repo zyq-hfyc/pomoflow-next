@@ -180,9 +180,16 @@ export const getTask = (id: string) => invoke<TaskView>("get_task", { id });
  * 可选 tagIds:v1 TaskCreate.tag_ids 原子语义 —— 先链标签再落任务,
  * 使重复实例生成时能复制到模板标签;编辑 repeat 时传入当前标签,
  * 重生成实例与 v1 update_task(标签应用在重生成前)语义一致。
+ *
+ * tzOffsetMin 自动注入(东正西负):重复实例的日期算术按本地墙钟日历做,
+ * 否则纯日期任务(本地午夜存 UTC)的年界会差一年。
  */
 export const upsertTask = (task: Task, tagIds?: string[] | null) =>
-  invoke<TaskView>("upsert_task", { task, tagIds });
+  invoke<TaskView>("upsert_task", {
+    task,
+    tagIds,
+    tzOffsetMin: -new Date().getTimezoneOffset(),
+  });
 
 export const deleteTask = (id: string) => invoke<void>("delete_task", { id });
 

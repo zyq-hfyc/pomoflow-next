@@ -42,11 +42,17 @@ fn parity_with_v1_python() {
                 .ok()
                 .map(|n| DateTime::<Utc>::from_naive_utc_and_offset(n, Utc))
         });
-        let out: Vec<String> =
-            compute_repeat_dates(rule_of(&case.rule), due, case.config.as_deref())
-                .iter()
-                .map(|d| d.format("%Y-%m-%dT%H:%M").to_string())
-                .collect();
+        let out: Vec<String> = compute_repeat_dates(
+            rule_of(&case.rule),
+            due,
+            case.config.as_deref(),
+            // v1 期望值是 naive 墙钟串;tz=0 下墙钟 == UTC,重写后的墙钟算术
+            // 与旧 UTC 算术等价,期望值原样成立
+            0,
+        )
+        .iter()
+        .map(|d| d.format("%Y-%m-%dT%H:%M").to_string())
+        .collect();
         assert_eq!(
             out, case.dates,
             "rule={} due={:?} config={:?}",

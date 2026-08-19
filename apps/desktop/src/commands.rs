@@ -110,10 +110,13 @@ fn embed_views(state: &AppState, tasks: Vec<Task>) -> Result<Vec<TaskView>, Stri
 pub fn upsert_task(
     task: Task,
     tag_ids: Option<Vec<String>>,
+    // 请求方本地时区偏移(分钟,东正西负):重复实例的日期算术按本地墙钟做
+    tz_offset_min: Option<i32>,
     state: State<'_, AppState>,
 ) -> Result<TaskView, String> {
     validate::validate_task(&task).map_err(map_err)?;
     let store = &state.store;
+    let tz = tz_offset_min.unwrap_or(0);
 
     // 可选:同请求链接标签(v1 TaskCreate.tag_ids 原子语义 —— 重复实例生成时
     // 需要模板标签已就位,故先链标签再落任务/生成实例)
@@ -138,10 +141,11 @@ pub fn upsert_task(
         task.completed_pomodoros = e.completed_pomodoros;
         task.completed_at = e.completed_at;
     }
+
     if task.repeat_parent_id.is_none() {
         // 模板:每次 upsert 重算 repeat_end_date(v1 行为)
         task.repeat_end_date = if task.repeat != pomoflow_core::model::Repeat::None {
-            pomoflow_core::repeat::compute_repeat_end_date(&task)
+            pomoflow_core::repeat::compute_repeat_end_date(&task, tz)
         } else {
             None
         };
@@ -160,11 +164,11 @@ pub fn upsert_task(
             // 规则/起点变化:删旧 active 实例(完成的保留),有新规则则重生成
             crate::repeat_service::delete_active_instances(store, &saved.id).map_err(map_err)?;
             if saved.repeat != pomoflow_core::model::Repeat::None {
-                crate::repeat_service::generate_instances(store, &saved).map_err(map_err)?;
+                crate::repeat_service::generate_instances(store, &saved, tz).map_err(map_err)?;
             }
         } else if existing.is_none() && saved.repeat != pomoflow_core::model::Repeat::None {
             // 新建模板:预生成实例
-            crate::repeat_service::generate_instances(store, &saved).map_err(map_err)?;
+            crate::repeat_service::generate_instances(store, &saved, tz).map_err(map_err)?;
         }
         return embed_views(&state, vec![saved]).map(|mut v| v.pop().unwrap());
     }
