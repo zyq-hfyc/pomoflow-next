@@ -12,10 +12,12 @@
 //!    - 会话:按本地日 ∈ [start, end]
 //!    - completed_tasks:`status == completed && completed_at` 的 **UTC 日** ∈ [start, end]
 //!      (v1 用 naive datetime 直接比较存储的 UTC 值,语义即 UTC 日界)
-//!    - 项目分布:`status == completed && due_date` 的 UTC 日 ∈ [start, end] 且
-//!      **project_id 非空**,按项目累加 `completed_pomodoros × pomodoro_duration`
+//!    - 项目分布:`completed_pomodoros > 0 && due_date` 的 **本地日** ∈ [start, end]
+//!      且 **project_id 非空**,按项目累加 `completed_pomodoros × pomodoro_duration`
 //!      (duration NULL 按 0,直译 v1 `or 0`)—— **与番茄会话无关**,
-//!      无项目的任务不计入(没有归属维度)。
+//!      无项目的任务不计入(没有归属维度)。due 用本地日(v1 存本地日期字符串,
+//!      语义即本地日界;v2 存 UTC 时刻,须换算回请求方本地日,否则东八区
+//!      "1 号到期"的任务会落到上一个月的环图里)。
 //! 5. **总览(overview)**:today/week/month 三档分钟数+会话数(本地日 `>=` 各自起点),
 //!    total_sessions = 全部符合条件的会话数(无时间界),
 //!    total_tasks_completed = 全部 completed 任务数(无时间界)。
@@ -182,8 +184,8 @@ pub fn range_stats(
         })
         .count();
 
-    // --- 项目分布:已完成番茄钟的任务 due_date 的 UTC 日 ∈ [start, end] ---
-    let projects = project_stats_by_completed_pomodoros(tasks, projects, start, end);
+    // --- 项目分布:due_date 的本地日 ∈ [start, end] ---
+    let projects = project_stats_by_completed_pomodoros(tasks, projects, start, end, tz_offset_min);
 
     RangeStats {
         trend,
@@ -197,10 +199,10 @@ pub fn range_stats(
 }
 
 /// 项目时间分布(v1 `_project_stats_by_completed_pomodoros`,v1 12bc45a 同步):
-/// 按 Task.due_date ∈ [start, end](UTC 日)且 `completed_pomodoros > 0` 过滤,
-/// 按项目累加 `completed_pomodoros × pomodoro_duration`(duration NULL 按 0)。
-/// 不要求任务整体完成 —— 8 个番茄已完成 7 个即计入 7 个番茄的时长;
-/// 没有清单的任务不计入(无 project_id 归属维度)。
+/// 按 Task.due_date 的**本地日**(tz_offset_min 换算)∈ [start, end] 且
+/// `completed_pomodoros > 0` 过滤,按项目累加 `completed_pomodoros × pomodoro_duration`
+/// (duration NULL 按 0)。不要求任务整体完成 —— 8 个番茄已完成 7 个即计入
+/// 7 个番茄的时长;没有清单的任务不计入(无 project_id 归属维度)。
 ///
 /// 输出按 total_minutes 降序、同名稳定(v1 是 DB 顺序,这里给确定序,不影响语义)。
 pub fn project_stats_by_completed_pomodoros(
@@ -208,6 +210,7 @@ pub fn project_stats_by_completed_pomodoros(
     projects: &[Project],
     start: NaiveDate,
     end: NaiveDate,
+    tz_offset_min: i32,
 ) -> Vec<ProjectStat> {
     use std::collections::HashMap;
     let mut minutes_by_pid: HashMap<&str, u64> = HashMap::new();
@@ -215,12 +218,9 @@ pub fn project_stats_by_completed_pomodoros(
         t.deleted_at.is_none()
             && t.completed_pomodoros > 0
             && t.project_id.is_some()
-            && t.due_date
-                .map(|d| {
-                    let day = d.date_naive();
-                    day >= start && day <= end
-                })
-                .unwrap_or(false)
+            && t.due_date.is_some_and(|d| {
+                local_date_of(d, tz_offset_min).is_some_and(|day| day >= start && day <= end)
+            })
     }) {
         let pid = t.project_id.as_ref().unwrap().as_str();
         let minutes = t.completed_pomodoros as u64 * t.pomodoro_duration.unwrap_or(0) as u64;
@@ -511,7 +511,7 @@ mod tests {
             completed_task("2026-01-20", Some(other.clone()), 2, Some(30)), // 60 分钟
             completed_task("2026-02-05", Some(pid.clone()), 5, Some(25)), // due 区间外
             completed_task("2026-01-20", None, 9, Some(25)),          // 无项目 → 不计
-            partial,                                                    // active + 7 番茄 → 175 分钟
+            partial,                                                  // active + 7 番茄 → 175 分钟
         ];
 
         let no_sessions: Vec<PomodoroSession> = Vec::new();
@@ -531,6 +531,43 @@ mod tests {
         assert_eq!(r.projects[1].project_name, "工作");
         assert_eq!(r.projects[1].total_minutes, 75);
         assert_eq!(r.projects[1].project_color, "#ff0000");
+    }
+
+    #[test]
+    fn project_distribution_due_day_uses_local_calendar() {
+        // 东八区:due 2026-02-01T02:00Z = 本地 2026-02-01 10:00 → 归 2 月;
+        // UTC 日是 1-31,修复前(UTC 日界)会错归 1 月
+        let pid = Id::new();
+        let mut proj = Project::new("工作");
+        proj.id = pid.clone();
+        let mut t = Task::new("跨月边界");
+        t.project_id = Some(pid.clone());
+        t.due_date = Some(dt("2026-02-01T02:00:00Z"));
+        t.completed_pomodoros = 2;
+        t.pomodoro_duration = Some(25);
+
+        let feb = range_stats(
+            &[],
+            &[t.clone()],
+            &[proj.clone()],
+            "2026-02-01",
+            "2026-02-28",
+            StatsGroup::Day,
+            480,
+        );
+        assert_eq!(feb.projects.len(), 1);
+        assert_eq!(feb.projects[0].total_minutes, 50);
+
+        let jan = range_stats(
+            &[],
+            &[t],
+            &[proj],
+            "2026-01-01",
+            "2026-01-31",
+            StatsGroup::Day,
+            480,
+        );
+        assert!(jan.projects.is_empty());
     }
 
     #[test]
