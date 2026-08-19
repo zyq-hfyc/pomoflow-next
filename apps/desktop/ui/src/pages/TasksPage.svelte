@@ -35,6 +35,7 @@
   import { checkRemindersNow } from "../lib/reminders.svelte";
   import { getDict, fmt } from "../lib/i18n.svelte";
   import { todayStr, tomorrowStr, datePart, hasTimePart, toIsoUtc } from "../lib/dueDate";
+  import { toISO } from "../lib/calendar";
   import ProjectSidebar from "../components/Tasks/ProjectSidebar.svelte";
   import TaskItem from "../components/Tasks/TaskItem.svelte";
   import TaskDetailPanel from "../components/Tasks/TaskDetailPanel.svelte";
@@ -197,8 +198,10 @@
       mon.setDate(now.getDate() - off);
       const sun = new Date(mon);
       sun.setDate(mon.getDate() + 6);
-      const s = datePart(mon.toISOString());
-      const e = datePart(sun.toISOString());
+      // v1 TasksPage:47-65 用本地日期组件拼窗口串;不能用 toISOString(UTC),
+      // 东八区 0-8 点会把"本周"窗口左移成周日开始
+      const s = toISO(mon);
+      const e = toISO(sun);
       r = r.filter((t) => {
         const d = datePart(t.due_date);
         return !!d && d >= s && d <= e;
@@ -208,7 +211,7 @@
       const now = new Date();
       const s = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
       const eom = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      const e = datePart(eom.toISOString());
+      const e = toISO(eom);
       r = r.filter((t) => {
         const d = datePart(t.due_date);
         return !!d && d >= s && d <= e;
