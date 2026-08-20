@@ -1,0 +1,36 @@
+[package]
+name = "sync-server"
+version = "0.1.0"
+description = "PomoFlow 云端同步服务 —— Push/Pull + LWW 合并(与桌面共享 pomoflow-core)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sync-server"
+path = "src/main.rs"
+
+[dependencies]
+# 域模型 + LWW 合并(ADR-005:与桌面同一段代码,零漂移)
+pomoflow-core = { path = "../../crates/core" }
+
+# Web 框架(架构文档选型:axum + tokio)
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+
+# PostgreSQL(运行时查询,不用 query! 宏 → 编译期不需要 DATABASE_URL)。
+# default-features 必须关:sqlx 默认特性含 sqlite,其 libsqlite3-sys 会与
+# workspace 里 rusqlite(bundled)的原生链接冲突(同一 sqlite3 只能链一份)。
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"] }
+
+# 序列化 / 时间 / ID
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+# 日志
+log = { workspace = true }
+env_logger = { workspace = true }
