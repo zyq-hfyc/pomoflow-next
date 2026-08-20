@@ -60,6 +60,8 @@ pub fn generate_instances(
         let stamp = Timestamp(base.0 + chrono::Duration::milliseconds(idx as i64));
         let inst = Task {
             id: Id::new(),
+            // 存储层写入时盖章为本机用户;实例归属随模板
+            user_id: parent.user_id.clone(),
             title: parent.title.clone(),
             description: parent.description.clone(),
             project_id: parent.project_id.clone(),
@@ -90,6 +92,7 @@ pub fn generate_instances(
         for st in &parent_subtasks {
             store.upsert_subtask(SubTask {
                 id: Id::new(),
+                user_id: parent.user_id.clone(),
                 task_id: saved.id.clone(),
                 title: st.title.clone(),
                 is_completed: false,

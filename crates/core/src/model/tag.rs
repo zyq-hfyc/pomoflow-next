@@ -10,6 +10,9 @@ use super::{Id, Timestamp};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tag {
     pub id: Id,
+    /// 归属用户(多租户隔离,ADR-007;本地 = 本机用户 UUID,Store 写入时盖章)
+    #[serde(default = "crate::model::nil_user_id")]
+    pub user_id: Id,
     /// v1 唯一,这里也是(Store 实现约束)
     pub name: String,
     #[serde(default)]
@@ -33,6 +36,7 @@ impl Tag {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             id: Id::new(),
+            user_id: Id::nil(),
             name: name.into(),
             color: String::new(),
             display_order: 0,

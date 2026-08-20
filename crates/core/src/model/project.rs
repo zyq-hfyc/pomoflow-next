@@ -10,6 +10,9 @@ use super::{Id, Timestamp};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Project {
     pub id: Id,
+    /// 归属用户(多租户隔离,ADR-007;本地 = 本机用户 UUID,Store 写入时盖章)
+    #[serde(default = "crate::model::nil_user_id")]
+    pub user_id: Id,
     pub name: String,
     /// 主题色,前端消费;v1 用 hex 字符串,这里保持字符串
     #[serde(default)]
@@ -35,6 +38,7 @@ impl Project {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             id: Id::new(),
+            user_id: Id::nil(),
             name: name.into(),
             color: String::new(),
             parent_id: None,

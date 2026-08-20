@@ -11,6 +11,9 @@ use super::{Id, Timestamp};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Motto {
     pub id: Id,
+    /// 归属用户(多租户隔离,ADR-007;本地 = 本机用户 UUID,Store 写入时盖章)
+    #[serde(default = "crate::model::nil_user_id")]
+    pub user_id: Id,
     #[serde(default)]
     pub text: String,
     /// 作者可空(匿名 / 自创)
@@ -33,6 +36,7 @@ impl Motto {
     pub fn new(text: impl Into<String>, author: Option<String>) -> Self {
         Self {
             id: Id::new(),
+            user_id: Id::nil(),
             text: text.into(),
             author,
             created_at: Timestamp::now(),

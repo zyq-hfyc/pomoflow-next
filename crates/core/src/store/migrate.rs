@@ -28,7 +28,10 @@ use crate::error::{CoreError, CoreResult};
 type MigrationFn = fn(&Connection) -> CoreResult<()>;
 
 /// 有序迁移列表 —— `MIGRATIONS[i]` 把库从版本 i 推进到 i+1。
-const MIGRATIONS: &[MigrationFn] = &[migration_001_repeat_meta_and_audit];
+const MIGRATIONS: &[MigrationFn] = &[
+    migration_001_repeat_meta_and_audit,
+    migration_002_sync_foundation,
+];
 
 /// 当前代码支持的最新 schema 版号(= 已应用迁移数)。
 pub fn latest_version() -> usize {
@@ -208,6 +211,85 @@ fn migration_001_repeat_meta_and_audit(conn: &Connection) -> CoreResult<()> {
         )
         .map_err(|e| CoreError::storage(format!("create notification_templates: {e}")))?;
     }
+
+    Ok(())
+}
+
+// === 迁移 2:同步地基(meta 表 + user_id/sync_state/origin_device + review revision) ===
+
+/// SQLite 内生成 UUID v4 字符串(迁移里 user_id/device_id 的初值)。
+const UUID_V4_SQL: &str = "lower(hex(randomblob(4)))||'-'||lower(hex(randomblob(2)))||'-4'||substr(lower(hex(randomblob(2))),2)||'-'||substr('89ab',abs(random())%4+1,1)||substr(lower(hex(randomblob(2))),2)||'-'||lower(hex(randomblob(6)))";
+
+/// 参与同步的实体表与其"实体键列"(reviews 用自然键,见 ADR-010)。
+const SYNC_TABLES: &[(&str, &str)] = &[
+    ("tasks", "id"),
+    ("projects", "id"),
+    ("tags", "id"),
+    ("subtasks", "id"),
+    ("pomodoros", "id"),
+    ("mottos", "id"),
+    ("daily_reviews", "date"),
+    ("weekly_reviews", "week_start"),
+    ("monthly_reviews", "year_month"),
+];
+
+/// v1 → v2 同步地基:
+/// - 建 `meta` 表并生成 `user_id`(本机用户)/`device_id`(设备标识);
+/// - 九张实体表补 `user_id` / `sync_state` / `origin_device` 列,存量行回填
+///   user_id 并全部置 pending(登录首同步即全量上云;不登录零开销);
+/// - 三个复盘表补 `revision`(LWW 仲裁用,ADR-010);
+/// - 建 pending partial index(list_pending 扫描用)。
+///
+/// 幂等:每步先查列/表存在;新库(SCHEMA_SQL 已建最新结构)补跑 meta 与回填。
+fn migration_002_sync_foundation(conn: &Connection) -> CoreResult<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS meta (
+               key TEXT PRIMARY KEY NOT NULL,
+               value TEXT NOT NULL
+             );",
+    )
+    .map_err(|e| CoreError::storage(format!("create meta: {e}")))?;
+
+    conn.execute_batch(&format!(
+        "INSERT OR IGNORE INTO meta(key, value) VALUES ('user_id', {UUID_V4_SQL});
+         INSERT OR IGNORE INTO meta(key, value) VALUES ('device_id', {UUID_V4_SQL});
+         INSERT OR IGNORE INTO meta(key, value) VALUES ('last_sync_seq', '0');"
+    ))
+    .map_err(|e| CoreError::storage(format!("seed meta: {e}")))?;
+
+    let user_id: String = conn
+        .query_row("SELECT value FROM meta WHERE key = 'user_id'", [], |r| {
+            r.get(0)
+        })
+        .map_err(|e| CoreError::storage(format!("read meta.user_id: {e}")))?;
+
+    for (table, _key) in SYNC_TABLES {
+        add_column(conn, table, "user_id", "TEXT NOT NULL DEFAULT ''")?;
+        add_column(conn, table, "sync_state", "TEXT NOT NULL DEFAULT 'pending'")?;
+        add_column(conn, table, "origin_device", "TEXT NOT NULL DEFAULT ''")?;
+        // 存量行归属本机用户;全部视为待推送
+        conn.execute_batch(&format!(
+            "UPDATE {table} SET user_id = '{user_id}' WHERE user_id = '';"
+        ))
+        .map_err(|e| CoreError::storage(format!("backfill {table}.user_id: {e}")))?;
+    }
+
+    for table in ["daily_reviews", "weekly_reviews", "monthly_reviews"] {
+        add_column(conn, table, "revision", "INTEGER NOT NULL DEFAULT 1")?;
+    }
+
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_pending ON tasks(id) WHERE sync_state = 'pending';
+         CREATE INDEX IF NOT EXISTS idx_projects_pending ON projects(id) WHERE sync_state = 'pending';
+         CREATE INDEX IF NOT EXISTS idx_tags_pending ON tags(id) WHERE sync_state = 'pending';
+         CREATE INDEX IF NOT EXISTS idx_subtasks_pending ON subtasks(id) WHERE sync_state = 'pending';
+         CREATE INDEX IF NOT EXISTS idx_pomodoros_pending ON pomodoros(id) WHERE sync_state = 'pending';
+         CREATE INDEX IF NOT EXISTS idx_mottos_pending ON mottos(id) WHERE sync_state = 'pending';
+         CREATE INDEX IF NOT EXISTS idx_daily_reviews_pending ON daily_reviews(date) WHERE sync_state = 'pending';
+         CREATE INDEX IF NOT EXISTS idx_weekly_reviews_pending ON weekly_reviews(week_start) WHERE sync_state = 'pending';
+         CREATE INDEX IF NOT EXISTS idx_monthly_reviews_pending ON monthly_reviews(year_month) WHERE sync_state = 'pending';",
+    )
+    .map_err(|e| CoreError::storage(format!("pending indexes: {e}")))?;
 
     Ok(())
 }

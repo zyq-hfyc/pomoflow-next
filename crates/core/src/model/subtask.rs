@@ -12,6 +12,9 @@ use super::{Id, Timestamp};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubTask {
     pub id: Id,
+    /// 归属用户(多租户隔离,ADR-007;本地 = 本机用户 UUID,Store 写入时盖章)
+    #[serde(default = "crate::model::nil_user_id")]
+    pub user_id: Id,
 
     /// 所属 Task;不为空(应用层保证)。
     pub task_id: Id,
@@ -42,6 +45,7 @@ impl SubTask {
     pub fn new(task_id: Id, title: impl Into<String>) -> Self {
         Self {
             id: Id::new(),
+            user_id: Id::nil(),
             task_id,
             title: title.into(),
             is_completed: false,

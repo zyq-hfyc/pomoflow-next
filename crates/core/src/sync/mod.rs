@@ -15,6 +15,7 @@
 //! 仅落地 [`lww`] 算法 + 一个最小 [`ChangeLog`] 容器;协议层消息格式留到 P2 云端
 //! 设计时再定(决定是 JSON over HTTP 还是 Protobuf / gRPC)。
 
+pub mod engine;
 pub mod lww;
 
 pub use lww::{resolve_conflict, Resolution};
@@ -24,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::{CoreError, CoreResult};
+use crate::model::Id;
 
 /// 单条变更记录 —— 表达"设备 X 在时间 T 把实体 E 改成了内容 V"。
 ///
@@ -47,7 +49,9 @@ pub enum EntityKind {
     Task,
     Project,
     Tag,
+    SubTask,
     PomodoroSession,
+    Motto,
     DailyReview,
     WeeklyReview,
     MonthlyReview,
@@ -151,4 +155,175 @@ pub struct MergeWinner {
 pub struct MergeReport {
     pub winners: Vec<MergeWinner>,
     pub conflicts: u64,
+}
+
+// === 同步协议 wire 消息(ADR-011:游标用服务端全局 seq) =====================
+//
+// 客户端 ↔ Sync Service 的请求/响应。序列化 JSON(§14.1④,起步格式)。
+// Push 流程:客户端 `list_pending` 组包 → 服务端逐条 LWW → Accepted 落库 /
+// Conflicted 附权威 Change 让客户端就地收敛 / Dropped 拒收。
+// Pull 流程:带 `SyncCursor`(server_changelog.seq)增量拉**其他设备**的变更。
+
+/// 客户端 → 云端:推送本地 pending 变更(实体全量快照,含 tombstone)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PushRequest {
+    pub user_id: Id,
+    pub device_id: String,
+    pub changes: Vec<Change>,
+}
+
+/// 服务端对单条 Change 的裁决。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ApplyOutcome {
+    /// 传入胜出并已落库(附云端的 change_id 幂等去重)。
+    Accepted {
+        entity: EntityKind,
+        entity_id: String,
+        revision: u64,
+    },
+    /// 库内现存实体胜出;附权威 Change(完整快照),客户端应用它就地收敛。
+    Conflicted { entity_id: String, winner: Change },
+    /// 拒收(校验失败 / 非法载荷)。客户端按已处理论处,不再重推。
+    Dropped { entity_id: String, reason: String },
+}
+
+/// 云端 → 客户端:逐条裁决结果。
+/// 注意:**不携带游标**——push 后直接把游标跳到最新 seq 会漏掉其它设备在
+/// push 期间落库的中间变更;游标只能由 pull 逐批推进(ADR-011)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PushResponse {
+    pub results: Vec<ApplyOutcome>,
+}
+
+/// 客户端 → 云端:增量拉取其它设备的变更。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PullRequest {
+    pub user_id: Id,
+    pub device_id: String,
+    pub since: SyncCursor,
+}
+
+/// 云端 → 客户端:变更批次(排除请求方自己的 device,防回环)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PullResponse {
+    pub changes: Vec<Change>,
+    pub next_cursor: SyncCursor,
+}
+
+/// 同步游标 = 服务端 changelog 的全局单调 seq(ADR-011;不用时间戳,
+/// 同秒边界会漏变更)。客户端持久化在本地 meta 表。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncCursor {
+    pub last_seq: u64,
+}
+
+/// 同步端点抽象 —— 桌面(SqliteStore)与内存 mock(e2e)各自实现;
+/// 云端 Sync Service 在 P1a 复用同一套引擎语义。
+///
+/// 语义契约:
+/// - `list_pending`:待推送变更(实体全量快照,含软删 tombstone;
+///   复盘的"删除"表达为 content="" 的快照,ADR-010),按 updated_at 升序。
+/// - `apply_remote`:应用一条**已裁定远端胜出**的变更,落库并标 synced
+///   (revision/updated_at 按权威载荷原样写入,不本地 bump)。
+/// - `mark_synced`:把已裁决实体行标为 synced。
+/// - `local_candidate`:取本地行的竞争快照(含软删行),无此行返回 None。
+pub trait ChangeLogStore {
+    fn list_pending(&self, limit: usize) -> CoreResult<Vec<Change>>;
+    fn apply_remote(&self, change: &Change) -> CoreResult<()>;
+    fn mark_synced(&self, keys: &[(EntityKind, String)]) -> CoreResult<()>;
+    fn local_candidate(&self, kind: EntityKind, id: &str) -> CoreResult<Option<Change>>;
+}
+
+// === 实体同步元信息(内部;存储实现组 Change 快照用) ========================
+
+/// 参与同步的实体元信息:list_pending / local_candidate 组 Change 用。
+pub(crate) trait SyncEntity: serde::Serialize {
+    fn kind() -> EntityKind;
+    /// 同步键:UUID 实体用 id,复盘用自然键(ADR-010)
+    fn sync_key(&self) -> String;
+    fn rev(&self) -> u64;
+    fn upd(&self) -> crate::model::Timestamp;
+}
+
+macro_rules! impl_sync_entity {
+    ($t:ty, $kind:expr, key $key:ident) => {
+        impl SyncEntity for $t {
+            fn kind() -> EntityKind {
+                $kind
+            }
+            fn sync_key(&self) -> String {
+                self.$key.as_str().to_string()
+            }
+            fn rev(&self) -> u64 {
+                self.revision
+            }
+            fn upd(&self) -> crate::model::Timestamp {
+                self.updated_at
+            }
+        }
+    };
+    ($t:ty, $kind:expr, keystr $key:ident) => {
+        impl SyncEntity for $t {
+            fn kind() -> EntityKind {
+                $kind
+            }
+            fn sync_key(&self) -> String {
+                self.$key.clone()
+            }
+            fn rev(&self) -> u64 {
+                self.revision
+            }
+            fn upd(&self) -> crate::model::Timestamp {
+                self.updated_at
+            }
+        }
+    };
+}
+
+impl_sync_entity!(crate::model::Task, EntityKind::Task, key id);
+impl_sync_entity!(crate::model::Project, EntityKind::Project, key id);
+impl_sync_entity!(crate::model::Tag, EntityKind::Tag, key id);
+impl_sync_entity!(crate::model::SubTask, EntityKind::SubTask, key id);
+impl_sync_entity!(
+    crate::model::PomodoroSession,
+    EntityKind::PomodoroSession,
+    key id
+);
+impl_sync_entity!(crate::model::Motto, EntityKind::Motto, key id);
+impl_sync_entity!(
+    crate::model::DailyReview,
+    EntityKind::DailyReview,
+    keystr date
+);
+impl_sync_entity!(
+    crate::model::WeeklyReview,
+    EntityKind::WeeklyReview,
+    keystr week_start
+);
+impl_sync_entity!(
+    crate::model::MonthlyReview,
+    EntityKind::MonthlyReview,
+    keystr year_month
+);
+
+/// 实体 → 待推送 Change 快照(origin 为空回落本机 device)。
+pub(crate) fn change_of<E: SyncEntity>(
+    entity: &E,
+    origin: String,
+    fallback_device: &str,
+) -> CoreResult<Change> {
+    Ok(Change {
+        id: Uuid::new_v4(),
+        device_id: if origin.is_empty() {
+            fallback_device.to_string()
+        } else {
+            origin
+        },
+        entity: E::kind(),
+        entity_id: entity.sync_key(),
+        revision: entity.rev(),
+        updated_at: entity.upd().0,
+        payload: serde_json::to_value(entity)
+            .map_err(|e| CoreError::storage(format!("serialize change: {e}")))?,
+    })
 }

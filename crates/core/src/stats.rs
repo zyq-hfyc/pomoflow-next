@@ -317,6 +317,7 @@ mod tests {
     fn session(started: DateTime<Utc>, minutes: u32) -> PomodoroSession {
         PomodoroSession {
             id: Id::new(),
+            user_id: Id::nil(),
             task_id: Some(Id::new()),
             project_id: None,
             duration: minutes,

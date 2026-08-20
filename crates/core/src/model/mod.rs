@@ -51,6 +51,17 @@ impl Id {
         Self(Uuid::new_v4().to_string())
     }
 
+    /// 全零 UUID —— "归属用户未指定"的占位;存储层写入时会盖章为本机用户
+    /// (见 `nil_user_id`)。
+    pub fn nil() -> Self {
+        Self(Uuid::nil().to_string())
+    }
+
+    /// 是否为占位(nil)值。
+    pub fn is_nil(&self) -> bool {
+        self.0 == Uuid::nil().to_string()
+    }
+
     /// 从字符串恢复 ID(校验格式,非法返回 None)。
     pub fn parse(s: &str) -> Option<Self> {
         Uuid::parse_str(s).ok().map(|_| Self(s.to_string()))
@@ -59,6 +70,12 @@ impl Id {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+/// `user_id` 的 serde 缺省:全零占位。反序列化旧客户端 JSON(无此字段)时
+/// 得到占位值,由存储层写入时统一盖章,而不是随机生成。
+pub(crate) fn nil_user_id() -> Id {
+    Id::nil()
 }
 
 impl Default for Id {

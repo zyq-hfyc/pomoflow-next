@@ -39,11 +39,16 @@ use crate::model::{
     Project, Reminder, Repeat, SubTask, Tag, Task, TaskStatus, Timestamp, WeeklyReview,
 };
 use crate::store::{Store, TaskDateFilter, TaskQuery};
+use crate::sync::{change_of, Change, ChangeLogStore, EntityKind};
 
 /// `pomoflow-core::Store` trait 的 SQLite 持久化实现。
 #[derive(Debug, Clone)]
 pub struct SqliteStore {
     conn: Arc<Mutex<Connection>>,
+    /// 本机用户(ADR-007 多租户归属;meta.user_id,迁移 002 生成)
+    user_id: Id,
+    /// 本设备标识(pending 变更的 origin;meta.device_id)
+    device_id: String,
 }
 
 impl SqliteStore {
@@ -67,10 +72,7 @@ impl SqliteStore {
             .map_err(|e| CoreError::storage(format!("apply schema: {e}")))?;
         super::migrate::run_migrations(&conn)
             .map_err(|e| CoreError::storage(format!("run migrations: {e}")))?;
-
-        Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
-        })
+        Self::with_conn(conn)
     }
 
     /// 打开内存 SQLite(测试用)。
@@ -87,15 +89,122 @@ impl SqliteStore {
             .map_err(|e| CoreError::storage(format!("apply schema: {e}")))?;
         super::migrate::run_migrations(&conn)
             .map_err(|e| CoreError::storage(format!("run migrations: {e}")))?;
+        Self::with_conn(conn)
+    }
+
+    /// 公共收尾:加载同步元数据(meta 表由迁移 002 保证存在)。
+    fn with_conn(conn: Connection) -> CoreResult<Self> {
+        let user_id: String = conn
+            .query_row("SELECT value FROM meta WHERE key = 'user_id'", [], |r| {
+                r.get(0)
+            })
+            .map_err(|e| CoreError::storage(format!("read meta.user_id: {e}")))?;
+        let device_id: String = conn
+            .query_row("SELECT value FROM meta WHERE key = 'device_id'", [], |r| {
+                r.get(0)
+            })
+            .map_err(|e| CoreError::storage(format!("read meta.device_id: {e}")))?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            user_id: Id::parse(&user_id).unwrap_or_else(Id::nil),
+            device_id,
         })
+    }
+
+    /// 本机用户 id(同步请求的 user_id 来源)。
+    pub fn local_user_id(&self) -> &Id {
+        &self.user_id
+    }
+
+    /// 本设备标识(同步请求的 device_id 来源)。
+    pub fn local_device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    /// 读 meta 值(如 `last_sync_seq` 游标);不存在返回 None。
+    pub fn get_meta(&self, key: &str) -> CoreResult<Option<String>> {
+        let conn = self.lock()?;
+        conn.query_row("SELECT value FROM meta WHERE key = ?", params![key], |r| {
+            r.get(0)
+        })
+        .optional()
+        .map_err(|e| CoreError::storage(format!("get_meta: {e}")))
+    }
+
+    /// 写 meta 值(upsert)。
+    pub fn set_meta(&self, key: &str, value: &str) -> CoreResult<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES(?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )
+        .map_err(|e| CoreError::storage(format!("set_meta: {e}")))?;
+        Ok(())
+    }
+
+    /// 实体写入前盖章:user_id 占位(nil)→ 本机用户。
+    fn stamp<T: Stamped>(&self, mut entity: T) -> T {
+        if entity.user_id().is_nil() {
+            *entity.user_id() = self.user_id.clone();
+        }
+        entity
     }
 
     fn lock(&self) -> CoreResult<std::sync::MutexGuard<'_, Connection>> {
         self.conn
             .lock()
             .map_err(|e| CoreError::storage(format!("lock poisoned: {e}")))
+    }
+}
+
+/// 有归属用户的实体(user_id 盖章用,内部 trait)。
+trait Stamped {
+    fn user_id(&mut self) -> &mut Id;
+}
+impl Stamped for Task {
+    fn user_id(&mut self) -> &mut Id {
+        &mut self.user_id
+    }
+}
+impl Stamped for Project {
+    fn user_id(&mut self) -> &mut Id {
+        &mut self.user_id
+    }
+}
+impl Stamped for Tag {
+    fn user_id(&mut self) -> &mut Id {
+        &mut self.user_id
+    }
+}
+impl Stamped for SubTask {
+    fn user_id(&mut self) -> &mut Id {
+        &mut self.user_id
+    }
+}
+impl Stamped for PomodoroSession {
+    fn user_id(&mut self) -> &mut Id {
+        &mut self.user_id
+    }
+}
+impl Stamped for Motto {
+    fn user_id(&mut self) -> &mut Id {
+        &mut self.user_id
+    }
+}
+impl Stamped for DailyReview {
+    fn user_id(&mut self) -> &mut Id {
+        &mut self.user_id
+    }
+}
+impl Stamped for WeeklyReview {
+    fn user_id(&mut self) -> &mut Id {
+        &mut self.user_id
+    }
+}
+impl Stamped for MonthlyReview {
+    fn user_id(&mut self) -> &mut Id {
+        &mut self.user_id
     }
 }
 
@@ -113,7 +222,10 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at_ms INTEGER NOT NULL DEFAULT 0,
   revision INTEGER NOT NULL DEFAULT 1,
   deleted_at_ms INTEGER,
-  updated_at_ms INTEGER NOT NULL
+  updated_at_ms INTEGER NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  sync_state TEXT NOT NULL DEFAULT 'pending',
+  origin_device TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_parent ON projects(parent_id);
@@ -129,7 +241,10 @@ CREATE TABLE IF NOT EXISTS tags (
   created_at_ms INTEGER NOT NULL DEFAULT 0,
   revision INTEGER NOT NULL DEFAULT 1,
   deleted_at_ms INTEGER,
-  updated_at_ms INTEGER NOT NULL
+  updated_at_ms INTEGER NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  sync_state TEXT NOT NULL DEFAULT 'pending',
+  origin_device TEXT NOT NULL DEFAULT ''
 );
 
 -- 同名标签不能同时存在(忽略已软删除的)
@@ -157,7 +272,10 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at_ms INTEGER NOT NULL DEFAULT 0,
   revision INTEGER NOT NULL DEFAULT 1,
   deleted_at_ms INTEGER,
-  updated_at_ms INTEGER NOT NULL
+  updated_at_ms INTEGER NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  sync_state TEXT NOT NULL DEFAULT 'pending',
+  origin_device TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
@@ -183,7 +301,10 @@ CREATE TABLE IF NOT EXISTS pomodoros (
   created_at_ms INTEGER NOT NULL DEFAULT 0,
   revision INTEGER NOT NULL DEFAULT 1,
   deleted_at_ms INTEGER,
-  updated_at_ms INTEGER NOT NULL
+  updated_at_ms INTEGER NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  sync_state TEXT NOT NULL DEFAULT 'pending',
+  origin_device TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_pomodoros_task ON pomodoros(task_id);
@@ -193,21 +314,33 @@ CREATE TABLE IF NOT EXISTS daily_reviews (
   id TEXT PRIMARY KEY NOT NULL,
   date TEXT NOT NULL UNIQUE,
   content TEXT NOT NULL DEFAULT '',
-  updated_at_ms INTEGER NOT NULL
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at_ms INTEGER NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  sync_state TEXT NOT NULL DEFAULT 'pending',
+  origin_device TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS weekly_reviews (
   id TEXT PRIMARY KEY NOT NULL,
   week_start TEXT NOT NULL UNIQUE,
   content TEXT NOT NULL DEFAULT '',
-  updated_at_ms INTEGER NOT NULL
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at_ms INTEGER NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  sync_state TEXT NOT NULL DEFAULT 'pending',
+  origin_device TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS monthly_reviews (
   id TEXT PRIMARY KEY NOT NULL,
   year_month TEXT NOT NULL UNIQUE,
   content TEXT NOT NULL DEFAULT '',
-  updated_at_ms INTEGER NOT NULL
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at_ms INTEGER NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  sync_state TEXT NOT NULL DEFAULT 'pending',
+  origin_device TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS subtasks (
@@ -219,7 +352,10 @@ CREATE TABLE IF NOT EXISTS subtasks (
   created_at_ms INTEGER NOT NULL DEFAULT 0,
   revision INTEGER NOT NULL DEFAULT 1,
   deleted_at_ms INTEGER,
-  updated_at_ms INTEGER NOT NULL
+  updated_at_ms INTEGER NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  sync_state TEXT NOT NULL DEFAULT 'pending',
+  origin_device TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS mottos (
@@ -229,14 +365,17 @@ CREATE TABLE IF NOT EXISTS mottos (
   created_at_ms INTEGER NOT NULL DEFAULT 0,
   revision INTEGER NOT NULL DEFAULT 1,
   deleted_at_ms INTEGER,
-  updated_at_ms INTEGER NOT NULL
+  updated_at_ms INTEGER NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  sync_state TEXT NOT NULL DEFAULT 'pending',
+  origin_device TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_mottos_updated ON mottos(updated_at_ms DESC);
 
 CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);
 
--- 通知文案模板:全库单行(id 固定 '1')
+-- 通知文案模板:全库单行(id 固定 '1';本地设置,不参与同步)
 CREATE TABLE IF NOT EXISTS notification_templates (
   id TEXT PRIMARY KEY NOT NULL,
   style TEXT NOT NULL DEFAULT 'default',
@@ -249,6 +388,17 @@ CREATE TABLE IF NOT EXISTS notification_templates (
   reminder_body TEXT,
   updated_at_ms INTEGER NOT NULL
 );
+
+-- 本机同步元数据(key-value):user_id(本机用户,ADR-007 多租户归属)、
+-- device_id(设备标识)、last_sync_seq(拉取游标,ADR-011)
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL
+);
+
+-- 注意:pending partial index(引用 sync_state 列)不放这里 —— 旧库的老表
+-- 还没有该列,SCHEMA 先于迁移执行会炸;统一放 migrate.rs 的 migration_002
+-- (与"迁移 1 新增列"的索引同一处理方式)。
 "#;
 
 // === 时间转换 helper ===
@@ -424,6 +574,8 @@ fn row_to_task(row: &Row<'_>) -> rusqlite::Result<Task> {
     let id_s: String = row.get("id")?;
     let id = Id::parse(&id_s)
         .ok_or_else(|| core_err(CoreError::storage(format!("invalid task id: {id_s}"))))?;
+    let user_id_s: String = row.get("user_id")?;
+    let user_id = Id::parse(&user_id_s).unwrap_or_else(Id::nil);
 
     let deleted_at_ms: Option<i64> = row.get("deleted_at_ms")?;
     let updated_at_ms: i64 = row.get("updated_at_ms")?;
@@ -456,6 +608,7 @@ fn row_to_task(row: &Row<'_>) -> rusqlite::Result<Task> {
     let make = || {
         core_try(Ok(Task {
             id: id.clone(),
+            user_id: user_id.clone(),
             title: row.get("title")?,
             description: row.get("description")?,
             project_id: project_id.clone(),
@@ -493,6 +646,8 @@ fn row_to_project(row: &Row<'_>) -> rusqlite::Result<Project> {
     let id_s: String = row.get("id")?;
     let id = Id::parse(&id_s)
         .ok_or_else(|| core_err(CoreError::storage(format!("invalid project id: {id_s}"))))?;
+    let user_id_s: String = row.get("user_id")?;
+    let user_id = Id::parse(&user_id_s).unwrap_or_else(Id::nil);
 
     let parent_id_s: Option<String> = row.get("parent_id")?;
     let parent_id = match parent_id_s {
@@ -505,6 +660,7 @@ fn row_to_project(row: &Row<'_>) -> rusqlite::Result<Project> {
 
     core_try(Ok(Project {
         id,
+        user_id,
         name: row.get("name")?,
         color: row.get("color")?,
         parent_id,
@@ -524,9 +680,12 @@ fn row_to_tag(row: &Row<'_>) -> rusqlite::Result<Tag> {
     let id_s: String = row.get("id")?;
     let id = Id::parse(&id_s)
         .ok_or_else(|| core_err(CoreError::storage(format!("invalid tag id: {id_s}"))))?;
+    let user_id_s: String = row.get("user_id")?;
+    let user_id = Id::parse(&user_id_s).unwrap_or_else(Id::nil);
 
     core_try(Ok(Tag {
         id,
+        user_id,
         name: row.get("name")?,
         color: row.get("color")?,
         display_order: row.get::<_, i64>("display_order")? as u32,
@@ -545,6 +704,8 @@ fn row_to_pomodoro(row: &Row<'_>) -> rusqlite::Result<PomodoroSession> {
     let id_s: String = row.get("id")?;
     let id = Id::parse(&id_s)
         .ok_or_else(|| core_err(CoreError::storage(format!("invalid pomodoro id: {id_s}"))))?;
+    let user_id_s: String = row.get("user_id")?;
+    let user_id = Id::parse(&user_id_s).unwrap_or_else(Id::nil);
 
     let task_id_s: Option<String> = row.get("task_id")?;
     let task_id = match task_id_s {
@@ -565,6 +726,7 @@ fn row_to_pomodoro(row: &Row<'_>) -> rusqlite::Result<PomodoroSession> {
 
     core_try(Ok(PomodoroSession {
         id,
+        user_id,
         task_id,
         project_id,
         duration: row.get::<_, i64>("duration_minutes")? as u32,
@@ -589,12 +751,15 @@ fn row_to_daily_review(row: &Row<'_>) -> rusqlite::Result<DailyReview> {
             "invalid daily_review id: {id_s}"
         )))
     })?;
+    let user_id_s: String = row.get("user_id")?;
+    let user_id = Id::parse(&user_id_s).unwrap_or_else(Id::nil);
 
     core_try(Ok(DailyReview {
         id,
+        user_id,
         date: row.get("date")?,
         content: row.get("content")?,
-        revision: 1, // review 类不参与 LWW,简化
+        revision: row.get::<_, i64>("revision")? as u64,
         deleted_at: None,
         updated_at: ts_from_ms(row.get("updated_at_ms")?).map_err(core_err)?,
     }))
@@ -607,12 +772,15 @@ fn row_to_weekly_review(row: &Row<'_>) -> rusqlite::Result<WeeklyReview> {
             "invalid weekly_review id: {id_s}"
         )))
     })?;
+    let user_id_s: String = row.get("user_id")?;
+    let user_id = Id::parse(&user_id_s).unwrap_or_else(Id::nil);
 
     core_try(Ok(WeeklyReview {
         id,
+        user_id,
         week_start: row.get("week_start")?,
         content: row.get("content")?,
-        revision: 1,
+        revision: row.get::<_, i64>("revision")? as u64,
         deleted_at: None,
         updated_at: ts_from_ms(row.get("updated_at_ms")?).map_err(core_err)?,
     }))
@@ -625,12 +793,15 @@ fn row_to_monthly_review(row: &Row<'_>) -> rusqlite::Result<MonthlyReview> {
             "invalid monthly_review id: {id_s}"
         )))
     })?;
+    let user_id_s: String = row.get("user_id")?;
+    let user_id = Id::parse(&user_id_s).unwrap_or_else(Id::nil);
 
     core_try(Ok(MonthlyReview {
         id,
+        user_id,
         year_month: row.get("year_month")?,
         content: row.get("content")?,
-        revision: 1,
+        revision: row.get::<_, i64>("revision")? as u64,
         deleted_at: None,
         updated_at: ts_from_ms(row.get("updated_at_ms")?).map_err(core_err)?,
     }))
@@ -640,6 +811,8 @@ fn row_to_subtask(row: &Row<'_>) -> rusqlite::Result<SubTask> {
     let id_s: String = row.get("id")?;
     let id = Id::parse(&id_s)
         .ok_or_else(|| core_err(CoreError::storage(format!("invalid subtask id: {id_s}"))))?;
+    let user_id_s: String = row.get("user_id")?;
+    let user_id = Id::parse(&user_id_s).unwrap_or_else(Id::nil);
 
     let task_id_s: String = row.get("task_id")?;
     let task_id = Id::parse(&task_id_s).ok_or_else(|| {
@@ -650,6 +823,7 @@ fn row_to_subtask(row: &Row<'_>) -> rusqlite::Result<SubTask> {
 
     core_try(Ok(SubTask {
         id,
+        user_id,
         task_id,
         title: row.get("title")?,
         is_completed: row.get::<_, i64>("is_completed")? != 0,
@@ -669,9 +843,12 @@ fn row_to_motto(row: &Row<'_>) -> rusqlite::Result<Motto> {
     let id_s: String = row.get("id")?;
     let id = Id::parse(&id_s)
         .ok_or_else(|| core_err(CoreError::storage(format!("invalid motto id: {id_s}"))))?;
+    let user_id_s: String = row.get("user_id")?;
+    let user_id = Id::parse(&user_id_s).unwrap_or_else(Id::nil);
 
     core_try(Ok(Motto {
         id,
+        user_id,
         text: row.get("text")?,
         author: row.get::<_, Option<String>>("author")?,
         created_at: ts_from_ms(row.get("created_at_ms")?).map_err(core_err)?,
@@ -809,69 +986,17 @@ impl Store for SqliteStore {
     }
 
     fn upsert_task(&self, task: Task) -> CoreResult<Task> {
-        let conn = self.lock()?;
-        conn.execute(
-            "INSERT INTO tasks (
-                id, title, description, project_id, priority, status,
-                due_date_ms, estimated_pomodoros, completed_pomodoros, pomodoro_duration,
-                reminder, repeat_kind, repeat_config, repeat_parent_id, repeat_end_date_ms,
-                completed_at_ms, created_at_ms,
-                revision, deleted_at_ms, updated_at_ms
-             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-             ON CONFLICT(id) DO UPDATE SET
-                title=excluded.title,
-                description=excluded.description,
-                project_id=excluded.project_id,
-                priority=excluded.priority,
-                status=excluded.status,
-                due_date_ms=excluded.due_date_ms,
-                estimated_pomodoros=excluded.estimated_pomodoros,
-                completed_pomodoros=excluded.completed_pomodoros,
-                pomodoro_duration=excluded.pomodoro_duration,
-                reminder=excluded.reminder,
-                repeat_kind=excluded.repeat_kind,
-                repeat_config=excluded.repeat_config,
-                repeat_parent_id=excluded.repeat_parent_id,
-                repeat_end_date_ms=excluded.repeat_end_date_ms,
-                completed_at_ms=excluded.completed_at_ms,
-                created_at_ms=excluded.created_at_ms,
-                revision=excluded.revision,
-                deleted_at_ms=excluded.deleted_at_ms,
-                updated_at_ms=excluded.updated_at_ms",
-            params![
-                task.id.as_str(),
-                task.title,
-                task.description,
-                task.project_id.as_ref().map(|p| p.as_str().to_string()),
-                priority_str(task.priority),
-                task_status_str(task.status),
-                task.due_date.map(dt_to_ms),
-                task.estimated_pomodoros as i64,
-                task.completed_pomodoros as i64,
-                task.pomodoro_duration.map(|v| v as i64),
-                reminder_str(task.reminder),
-                repeat_str(task.repeat),
-                task.repeat_config,
-                task.repeat_parent_id
-                    .as_ref()
-                    .map(|p| p.as_str().to_string()),
-                task.repeat_end_date.map(dt_to_ms),
-                task.completed_at.map(dt_to_ms),
-                ts_to_ms(task.created_at),
-                task.revision as i64,
-                task.deleted_at.map(ts_to_ms),
-                ts_to_ms(task.updated_at),
-            ],
-        )
-        .map_err(|e| CoreError::storage(format!("upsert_task: {e}")))?;
-        Ok(task)
+        self.upsert_task_marked(task, true)
     }
 
     fn delete_task(&self, id: &Id) -> CoreResult<()> {
         let conn = self.lock()?;
+        // 软删即 tombstone:revision+1 + pending,让"删除"作为变更被推送(ADR-006)
         conn.execute(
-            "UPDATE tasks SET deleted_at_ms = ?, updated_at_ms = ? WHERE id = ?",
-            params![now_ms(), now_ms(), id.as_str()],
+            "UPDATE tasks SET deleted_at_ms = ?, updated_at_ms = ?,
+                revision = revision + 1, sync_state = 'pending', origin_device = ?
+             WHERE id = ?",
+            params![now_ms(), now_ms(), self.device_id, id.as_str()],
         )
         .map_err(|e| CoreError::storage(format!("delete_task: {e}")))?;
         Ok(())
@@ -909,37 +1034,14 @@ impl Store for SqliteStore {
     }
 
     fn upsert_project(&self, project: Project) -> CoreResult<Project> {
-        let conn = self.lock()?;
-        conn.execute(
-            "INSERT INTO projects
-                (id, name, color, parent_id, display_order, created_at_ms,
-                 revision, deleted_at_ms, updated_at_ms)
-             VALUES (?,?,?,?,?,?,?,?,?)
-             ON CONFLICT(id) DO UPDATE SET
-                name=excluded.name, color=excluded.color, parent_id=excluded.parent_id,
-                display_order=excluded.display_order, created_at_ms=excluded.created_at_ms,
-                revision=excluded.revision, deleted_at_ms=excluded.deleted_at_ms,
-                updated_at_ms=excluded.updated_at_ms",
-            params![
-                project.id.as_str(),
-                project.name,
-                project.color,
-                project.parent_id.as_ref().map(|p| p.as_str().to_string()),
-                project.display_order as i64,
-                ts_to_ms(project.created_at),
-                project.revision as i64,
-                project.deleted_at.map(ts_to_ms),
-                ts_to_ms(project.updated_at),
-            ],
-        )
-        .map_err(|e| CoreError::storage(format!("upsert_project: {e}")))?;
-        Ok(project)
+        self.upsert_project_marked(project, true)
     }
 
     fn delete_project(&self, id: &Id) -> CoreResult<()> {
         let conn = self.lock()?;
         // v1 FK 语义:删除项目 → 整棵子树级联删 + 相关 tasks/pomodoros 的
-        // project_id 置空(ON DELETE CASCADE / SET NULL)
+        // project_id 置空(ON DELETE CASCADE / SET NULL)。
+        // 级联触及的每一行都要 revision+1 + pending,变更才能被同步。
         let mut stmt = conn
             .prepare("SELECT id, parent_id FROM projects WHERE deleted_at_ms IS NULL")
             .map_err(|e| CoreError::storage(format!("prepare delete_project: {e}")))?;
@@ -967,18 +1069,24 @@ impl Store for SqliteStore {
             .map_err(|e| CoreError::storage(format!("begin tx: {e}")))?;
         for pid in &subtree {
             tx.execute(
-                "UPDATE projects SET deleted_at_ms = ?, updated_at_ms = ? WHERE id = ?",
-                params![now_ms(), now_ms(), pid],
+                "UPDATE projects SET deleted_at_ms = ?, updated_at_ms = ?,
+                    revision = revision + 1, sync_state = 'pending', origin_device = ?
+                 WHERE id = ?",
+                params![now_ms(), now_ms(), self.device_id, pid],
             )
             .map_err(|e| CoreError::storage(format!("cascade delete project: {e}")))?;
             tx.execute(
-                "UPDATE tasks SET project_id = NULL, updated_at_ms = ? WHERE project_id = ?",
-                params![now_ms(), pid],
+                "UPDATE tasks SET project_id = NULL, updated_at_ms = ?,
+                    revision = revision + 1, sync_state = 'pending', origin_device = ?
+                 WHERE project_id = ?",
+                params![now_ms(), self.device_id, pid],
             )
             .map_err(|e| CoreError::storage(format!("detach tasks: {e}")))?;
             tx.execute(
-                "UPDATE pomodoros SET project_id = NULL, updated_at_ms = ? WHERE project_id = ?",
-                params![now_ms(), pid],
+                "UPDATE pomodoros SET project_id = NULL, updated_at_ms = ?,
+                    revision = revision + 1, sync_state = 'pending', origin_device = ?
+                 WHERE project_id = ?",
+                params![now_ms(), self.device_id, pid],
             )
             .map_err(|e| CoreError::storage(format!("detach pomodoros: {e}")))?;
         }
@@ -1020,12 +1128,14 @@ impl Store for SqliteStore {
         for it in items {
             tx.execute(
                 "UPDATE projects
-                 SET parent_id = ?, display_order = ?, updated_at_ms = ?, revision = revision + 1
+                 SET parent_id = ?, display_order = ?, updated_at_ms = ?,
+                     revision = revision + 1, sync_state = 'pending', origin_device = ?
                  WHERE id = ?",
                 params![
                     it.parent_id.as_ref().map(|p| p.as_str().to_string()),
                     it.display_order as i64,
                     now_ms(),
+                    self.device_id,
                     it.id.as_str()
                 ],
             )
@@ -1066,61 +1176,42 @@ impl Store for SqliteStore {
     }
 
     fn upsert_tag(&self, tag: Tag) -> CoreResult<Tag> {
-        let conn = self.lock()?;
         // 唯一约束通过 partial unique index 实现 —— 软删除的不算冲突。
         // 但 active 同名 tag 已存在时返回 Conflict。
-        let conflict: Option<String> = conn
-            .query_row(
-                "SELECT id FROM tags
-                 WHERE name = ? COLLATE NOCASE
-                   AND deleted_at_ms IS NULL
-                   AND id != ?",
-                params![tag.name, tag.id.as_str()],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|e| CoreError::storage(format!("check tag name: {e}")))?;
+        {
+            let conn = self.lock()?;
+            let conflict: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM tags
+                     WHERE name = ? COLLATE NOCASE
+                       AND deleted_at_ms IS NULL
+                       AND id != ?",
+                    params![tag.name, tag.id.as_str()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| CoreError::storage(format!("check tag name: {e}")))?;
 
-        if conflict.is_some() {
-            return Err(CoreError::Conflict(format!(
-                "tag name '{}' already exists",
-                tag.name
-            )));
+            if conflict.is_some() {
+                return Err(CoreError::Conflict(format!(
+                    "tag name '{}' already exists",
+                    tag.name
+                )));
+            }
         }
-
-        conn.execute(
-            "INSERT INTO tags
-                (id, name, color, display_order, created_at_ms,
-                 revision, deleted_at_ms, updated_at_ms)
-             VALUES (?,?,?,?,?,?,?,?)
-             ON CONFLICT(id) DO UPDATE SET
-                name=excluded.name, color=excluded.color,
-                display_order=excluded.display_order, created_at_ms=excluded.created_at_ms,
-                revision=excluded.revision,
-                deleted_at_ms=excluded.deleted_at_ms, updated_at_ms=excluded.updated_at_ms",
-            params![
-                tag.id.as_str(),
-                tag.name,
-                tag.color,
-                tag.display_order as i64,
-                ts_to_ms(tag.created_at),
-                tag.revision as i64,
-                tag.deleted_at.map(ts_to_ms),
-                ts_to_ms(tag.updated_at),
-            ],
-        )
-        .map_err(|e| CoreError::storage(format!("upsert_tag: {e}")))?;
-        Ok(tag)
+        self.upsert_tag_marked(tag, true)
     }
 
     fn delete_tag(&self, id: &Id) -> CoreResult<()> {
         let conn = self.lock()?;
         conn.execute(
-            "UPDATE tags SET deleted_at_ms = ?, updated_at_ms = ? WHERE id = ?",
-            params![now_ms(), now_ms(), id.as_str()],
+            "UPDATE tags SET deleted_at_ms = ?, updated_at_ms = ?,
+                revision = revision + 1, sync_state = 'pending', origin_device = ?
+             WHERE id = ?",
+            params![now_ms(), now_ms(), self.device_id, id.as_str()],
         )
         .map_err(|e| CoreError::storage(format!("delete_tag: {e}")))?;
-        // 顺手清掉 task_tags 关联(可选,但符合预期)
+        // 顺手清掉 task_tags 关联(可选,但符合预期;task_tags 本身不参与同步,P1a 处理)
         conn.execute(
             "DELETE FROM task_tags WHERE tag_id = ?",
             params![id.as_str()],
@@ -1148,9 +1239,15 @@ impl Store for SqliteStore {
             .map_err(|e| CoreError::storage(format!("begin tx: {e}")))?;
         for it in items {
             tx.execute(
-                "UPDATE tags SET display_order = ?, updated_at_ms = ?, revision = revision + 1
+                "UPDATE tags SET display_order = ?, updated_at_ms = ?,
+                    revision = revision + 1, sync_state = 'pending', origin_device = ?
                  WHERE id = ?",
-                params![it.display_order as i64, now_ms(), it.id.as_str()],
+                params![
+                    it.display_order as i64,
+                    now_ms(),
+                    self.device_id,
+                    it.id.as_str()
+                ],
             )
             .map_err(|e| CoreError::storage(format!("reorder_tags update: {e}")))?;
         }
@@ -1274,43 +1371,16 @@ impl Store for SqliteStore {
     }
 
     fn upsert_pomodoro(&self, session: PomodoroSession) -> CoreResult<PomodoroSession> {
-        let conn = self.lock()?;
-        conn.execute(
-            "INSERT INTO pomodoros (
-                id, task_id, project_id, duration_minutes,
-                started_at_ms, ended_at_ms, is_completed, created_at_ms,
-                revision, deleted_at_ms, updated_at_ms
-             ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
-             ON CONFLICT(id) DO UPDATE SET
-                task_id=excluded.task_id, project_id=excluded.project_id,
-                duration_minutes=excluded.duration_minutes,
-                started_at_ms=excluded.started_at_ms, ended_at_ms=excluded.ended_at_ms,
-                is_completed=excluded.is_completed, created_at_ms=excluded.created_at_ms,
-                revision=excluded.revision, deleted_at_ms=excluded.deleted_at_ms,
-                updated_at_ms=excluded.updated_at_ms",
-            params![
-                session.id.as_str(),
-                session.task_id.as_ref().map(|t| t.as_str().to_string()),
-                session.project_id.as_ref().map(|p| p.as_str().to_string()),
-                session.duration as i64,
-                dt_to_ms(session.started_at),
-                dt_to_ms(session.ended_at),
-                session.is_completed as i64,
-                ts_to_ms(session.created_at),
-                session.revision as i64,
-                session.deleted_at.map(ts_to_ms),
-                ts_to_ms(session.updated_at),
-            ],
-        )
-        .map_err(|e| CoreError::storage(format!("upsert_pomodoro: {e}")))?;
-        Ok(session)
+        self.upsert_pomodoro_marked(session, true)
     }
 
     fn delete_pomodoro(&self, id: &Id) -> CoreResult<()> {
         let conn = self.lock()?;
         conn.execute(
-            "UPDATE pomodoros SET deleted_at_ms = ?, updated_at_ms = ? WHERE id = ?",
-            params![now_ms(), now_ms(), id.as_str()],
+            "UPDATE pomodoros SET deleted_at_ms = ?, updated_at_ms = ?,
+                revision = revision + 1, sync_state = 'pending', origin_device = ?
+             WHERE id = ?",
+            params![now_ms(), now_ms(), self.device_id, id.as_str()],
         )
         .map_err(|e| CoreError::storage(format!("delete_pomodoro: {e}")))?;
         Ok(())
@@ -1328,21 +1398,7 @@ impl Store for SqliteStore {
     }
 
     fn upsert_daily_review(&self, review: DailyReview) -> CoreResult<DailyReview> {
-        let conn = self.lock()?;
-        conn.execute(
-            "INSERT INTO daily_reviews (id, date, content, updated_at_ms)
-             VALUES (?,?,?,?)
-             ON CONFLICT(date) DO UPDATE SET
-                content=excluded.content, updated_at_ms=excluded.updated_at_ms",
-            params![
-                review.id.as_str(),
-                review.date,
-                review.content,
-                ts_to_ms(review.updated_at),
-            ],
-        )
-        .map_err(|e| CoreError::storage(format!("upsert_daily_review: {e}")))?;
-        Ok(review)
+        self.upsert_daily_review_marked(review, true)
     }
 
     fn list_daily_reviews_between(
@@ -1368,9 +1424,26 @@ impl Store for SqliteStore {
     }
 
     fn delete_daily_review(&self, date: &str) -> CoreResult<()> {
+        // ADR-010:删除 = content='' 的 upsert(变更可同步),revision+1 + pending;
+        // 行不存在则无内容可删,静默返回(远端若有内容,由 pull 比较收敛)
         let conn = self.lock()?;
-        conn.execute("DELETE FROM daily_reviews WHERE date = ?", params![date])
-            .map_err(|e| CoreError::storage(format!("delete_daily_review: {e}")))?;
+        conn.execute(
+            "INSERT INTO daily_reviews
+                (id, user_id, date, content, revision, updated_at_ms, sync_state, origin_device)
+             VALUES (?, ?, ?, '', 1, ?, 'pending', ?)
+             ON CONFLICT(date) DO UPDATE SET
+                content = '', updated_at_ms = excluded.updated_at_ms, revision = revision + 1,
+                user_id = excluded.user_id, sync_state = 'pending',
+                origin_device = excluded.origin_device",
+            params![
+                Id::new().as_str(),
+                self.user_id.as_str(),
+                date,
+                now_ms(),
+                self.device_id
+            ],
+        )
+        .map_err(|e| CoreError::storage(format!("delete_daily_review: {e}")))?;
         Ok(())
     }
 
@@ -1386,21 +1459,7 @@ impl Store for SqliteStore {
     }
 
     fn upsert_weekly_review(&self, review: WeeklyReview) -> CoreResult<WeeklyReview> {
-        let conn = self.lock()?;
-        conn.execute(
-            "INSERT INTO weekly_reviews (id, week_start, content, updated_at_ms)
-             VALUES (?,?,?,?)
-             ON CONFLICT(week_start) DO UPDATE SET
-                content=excluded.content, updated_at_ms=excluded.updated_at_ms",
-            params![
-                review.id.as_str(),
-                review.week_start,
-                review.content,
-                ts_to_ms(review.updated_at),
-            ],
-        )
-        .map_err(|e| CoreError::storage(format!("upsert_weekly_review: {e}")))?;
-        Ok(review)
+        self.upsert_weekly_review_marked(review, true)
     }
 
     fn list_weekly_reviews_between(
@@ -1426,10 +1485,23 @@ impl Store for SqliteStore {
     }
 
     fn delete_weekly_review(&self, week_start: &str) -> CoreResult<()> {
+        // ADR-010:删除 = content='' 的 upsert(同 delete_daily_review)
         let conn = self.lock()?;
         conn.execute(
-            "DELETE FROM weekly_reviews WHERE week_start = ?",
-            params![week_start],
+            "INSERT INTO weekly_reviews
+                (id, user_id, week_start, content, revision, updated_at_ms, sync_state, origin_device)
+             VALUES (?, ?, ?, '', 1, ?, 'pending', ?)
+             ON CONFLICT(week_start) DO UPDATE SET
+                content = '', updated_at_ms = excluded.updated_at_ms, revision = revision + 1,
+                user_id = excluded.user_id, sync_state = 'pending',
+                origin_device = excluded.origin_device",
+            params![
+                Id::new().as_str(),
+                self.user_id.as_str(),
+                week_start,
+                now_ms(),
+                self.device_id
+            ],
         )
         .map_err(|e| CoreError::storage(format!("delete_weekly_review: {e}")))?;
         Ok(())
@@ -1447,28 +1519,27 @@ impl Store for SqliteStore {
     }
 
     fn upsert_monthly_review(&self, review: MonthlyReview) -> CoreResult<MonthlyReview> {
-        let conn = self.lock()?;
-        conn.execute(
-            "INSERT INTO monthly_reviews (id, year_month, content, updated_at_ms)
-             VALUES (?,?,?,?)
-             ON CONFLICT(year_month) DO UPDATE SET
-                content=excluded.content, updated_at_ms=excluded.updated_at_ms",
-            params![
-                review.id.as_str(),
-                review.year_month,
-                review.content,
-                ts_to_ms(review.updated_at),
-            ],
-        )
-        .map_err(|e| CoreError::storage(format!("upsert_monthly_review: {e}")))?;
-        Ok(review)
+        self.upsert_monthly_review_marked(review, true)
     }
 
     fn delete_monthly_review(&self, year_month: &str) -> CoreResult<()> {
+        // ADR-010:删除 = content='' 的 upsert(同 delete_daily_review)
         let conn = self.lock()?;
         conn.execute(
-            "DELETE FROM monthly_reviews WHERE year_month = ?",
-            params![year_month],
+            "INSERT INTO monthly_reviews
+                (id, user_id, year_month, content, revision, updated_at_ms, sync_state, origin_device)
+             VALUES (?, ?, ?, '', 1, ?, 'pending', ?)
+             ON CONFLICT(year_month) DO UPDATE SET
+                content = '', updated_at_ms = excluded.updated_at_ms, revision = revision + 1,
+                user_id = excluded.user_id, sync_state = 'pending',
+                origin_device = excluded.origin_device",
+            params![
+                Id::new().as_str(),
+                self.user_id.as_str(),
+                year_month,
+                now_ms(),
+                self.device_id
+            ],
         )
         .map_err(|e| CoreError::storage(format!("delete_monthly_review: {e}")))?;
         Ok(())
@@ -1530,45 +1601,17 @@ impl Store for SqliteStore {
     }
 
     fn upsert_subtask(&self, subtask: SubTask) -> CoreResult<SubTask> {
-        let conn = self.lock()?;
-        // upsert by primary key;revision / deleted_at 在客户端控制(Store trait 不感知)
-        conn.execute(
-            "INSERT INTO subtasks
-              (id, task_id, title, is_completed, position, created_at_ms,
-               revision, deleted_at_ms, updated_at_ms)
-             VALUES (?,?,?,?,?,?,?,?,?)
-             ON CONFLICT(id) DO UPDATE SET
-                task_id=excluded.task_id,
-                title=excluded.title,
-                is_completed=excluded.is_completed,
-                position=excluded.position,
-                created_at_ms=excluded.created_at_ms,
-                revision=excluded.revision,
-                deleted_at_ms=excluded.deleted_at_ms,
-                updated_at_ms=excluded.updated_at_ms",
-            params![
-                subtask.id.as_str(),
-                subtask.task_id.as_str(),
-                subtask.title,
-                subtask.is_completed as i64,
-                subtask.position as i64,
-                ts_to_ms(subtask.created_at),
-                subtask.revision as i64,
-                subtask.deleted_at.map(ts_to_ms),
-                ts_to_ms(subtask.updated_at),
-            ],
-        )
-        .map_err(|e| CoreError::storage(format!("upsert_subtask: {e}")))?;
-        Ok(subtask)
+        self.upsert_subtask_marked(subtask, true)
     }
 
     fn delete_subtask(&self, id: &Id) -> CoreResult<()> {
         let conn = self.lock()?;
-        // 软删除 —— 只置 deleted_at_ms;list 时过滤掉
+        // 软删除 tombstone:revision+1 + pending
         conn.execute(
-            "UPDATE subtasks SET deleted_at_ms = ?, updated_at_ms = ?
+            "UPDATE subtasks SET deleted_at_ms = ?, updated_at_ms = ?,
+                revision = revision + 1, sync_state = 'pending', origin_device = ?
              WHERE id = ? AND deleted_at_ms IS NULL",
-            params![now_ms(), now_ms(), id.as_str()],
+            params![now_ms(), now_ms(), self.device_id, id.as_str()],
         )
         .map_err(|e| CoreError::storage(format!("delete_subtask: {e}")))?;
         Ok(())
@@ -1592,38 +1635,16 @@ impl Store for SqliteStore {
     }
 
     fn upsert_motto(&self, motto: Motto) -> CoreResult<Motto> {
-        let conn = self.lock()?;
-        conn.execute(
-            "INSERT INTO mottos
-              (id, text, author, created_at_ms, revision, deleted_at_ms, updated_at_ms)
-             VALUES (?,?,?,?,?,?,?)
-             ON CONFLICT(id) DO UPDATE SET
-                text=excluded.text,
-                author=excluded.author,
-                created_at_ms=excluded.created_at_ms,
-                revision=excluded.revision,
-                deleted_at_ms=excluded.deleted_at_ms,
-                updated_at_ms=excluded.updated_at_ms",
-            params![
-                motto.id.as_str(),
-                motto.text,
-                motto.author,
-                ts_to_ms(motto.created_at),
-                motto.revision as i64,
-                motto.deleted_at.map(ts_to_ms),
-                ts_to_ms(motto.updated_at),
-            ],
-        )
-        .map_err(|e| CoreError::storage(format!("upsert_motto: {e}")))?;
-        Ok(motto)
+        self.upsert_motto_marked(motto, true)
     }
 
     fn delete_motto(&self, id: &Id) -> CoreResult<()> {
         let conn = self.lock()?;
         conn.execute(
-            "UPDATE mottos SET deleted_at_ms = ?, updated_at_ms = ?
+            "UPDATE mottos SET deleted_at_ms = ?, updated_at_ms = ?,
+                revision = revision + 1, sync_state = 'pending', origin_device = ?
              WHERE id = ? AND deleted_at_ms IS NULL",
-            params![now_ms(), now_ms(), id.as_str()],
+            params![now_ms(), now_ms(), self.device_id, id.as_str()],
         )
         .map_err(|e| CoreError::storage(format!("delete_motto: {e}")))?;
         Ok(())
@@ -1692,6 +1713,564 @@ impl Store for SqliteStore {
         )
         .map_err(|e| CoreError::storage(format!("upsert_notification_template: {e}")))?;
         Ok(template)
+    }
+}
+
+// === 同步地基:marked 写入 + ChangeLogStore ==================================
+
+impl SqliteStore {
+    /// pending=true:本地写入(sync_state='pending' 待推送);
+    /// false:apply_remote 落权威快照(sync_state='synced',revision 原样)。
+    fn upsert_task_marked(&self, task: Task, pending: bool) -> CoreResult<Task> {
+        let task = self.stamp(task);
+        let mark = if pending { "pending" } else { "synced" };
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO tasks (
+                id, user_id, title, description, project_id, priority, status,
+                due_date_ms, estimated_pomodoros, completed_pomodoros, pomodoro_duration,
+                reminder, repeat_kind, repeat_config, repeat_parent_id, repeat_end_date_ms,
+                completed_at_ms, created_at_ms,
+                revision, deleted_at_ms, updated_at_ms, sync_state, origin_device
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET
+                title=excluded.title,
+                description=excluded.description,
+                project_id=excluded.project_id,
+                priority=excluded.priority,
+                status=excluded.status,
+                due_date_ms=excluded.due_date_ms,
+                estimated_pomodoros=excluded.estimated_pomodoros,
+                completed_pomodoros=excluded.completed_pomodoros,
+                pomodoro_duration=excluded.pomodoro_duration,
+                reminder=excluded.reminder,
+                repeat_kind=excluded.repeat_kind,
+                repeat_config=excluded.repeat_config,
+                repeat_parent_id=excluded.repeat_parent_id,
+                repeat_end_date_ms=excluded.repeat_end_date_ms,
+                completed_at_ms=excluded.completed_at_ms,
+                created_at_ms=excluded.created_at_ms,
+                revision=excluded.revision,
+                deleted_at_ms=excluded.deleted_at_ms,
+                updated_at_ms=excluded.updated_at_ms,
+                user_id=excluded.user_id, sync_state=excluded.sync_state,
+                origin_device=excluded.origin_device",
+            params![
+                task.id.as_str(),
+                task.user_id.as_str(),
+                task.title,
+                task.description,
+                task.project_id.as_ref().map(|p| p.as_str().to_string()),
+                priority_str(task.priority),
+                task_status_str(task.status),
+                task.due_date.map(dt_to_ms),
+                task.estimated_pomodoros as i64,
+                task.completed_pomodoros as i64,
+                task.pomodoro_duration.map(|v| v as i64),
+                reminder_str(task.reminder),
+                repeat_str(task.repeat),
+                task.repeat_config,
+                task.repeat_parent_id
+                    .as_ref()
+                    .map(|p| p.as_str().to_string()),
+                task.repeat_end_date.map(dt_to_ms),
+                task.completed_at.map(dt_to_ms),
+                ts_to_ms(task.created_at),
+                task.revision as i64,
+                task.deleted_at.map(ts_to_ms),
+                ts_to_ms(task.updated_at),
+                mark,
+                self.device_id,
+            ],
+        )
+        .map_err(|e| CoreError::storage(format!("upsert_task: {e}")))?;
+        Ok(task)
+    }
+
+    fn upsert_project_marked(&self, project: Project, pending: bool) -> CoreResult<Project> {
+        let project = self.stamp(project);
+        let mark = if pending { "pending" } else { "synced" };
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO projects
+                (id, user_id, name, color, parent_id, display_order, created_at_ms,
+                 revision, deleted_at_ms, updated_at_ms, sync_state, origin_device)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name, color=excluded.color, parent_id=excluded.parent_id,
+                display_order=excluded.display_order, created_at_ms=excluded.created_at_ms,
+                revision=excluded.revision, deleted_at_ms=excluded.deleted_at_ms,
+                updated_at_ms=excluded.updated_at_ms,
+                user_id=excluded.user_id, sync_state=excluded.sync_state,
+                origin_device=excluded.origin_device",
+            params![
+                project.id.as_str(),
+                project.user_id.as_str(),
+                project.name,
+                project.color,
+                project.parent_id.as_ref().map(|p| p.as_str().to_string()),
+                project.display_order as i64,
+                ts_to_ms(project.created_at),
+                project.revision as i64,
+                project.deleted_at.map(ts_to_ms),
+                ts_to_ms(project.updated_at),
+                mark,
+                self.device_id,
+            ],
+        )
+        .map_err(|e| CoreError::storage(format!("upsert_project: {e}")))?;
+        Ok(project)
+    }
+
+    fn upsert_tag_marked(&self, tag: Tag, pending: bool) -> CoreResult<Tag> {
+        let tag = self.stamp(tag);
+        let mark = if pending { "pending" } else { "synced" };
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO tags
+                (id, user_id, name, color, display_order, created_at_ms,
+                 revision, deleted_at_ms, updated_at_ms, sync_state, origin_device)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name, color=excluded.color,
+                display_order=excluded.display_order, created_at_ms=excluded.created_at_ms,
+                revision=excluded.revision,
+                deleted_at_ms=excluded.deleted_at_ms, updated_at_ms=excluded.updated_at_ms,
+                user_id=excluded.user_id, sync_state=excluded.sync_state,
+                origin_device=excluded.origin_device",
+            params![
+                tag.id.as_str(),
+                tag.user_id.as_str(),
+                tag.name,
+                tag.color,
+                tag.display_order as i64,
+                ts_to_ms(tag.created_at),
+                tag.revision as i64,
+                tag.deleted_at.map(ts_to_ms),
+                ts_to_ms(tag.updated_at),
+                mark,
+                self.device_id,
+            ],
+        )
+        .map_err(|e| CoreError::storage(format!("upsert_tag: {e}")))?;
+        Ok(tag)
+    }
+
+    fn upsert_subtask_marked(&self, subtask: SubTask, pending: bool) -> CoreResult<SubTask> {
+        let subtask = self.stamp(subtask);
+        let mark = if pending { "pending" } else { "synced" };
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO subtasks
+              (id, user_id, task_id, title, is_completed, position, created_at_ms,
+               revision, deleted_at_ms, updated_at_ms, sync_state, origin_device)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET
+                task_id=excluded.task_id,
+                title=excluded.title,
+                is_completed=excluded.is_completed,
+                position=excluded.position,
+                created_at_ms=excluded.created_at_ms,
+                revision=excluded.revision,
+                deleted_at_ms=excluded.deleted_at_ms,
+                updated_at_ms=excluded.updated_at_ms,
+                user_id=excluded.user_id, sync_state=excluded.sync_state,
+                origin_device=excluded.origin_device",
+            params![
+                subtask.id.as_str(),
+                subtask.user_id.as_str(),
+                subtask.task_id.as_str(),
+                subtask.title,
+                subtask.is_completed as i64,
+                subtask.position as i64,
+                ts_to_ms(subtask.created_at),
+                subtask.revision as i64,
+                subtask.deleted_at.map(ts_to_ms),
+                ts_to_ms(subtask.updated_at),
+                mark,
+                self.device_id,
+            ],
+        )
+        .map_err(|e| CoreError::storage(format!("upsert_subtask: {e}")))?;
+        Ok(subtask)
+    }
+
+    fn upsert_pomodoro_marked(
+        &self,
+        session: PomodoroSession,
+        pending: bool,
+    ) -> CoreResult<PomodoroSession> {
+        let session = self.stamp(session);
+        let mark = if pending { "pending" } else { "synced" };
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO pomodoros (
+                id, user_id, task_id, project_id, duration_minutes,
+                started_at_ms, ended_at_ms, is_completed, created_at_ms,
+                revision, deleted_at_ms, updated_at_ms, sync_state, origin_device
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET
+                task_id=excluded.task_id, project_id=excluded.project_id,
+                duration_minutes=excluded.duration_minutes,
+                started_at_ms=excluded.started_at_ms, ended_at_ms=excluded.ended_at_ms,
+                is_completed=excluded.is_completed, created_at_ms=excluded.created_at_ms,
+                revision=excluded.revision, deleted_at_ms=excluded.deleted_at_ms,
+                updated_at_ms=excluded.updated_at_ms,
+                user_id=excluded.user_id, sync_state=excluded.sync_state,
+                origin_device=excluded.origin_device",
+            params![
+                session.id.as_str(),
+                session.user_id.as_str(),
+                session.task_id.as_ref().map(|t| t.as_str().to_string()),
+                session.project_id.as_ref().map(|p| p.as_str().to_string()),
+                session.duration as i64,
+                dt_to_ms(session.started_at),
+                dt_to_ms(session.ended_at),
+                session.is_completed as i64,
+                ts_to_ms(session.created_at),
+                session.revision as i64,
+                session.deleted_at.map(ts_to_ms),
+                ts_to_ms(session.updated_at),
+                mark,
+                self.device_id,
+            ],
+        )
+        .map_err(|e| CoreError::storage(format!("upsert_pomodoro: {e}")))?;
+        Ok(session)
+    }
+
+    fn upsert_motto_marked(&self, motto: Motto, pending: bool) -> CoreResult<Motto> {
+        let motto = self.stamp(motto);
+        let mark = if pending { "pending" } else { "synced" };
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO mottos
+              (id, user_id, text, author, created_at_ms,
+               revision, deleted_at_ms, updated_at_ms, sync_state, origin_device)
+             VALUES (?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET
+                text=excluded.text,
+                author=excluded.author,
+                created_at_ms=excluded.created_at_ms,
+                revision=excluded.revision,
+                deleted_at_ms=excluded.deleted_at_ms,
+                updated_at_ms=excluded.updated_at_ms,
+                user_id=excluded.user_id, sync_state=excluded.sync_state,
+                origin_device=excluded.origin_device",
+            params![
+                motto.id.as_str(),
+                motto.user_id.as_str(),
+                motto.text,
+                motto.author,
+                ts_to_ms(motto.created_at),
+                motto.revision as i64,
+                motto.deleted_at.map(ts_to_ms),
+                ts_to_ms(motto.updated_at),
+                mark,
+                self.device_id,
+            ],
+        )
+        .map_err(|e| CoreError::storage(format!("upsert_motto: {e}")))?;
+        Ok(motto)
+    }
+
+    /// 复盘族 marked 写入。pending 路径 revision 由存储管理(插入 1、更新 +1);
+    /// remote 路径按权威载荷原样落库(ADR-010)。
+    fn upsert_daily_review_marked(
+        &self,
+        review: DailyReview,
+        pending: bool,
+    ) -> CoreResult<DailyReview> {
+        let review = self.stamp(review);
+        let conn = self.lock()?;
+        if pending {
+            conn.execute(
+                "INSERT INTO daily_reviews
+                    (id, user_id, date, content, revision, updated_at_ms, sync_state, origin_device)
+                 VALUES (?, ?, ?, ?, 1, ?, 'pending', ?)
+                 ON CONFLICT(date) DO UPDATE SET
+                    content=excluded.content, updated_at_ms=excluded.updated_at_ms,
+                    revision = revision + 1, user_id=excluded.user_id,
+                    sync_state='pending', origin_device=excluded.origin_device",
+                params![
+                    review.id.as_str(),
+                    review.user_id.as_str(),
+                    review.date,
+                    review.content,
+                    ts_to_ms(review.updated_at),
+                    self.device_id
+                ],
+            )
+        } else {
+            conn.execute(
+                "INSERT INTO daily_reviews
+                    (id, user_id, date, content, revision, updated_at_ms, sync_state, origin_device)
+                 VALUES (?, ?, ?, ?, ?, ?, 'synced', ?)
+                 ON CONFLICT(date) DO UPDATE SET
+                    content=excluded.content, updated_at_ms=excluded.updated_at_ms,
+                    revision=excluded.revision, user_id=excluded.user_id,
+                    sync_state='synced', origin_device=excluded.origin_device",
+                params![
+                    review.id.as_str(),
+                    review.user_id.as_str(),
+                    review.date,
+                    review.content,
+                    review.revision as i64,
+                    ts_to_ms(review.updated_at),
+                    self.device_id
+                ],
+            )
+        }
+        .map_err(|e| CoreError::storage(format!("upsert_daily_review: {e}")))?;
+        Ok(review)
+    }
+
+    fn upsert_weekly_review_marked(
+        &self,
+        review: WeeklyReview,
+        pending: bool,
+    ) -> CoreResult<WeeklyReview> {
+        let review = self.stamp(review);
+        let conn = self.lock()?;
+        if pending {
+            conn.execute(
+                "INSERT INTO weekly_reviews
+                    (id, user_id, week_start, content, revision, updated_at_ms, sync_state, origin_device)
+                 VALUES (?, ?, ?, ?, 1, ?, 'pending', ?)
+                 ON CONFLICT(week_start) DO UPDATE SET
+                    content=excluded.content, updated_at_ms=excluded.updated_at_ms,
+                    revision = revision + 1, user_id=excluded.user_id,
+                    sync_state='pending', origin_device=excluded.origin_device",
+                params![
+                    review.id.as_str(),
+                    review.user_id.as_str(),
+                    review.week_start,
+                    review.content,
+                    ts_to_ms(review.updated_at),
+                    self.device_id
+                ],
+            )
+        } else {
+            conn.execute(
+                "INSERT INTO weekly_reviews
+                    (id, user_id, week_start, content, revision, updated_at_ms, sync_state, origin_device)
+                 VALUES (?, ?, ?, ?, ?, ?, 'synced', ?)
+                 ON CONFLICT(week_start) DO UPDATE SET
+                    content=excluded.content, updated_at_ms=excluded.updated_at_ms,
+                    revision=excluded.revision, user_id=excluded.user_id,
+                    sync_state='synced', origin_device=excluded.origin_device",
+                params![
+                    review.id.as_str(),
+                    review.user_id.as_str(),
+                    review.week_start,
+                    review.content,
+                    review.revision as i64,
+                    ts_to_ms(review.updated_at),
+                    self.device_id
+                ],
+            )
+        }
+        .map_err(|e| CoreError::storage(format!("upsert_weekly_review: {e}")))?;
+        Ok(review)
+    }
+
+    fn upsert_monthly_review_marked(
+        &self,
+        review: MonthlyReview,
+        pending: bool,
+    ) -> CoreResult<MonthlyReview> {
+        let review = self.stamp(review);
+        let conn = self.lock()?;
+        if pending {
+            conn.execute(
+                "INSERT INTO monthly_reviews
+                    (id, user_id, year_month, content, revision, updated_at_ms, sync_state, origin_device)
+                 VALUES (?, ?, ?, ?, 1, ?, 'pending', ?)
+                 ON CONFLICT(year_month) DO UPDATE SET
+                    content=excluded.content, updated_at_ms=excluded.updated_at_ms,
+                    revision = revision + 1, user_id=excluded.user_id,
+                    sync_state='pending', origin_device=excluded.origin_device",
+                params![
+                    review.id.as_str(),
+                    review.user_id.as_str(),
+                    review.year_month,
+                    review.content,
+                    ts_to_ms(review.updated_at),
+                    self.device_id
+                ],
+            )
+        } else {
+            conn.execute(
+                "INSERT INTO monthly_reviews
+                    (id, user_id, year_month, content, revision, updated_at_ms, sync_state, origin_device)
+                 VALUES (?, ?, ?, ?, ?, ?, 'synced', ?)
+                 ON CONFLICT(year_month) DO UPDATE SET
+                    content=excluded.content, updated_at_ms=excluded.updated_at_ms,
+                    revision=excluded.revision, user_id=excluded.user_id,
+                    sync_state='synced', origin_device=excluded.origin_device",
+                params![
+                    review.id.as_str(),
+                    review.user_id.as_str(),
+                    review.year_month,
+                    review.content,
+                    review.revision as i64,
+                    ts_to_ms(review.updated_at),
+                    self.device_id
+                ],
+            )
+        }
+        .map_err(|e| CoreError::storage(format!("upsert_monthly_review: {e}")))?;
+        Ok(review)
+    }
+}
+
+impl ChangeLogStore for SqliteStore {
+    fn list_pending(&self, limit: usize) -> CoreResult<Vec<Change>> {
+        let conn = self.lock()?;
+        let mut out: Vec<Change> = Vec::new();
+
+        macro_rules! scan {
+            ($table:literal, $rowfn:ident) => {
+                if out.len() < limit {
+                    let sql = format!(
+                        "SELECT * FROM {} WHERE sync_state = 'pending' \
+                         ORDER BY updated_at_ms ASC LIMIT {}",
+                        $table,
+                        limit - out.len()
+                    );
+                    let mut stmt = conn.prepare(&sql).map_err(|e| {
+                        CoreError::storage(format!("prepare pending {}: {e}", $table))
+                    })?;
+                    let rows = stmt
+                        .query_map([], |row| {
+                            let entity = $rowfn(row)?;
+                            let origin: String = row.get("origin_device")?;
+                            Ok((entity, origin))
+                        })
+                        .map_err(|e| {
+                            CoreError::storage(format!("query pending {}: {e}", $table))
+                        })?;
+                    for r in rows {
+                        let (entity, origin) = r.map_err(|e| {
+                            CoreError::storage(format!("row pending {}: {e}", $table))
+                        })?;
+                        out.push(change_of(&entity, origin, &self.device_id)?);
+                    }
+                }
+            };
+        }
+
+        scan!("tasks", row_to_task);
+        scan!("projects", row_to_project);
+        scan!("tags", row_to_tag);
+        scan!("subtasks", row_to_subtask);
+        scan!("pomodoros", row_to_pomodoro);
+        scan!("mottos", row_to_motto);
+        scan!("daily_reviews", row_to_daily_review);
+        scan!("weekly_reviews", row_to_weekly_review);
+        scan!("monthly_reviews", row_to_monthly_review);
+        Ok(out)
+    }
+
+    fn apply_remote(&self, change: &Change) -> CoreResult<()> {
+        macro_rules! apply {
+            ($t:ty, $marked:ident) => {{
+                let mut entity: $t = serde_json::from_value(change.payload.clone())
+                    .map_err(|e| CoreError::Validation(format!("apply_remote payload: {e}")))?;
+                if entity.user_id.is_nil() {
+                    entity.user_id = self.user_id.clone();
+                }
+                self.$marked(entity, false)?;
+            }};
+        }
+        match change.entity {
+            EntityKind::Task => apply!(Task, upsert_task_marked),
+            EntityKind::Project => apply!(Project, upsert_project_marked),
+            EntityKind::Tag => apply!(Tag, upsert_tag_marked),
+            EntityKind::SubTask => apply!(SubTask, upsert_subtask_marked),
+            EntityKind::PomodoroSession => apply!(PomodoroSession, upsert_pomodoro_marked),
+            EntityKind::Motto => apply!(Motto, upsert_motto_marked),
+            EntityKind::DailyReview => apply!(DailyReview, upsert_daily_review_marked),
+            EntityKind::WeeklyReview => apply!(WeeklyReview, upsert_weekly_review_marked),
+            EntityKind::MonthlyReview => apply!(MonthlyReview, upsert_monthly_review_marked),
+        }
+        Ok(())
+    }
+
+    fn mark_synced(&self, keys: &[(EntityKind, String)]) -> CoreResult<()> {
+        let mut by: HashMap<EntityKind, Vec<String>> = HashMap::new();
+        for (k, id) in keys {
+            by.entry(*k).or_default().push(id.clone());
+        }
+        let conn = self.lock()?;
+        macro_rules! mark {
+            ($table:literal, $keycol:literal, $ids:expr) => {{
+                let ids = $ids;
+                if !ids.is_empty() {
+                    let placeholders = std::iter::repeat_n("?", ids.len())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let sql = format!(
+                        "UPDATE {} SET sync_state = 'synced' WHERE {} IN ({})",
+                        $table, $keycol, placeholders
+                    );
+                    conn.execute(&sql, rusqlite::params_from_iter(ids.iter()))
+                        .map_err(|e| CoreError::storage(format!("mark_synced {}: {e}", $table)))?;
+                }
+            }};
+        }
+        for (kind, ids) in by {
+            match kind {
+                EntityKind::Task => mark!("tasks", "id", ids),
+                EntityKind::Project => mark!("projects", "id", ids),
+                EntityKind::Tag => mark!("tags", "id", ids),
+                EntityKind::SubTask => mark!("subtasks", "id", ids),
+                EntityKind::PomodoroSession => mark!("pomodoros", "id", ids),
+                EntityKind::Motto => mark!("mottos", "id", ids),
+                EntityKind::DailyReview => mark!("daily_reviews", "date", ids),
+                EntityKind::WeeklyReview => mark!("weekly_reviews", "week_start", ids),
+                EntityKind::MonthlyReview => mark!("monthly_reviews", "year_month", ids),
+            }
+        }
+        Ok(())
+    }
+
+    fn local_candidate(&self, kind: EntityKind, id: &str) -> CoreResult<Option<Change>> {
+        let conn = self.lock()?;
+        macro_rules! probe {
+            ($table:literal, $keycol:literal, $rowfn:ident) => {{
+                let hit = conn
+                    .query_row(
+                        &format!("SELECT * FROM {} WHERE {} = ?", $table, $keycol),
+                        params![id],
+                        |row| {
+                            let entity = $rowfn(row)?;
+                            let origin: String =
+                                row.get::<_, String>("origin_device").unwrap_or_default();
+                            Ok((entity, origin))
+                        },
+                    )
+                    .optional()
+                    .map_err(|e| CoreError::storage(format!("candidate {}: {e}", $table)))?;
+                hit.map(|(entity, origin)| change_of(&entity, origin, &self.device_id))
+                    .transpose()
+            }};
+        }
+        match kind {
+            EntityKind::Task => probe!("tasks", "id", row_to_task),
+            EntityKind::Project => probe!("projects", "id", row_to_project),
+            EntityKind::Tag => probe!("tags", "id", row_to_tag),
+            EntityKind::SubTask => probe!("subtasks", "id", row_to_subtask),
+            EntityKind::PomodoroSession => probe!("pomodoros", "id", row_to_pomodoro),
+            EntityKind::Motto => probe!("mottos", "id", row_to_motto),
+            EntityKind::DailyReview => probe!("daily_reviews", "date", row_to_daily_review),
+            EntityKind::WeeklyReview => {
+                probe!("weekly_reviews", "week_start", row_to_weekly_review)
+            }
+            EntityKind::MonthlyReview => {
+                probe!("monthly_reviews", "year_month", row_to_monthly_review)
+            }
+        }
     }
 }
 

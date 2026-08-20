@@ -402,6 +402,7 @@ fn migrate_projects(
 
         let project = Project {
             id: new_id.clone(),
+            user_id: Id::nil(),
             name,
             color,
             parent_id,
@@ -466,6 +467,7 @@ fn migrate_tags(
 
         let tag = Tag {
             id: new_id.clone(),
+            user_id: Id::nil(),
             name: name.clone(),
             color,
             display_order: display_order.unwrap_or(0).max(0) as u32,
@@ -579,6 +581,7 @@ fn migrate_tasks(
 
         let task = Task {
             id: new_id.clone(),
+            user_id: Id::nil(),
             title,
             description: description.unwrap_or_default(),
             project_id,
@@ -719,6 +722,7 @@ fn migrate_pomodoros(
 
         let session = PomodoroSession {
             id: det_id("pomodoro_sessions", v1_id),
+            user_id: Id::nil(),
             task_id,
             project_id,
             duration: duration.max(0) as u32,
@@ -776,6 +780,7 @@ fn migrate_daily_reviews(
 
         let review = DailyReview {
             id: det_id("daily_reviews", id),
+            user_id: Id::nil(),
             date: date_str,
             content: content.unwrap_or_default(),
             revision: 1,
@@ -829,6 +834,7 @@ fn migrate_weekly_reviews(
 
         let review = WeeklyReview {
             id: det_id("weekly_reviews", id),
+            user_id: Id::nil(),
             week_start: week_str,
             content: content.unwrap_or_default(),
             revision: 1,
@@ -896,6 +902,7 @@ fn migrate_subtasks(
 
         let subtask = SubTask {
             id: det_id("subtasks", rowid),
+            user_id: Id::nil(),
             task_id,
             title,
             is_completed,
@@ -953,6 +960,7 @@ fn migrate_mottos(v1: &Connection, v2: Option<&SqliteStore>, stats: &mut Stats) 
 
         let motto = Motto {
             id: det_id("mottos", v1_id),
+            user_id: Id::nil(),
             text,
             author,
             created_at,
@@ -1002,6 +1010,7 @@ fn migrate_monthly_reviews(
 
         let review = MonthlyReview {
             id: det_id("monthly_reviews", id),
+            user_id: Id::nil(),
             year_month,
             content: content.unwrap_or_default(),
             revision: 1,

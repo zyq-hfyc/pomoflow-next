@@ -35,6 +35,7 @@ fn tag_id(_label: &str) -> Id {
 fn sample_task(id: Id, project_id: Id) -> Task {
     Task {
         id,
+        user_id: Id::nil(),
         title: "Write tests".to_string(),
         description: "Cover CRUD + queries".to_string(),
         project_id: Some(project_id),
@@ -65,6 +66,7 @@ fn tasks_round_trip() {
 
     s.upsert_project(Project {
         id: pid.clone(),
+        user_id: Id::nil(),
         name: "Work".to_string(),
         color: "#ff0000".to_string(),
         parent_id: None,
@@ -94,6 +96,7 @@ fn task_list_excludes_soft_deleted() {
     let pid = project_id("beta");
     s.upsert_project(Project {
         id: pid.clone(),
+        user_id: Id::nil(),
         name: "Side".to_string(),
         color: "".into(),
         parent_id: None,
@@ -131,6 +134,7 @@ fn task_query_filters_by_project_and_status() {
     for pid in [&p1, &p2] {
         s.upsert_project(Project {
             id: pid.clone(),
+            user_id: Id::nil(),
             name: "P".into(),
             color: "".into(),
             parent_id: None,
@@ -187,6 +191,7 @@ fn tags_unique_among_active_and_reusable_after_soft_delete() {
     let s = store();
     let g1 = Tag {
         id: tag_id("dup"),
+        user_id: Id::nil(),
         name: "work".to_string(),
         color: "#abc".into(),
         display_order: 0,
@@ -200,6 +205,7 @@ fn tags_unique_among_active_and_reusable_after_soft_delete() {
     // 同名 active tag 应当 Conflict
     let g2 = Tag {
         id: tag_id("dup-other"),
+        user_id: Id::nil(),
         name: "work".to_string(),
         color: "#def".into(),
         display_order: 1,
@@ -215,6 +221,7 @@ fn tags_unique_among_active_and_reusable_after_soft_delete() {
     s.delete_tag(&g1.id).unwrap();
     let g3 = Tag {
         id: tag_id("dup-third"),
+        user_id: Id::nil(),
         name: "work".to_string(),
         color: "#def".into(),
         display_order: 2,
@@ -237,6 +244,7 @@ fn task_tags_association() {
     let pid = project_id("ass");
     s.upsert_project(Project {
         id: pid.clone(),
+        user_id: Id::nil(),
         name: "P".into(),
         color: "".into(),
         parent_id: None,
@@ -253,6 +261,7 @@ fn task_tags_association() {
 
     let g_a = Tag {
         id: tag_id("a"),
+        user_id: Id::nil(),
         name: "urgent".into(),
         color: "".into(),
         display_order: 0,
@@ -263,6 +272,7 @@ fn task_tags_association() {
     };
     let g_b = Tag {
         id: tag_id("b"),
+        user_id: Id::nil(),
         name: "frontend".into(),
         color: "".into(),
         display_order: 1,
@@ -312,6 +322,7 @@ fn pomodoros_serialise_correctly() {
     let tid = task_id("pomo");
     s.upsert_project(Project {
         id: pid.clone(),
+        user_id: Id::nil(),
         name: "P".into(),
         color: "".into(),
         parent_id: None,
@@ -328,6 +339,7 @@ fn pomodoros_serialise_correctly() {
     let started = chrono::Utc::now() - chrono::Duration::minutes(25);
     let session = PomodoroSession {
         id: Id::new(),
+        user_id: Id::nil(),
         task_id: Some(tid.clone()),
         project_id: Some(pid.clone()),
         duration: 25,
@@ -357,6 +369,7 @@ fn reviews_upsert_by_unique_key() {
 
     let r1 = DailyReview {
         id: Id::new(),
+        user_id: Id::nil(),
         date: "2026-08-16".to_string(),
         content: "first".into(),
         revision: 1,
@@ -370,6 +383,7 @@ fn reviews_upsert_by_unique_key() {
     // 同日期再 upsert 走更新
     let r2 = DailyReview {
         id: r1.id.clone(),
+        user_id: Id::nil(),
         content: "updated".into(),
         updated_at: Timestamp(chrono::Utc::now()),
         ..r1
@@ -384,6 +398,7 @@ fn reviews_upsert_by_unique_key() {
     // 周复盘
     let w = WeeklyReview {
         id: Id::new(),
+        user_id: Id::nil(),
         week_start: "2026-08-10".into(),
         content: "Wk".into(),
         revision: 1,
@@ -399,6 +414,7 @@ fn reviews_upsert_by_unique_key() {
     // 月复盘
     let m = MonthlyReview {
         id: Id::new(),
+        user_id: Id::nil(),
         year_month: "2026-08".into(),
         content: "Aug".into(),
         revision: 1,
@@ -429,6 +445,7 @@ fn task_limit_caps_result() {
     let pid = project_id("limit");
     s.upsert_project(Project {
         id: pid.clone(),
+        user_id: Id::nil(),
         name: "P".into(),
         color: "".into(),
         parent_id: None,

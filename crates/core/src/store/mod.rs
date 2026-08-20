@@ -29,6 +29,7 @@ use crate::model::{
     DailyReview, Id, MonthlyReview, Motto, NotificationTemplate, PomodoroSession, Priority,
     Project, SubTask, Tag, Task, WeeklyReview,
 };
+use crate::sync::{change_of, Change, ChangeLogStore, EntityKind, SyncEntity};
 
 pub use sqlite::SqliteStore;
 
@@ -192,9 +193,13 @@ pub trait Store: std::fmt::Debug {
 ///
 /// 用 `Arc<RwLock<...>>` 包装可克隆的内部状态,这样 `Store` 实例可以多线程
 /// 共享(后续 Tauri command 处理并发请求时复用同一份)。P0 测试不依赖多线程。
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct InMemoryStore {
     inner: Arc<RwLock<Inner>>,
+    /// 本机用户(写入盖章;e2e 里同账号两设备共用同一个)
+    user_id: Id,
+    /// 本设备标识(ADR-009 tie-break / Change.device_id)
+    device_id: String,
 }
 
 #[derive(Debug, Default)]
@@ -210,11 +215,61 @@ struct Inner {
     monthly_reviews: HashMap<String, MonthlyReview>,
     mottos: HashMap<Id, Motto>,
     notification_template: Option<NotificationTemplate>,
+    /// 同步:待推送行(键 "kind/<id-or-natural-key>")
+    pending: std::collections::HashSet<String>,
+    /// 每行最后写入设备(tie-break 用)
+    origin: HashMap<String, String>,
+}
+
+impl Inner {
+    /// 本地写入触及一行:pending + 记录 origin。
+    fn touch(&mut self, kind: &str, key: &str, device: &str) {
+        let k = format!("{kind}/{key}");
+        self.pending.insert(k.clone());
+        self.origin.insert(k, device.to_string());
+    }
+    /// 已裁决:清除 pending。
+    fn settle(&mut self, kind: &str, key: &str) {
+        self.pending.remove(&format!("{kind}/{key}"));
+    }
+    fn origin_of(&self, kind: &str, key: &str) -> String {
+        self.origin
+            .get(&format!("{kind}/{key}"))
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+impl Default for InMemoryStore {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(Inner::default())),
+            user_id: Id::new(),
+            device_id: Id::new().0,
+        }
+    }
 }
 
 impl InMemoryStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// e2e 专用:指定归属用户与设备标识(同账号多设备共用 user_id)。
+    pub fn with_user_device(user_id: Id, device_id: impl Into<String>) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(Inner::default())),
+            user_id,
+            device_id: device_id.into(),
+        }
+    }
+
+    pub fn local_user_id(&self) -> &Id {
+        &self.user_id
+    }
+
+    pub fn local_device_id(&self) -> &str {
+        &self.device_id
     }
 }
 
@@ -330,14 +385,17 @@ impl Store for InMemoryStore {
         })
     }
 
-    fn upsert_task(&self, task: Task) -> CoreResult<Task> {
+    fn upsert_task(&self, mut task: Task) -> CoreResult<Task> {
         let mut g = self
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        let stored = task.clone();
-        g.tasks.insert(task.id.clone(), task);
-        Ok(stored)
+        if task.user_id.is_nil() {
+            task.user_id = self.user_id.clone();
+        }
+        g.touch("task", task.id.as_str(), &self.device_id);
+        g.tasks.insert(task.id.clone(), task.clone());
+        Ok(task)
     }
 
     fn delete_task(&self, id: &Id) -> CoreResult<()> {
@@ -348,6 +406,8 @@ impl Store for InMemoryStore {
         // 软删除:不真删数据,只设 deleted_at;sync 时由 LWW 决定最终状态
         if let Some(task) = g.tasks.get_mut(id) {
             task.deleted_at = Some(crate::model::Timestamp::now());
+            task.revision = task.revision.saturating_add(1);
+            g.touch("task", id.as_str(), &self.device_id);
         }
         Ok(())
     }
@@ -392,14 +452,17 @@ impl Store for InMemoryStore {
             })
     }
 
-    fn upsert_project(&self, project: Project) -> CoreResult<Project> {
+    fn upsert_project(&self, mut project: Project) -> CoreResult<Project> {
         let mut g = self
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        let stored = project.clone();
-        g.projects.insert(project.id.clone(), project);
-        Ok(stored)
+        if project.user_id.is_nil() {
+            project.user_id = self.user_id.clone();
+        }
+        g.touch("project", project.id.as_str(), &self.device_id);
+        g.projects.insert(project.id.clone(), project.clone());
+        Ok(project)
     }
 
     fn delete_project(&self, id: &Id) -> CoreResult<()> {
@@ -423,20 +486,38 @@ impl Store for InMemoryStore {
             i += 1;
         }
         let now = crate::model::Timestamp::now();
+        let mut touched_projects: Vec<String> = Vec::new();
+        let mut touched_tasks: Vec<String> = Vec::new();
+        let mut touched_pomodoros: Vec<String> = Vec::new();
         for pid in &subtree {
             if let Some(p) = g.projects.get_mut(pid) {
                 p.deleted_at = Some(now);
+                p.revision = p.revision.saturating_add(1);
+                touched_projects.push(pid.as_str().to_string());
             }
             for t in g.tasks.values_mut() {
                 if t.project_id.as_ref() == Some(pid) {
                     t.project_id = None;
+                    t.revision = t.revision.saturating_add(1);
+                    touched_tasks.push(t.id.as_str().to_string());
                 }
             }
             for s in g.pomodoros.values_mut() {
                 if s.project_id.as_ref() == Some(pid) {
                     s.project_id = None;
+                    s.revision = s.revision.saturating_add(1);
+                    touched_pomodoros.push(s.id.as_str().to_string());
                 }
             }
+        }
+        for k in touched_projects {
+            g.touch("project", &k, &self.device_id);
+        }
+        for k in touched_tasks {
+            g.touch("task", &k, &self.device_id);
+        }
+        for k in touched_pomodoros {
+            g.touch("pomodoro_session", &k, &self.device_id);
         }
         Ok(())
     }
@@ -462,6 +543,7 @@ impl Store for InMemoryStore {
                 p.display_order = it.display_order;
                 p.updated_at = crate::model::Timestamp::now();
                 p.revision = p.revision.saturating_add(1);
+                g.touch("project", it.id.as_str(), &self.device_id);
             }
         }
         Ok(())
@@ -498,7 +580,7 @@ impl Store for InMemoryStore {
         })
     }
 
-    fn upsert_tag(&self, tag: Tag) -> CoreResult<Tag> {
+    fn upsert_tag(&self, mut tag: Tag) -> CoreResult<Tag> {
         let mut g = self
             .inner
             .write()
@@ -513,9 +595,12 @@ impl Store for InMemoryStore {
                 tag.name
             )));
         }
-        let stored = tag.clone();
-        g.tags.insert(tag.id.clone(), tag);
-        Ok(stored)
+        if tag.user_id.is_nil() {
+            tag.user_id = self.user_id.clone();
+        }
+        g.touch("tag", tag.id.as_str(), &self.device_id);
+        g.tags.insert(tag.id.clone(), tag.clone());
+        Ok(tag)
     }
 
     fn delete_tag(&self, id: &Id) -> CoreResult<()> {
@@ -525,6 +610,8 @@ impl Store for InMemoryStore {
             .map_err(|e| CoreError::storage(e.to_string()))?;
         if let Some(t) = g.tags.get_mut(id) {
             t.deleted_at = Some(crate::model::Timestamp::now());
+            t.revision = t.revision.saturating_add(1);
+            g.touch("tag", id.as_str(), &self.device_id);
         }
         Ok(())
     }
@@ -546,6 +633,7 @@ impl Store for InMemoryStore {
                 t.display_order = it.display_order;
                 t.updated_at = crate::model::Timestamp::now();
                 t.revision = t.revision.saturating_add(1);
+                g.touch("tag", it.id.as_str(), &self.device_id);
             }
         }
         Ok(())
@@ -630,14 +718,17 @@ impl Store for InMemoryStore {
         Ok(out)
     }
 
-    fn upsert_pomodoro(&self, session: PomodoroSession) -> CoreResult<PomodoroSession> {
+    fn upsert_pomodoro(&self, mut session: PomodoroSession) -> CoreResult<PomodoroSession> {
         let mut g = self
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        let stored = session.clone();
-        g.pomodoros.insert(session.id.clone(), session);
-        Ok(stored)
+        if session.user_id.is_nil() {
+            session.user_id = self.user_id.clone();
+        }
+        g.touch("pomodoro_session", session.id.as_str(), &self.device_id);
+        g.pomodoros.insert(session.id.clone(), session.clone());
+        Ok(session)
     }
 
     fn delete_pomodoro(&self, id: &Id) -> CoreResult<()> {
@@ -647,6 +738,8 @@ impl Store for InMemoryStore {
             .map_err(|e| CoreError::storage(e.to_string()))?;
         if let Some(s) = g.pomodoros.get_mut(id) {
             s.deleted_at = Some(crate::model::Timestamp::now());
+            s.revision = s.revision.saturating_add(1);
+            g.touch("pomodoro_session", id.as_str(), &self.device_id);
         }
         Ok(())
     }
@@ -659,14 +752,23 @@ impl Store for InMemoryStore {
         Ok(g.daily_reviews.get(date).cloned())
     }
 
-    fn upsert_daily_review(&self, review: DailyReview) -> CoreResult<DailyReview> {
+    fn upsert_daily_review(&self, mut review: DailyReview) -> CoreResult<DailyReview> {
         let mut g = self
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        let stored = review.clone();
-        g.daily_reviews.insert(review.date.clone(), review);
-        Ok(stored)
+        if review.user_id.is_nil() {
+            review.user_id = self.user_id.clone();
+        }
+        // pending 写入:revision 存储管理(插入 1 / 更新 +1,ADR-010)
+        review.revision = g
+            .daily_reviews
+            .get(&review.date)
+            .map(|r| r.revision + 1)
+            .unwrap_or(1);
+        g.touch("daily_review", &review.date, &self.device_id);
+        g.daily_reviews.insert(review.date.clone(), review.clone());
+        Ok(review)
     }
 
     fn list_daily_reviews_between(
@@ -689,11 +791,33 @@ impl Store for InMemoryStore {
     }
 
     fn delete_daily_review(&self, date: &str) -> CoreResult<()> {
+        // ADR-010:删除 = content='' 的 upsert(变更可同步)
         let mut g = self
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        g.daily_reviews.remove(date);
+        match g.daily_reviews.get_mut(date) {
+            Some(r) => {
+                r.content = String::new();
+                r.revision += 1;
+                r.updated_at = crate::model::Timestamp::now();
+            }
+            None => {
+                g.daily_reviews.insert(
+                    date.to_string(),
+                    DailyReview {
+                        id: Id::new(),
+                        user_id: self.user_id.clone(),
+                        date: date.to_string(),
+                        content: String::new(),
+                        revision: 1,
+                        deleted_at: None,
+                        updated_at: crate::model::Timestamp::now(),
+                    },
+                );
+            }
+        }
+        g.touch("daily_review", date, &self.device_id);
         Ok(())
     }
 
@@ -705,14 +829,23 @@ impl Store for InMemoryStore {
         Ok(g.weekly_reviews.get(week_start).cloned())
     }
 
-    fn upsert_weekly_review(&self, review: WeeklyReview) -> CoreResult<WeeklyReview> {
+    fn upsert_weekly_review(&self, mut review: WeeklyReview) -> CoreResult<WeeklyReview> {
         let mut g = self
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        let stored = review.clone();
-        g.weekly_reviews.insert(review.week_start.clone(), review);
-        Ok(stored)
+        if review.user_id.is_nil() {
+            review.user_id = self.user_id.clone();
+        }
+        review.revision = g
+            .weekly_reviews
+            .get(&review.week_start)
+            .map(|r| r.revision + 1)
+            .unwrap_or(1);
+        g.touch("weekly_review", &review.week_start, &self.device_id);
+        g.weekly_reviews
+            .insert(review.week_start.clone(), review.clone());
+        Ok(review)
     }
 
     fn list_weekly_reviews_between(
@@ -735,11 +868,33 @@ impl Store for InMemoryStore {
     }
 
     fn delete_weekly_review(&self, week_start: &str) -> CoreResult<()> {
+        // ADR-010:删除 = content='' 的 upsert(同 delete_daily_review)
         let mut g = self
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        g.weekly_reviews.remove(week_start);
+        match g.weekly_reviews.get_mut(week_start) {
+            Some(r) => {
+                r.content = String::new();
+                r.revision += 1;
+                r.updated_at = crate::model::Timestamp::now();
+            }
+            None => {
+                g.weekly_reviews.insert(
+                    week_start.to_string(),
+                    WeeklyReview {
+                        id: Id::new(),
+                        user_id: self.user_id.clone(),
+                        week_start: week_start.to_string(),
+                        content: String::new(),
+                        revision: 1,
+                        deleted_at: None,
+                        updated_at: crate::model::Timestamp::now(),
+                    },
+                );
+            }
+        }
+        g.touch("weekly_review", week_start, &self.device_id);
         Ok(())
     }
 
@@ -751,22 +906,53 @@ impl Store for InMemoryStore {
         Ok(g.monthly_reviews.get(year_month).cloned())
     }
 
-    fn upsert_monthly_review(&self, review: MonthlyReview) -> CoreResult<MonthlyReview> {
+    fn upsert_monthly_review(&self, mut review: MonthlyReview) -> CoreResult<MonthlyReview> {
         let mut g = self
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        let stored = review.clone();
-        g.monthly_reviews.insert(review.year_month.clone(), review);
-        Ok(stored)
+        if review.user_id.is_nil() {
+            review.user_id = self.user_id.clone();
+        }
+        review.revision = g
+            .monthly_reviews
+            .get(&review.year_month)
+            .map(|r| r.revision + 1)
+            .unwrap_or(1);
+        g.touch("monthly_review", &review.year_month, &self.device_id);
+        g.monthly_reviews
+            .insert(review.year_month.clone(), review.clone());
+        Ok(review)
     }
 
     fn delete_monthly_review(&self, year_month: &str) -> CoreResult<()> {
+        // ADR-010:删除 = content='' 的 upsert(同 delete_daily_review)
         let mut g = self
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        g.monthly_reviews.remove(year_month);
+        match g.monthly_reviews.get_mut(year_month) {
+            Some(r) => {
+                r.content = String::new();
+                r.revision += 1;
+                r.updated_at = crate::model::Timestamp::now();
+            }
+            None => {
+                g.monthly_reviews.insert(
+                    year_month.to_string(),
+                    MonthlyReview {
+                        id: Id::new(),
+                        user_id: self.user_id.clone(),
+                        year_month: year_month.to_string(),
+                        content: String::new(),
+                        revision: 1,
+                        deleted_at: None,
+                        updated_at: crate::model::Timestamp::now(),
+                    },
+                );
+            }
+        }
+        g.touch("monthly_review", year_month, &self.device_id);
         Ok(())
     }
 
@@ -806,14 +992,17 @@ impl Store for InMemoryStore {
         Ok(out)
     }
 
-    fn upsert_subtask(&self, subtask: SubTask) -> CoreResult<SubTask> {
+    fn upsert_subtask(&self, mut subtask: SubTask) -> CoreResult<SubTask> {
         let mut g = self
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        let stored = subtask.clone();
-        g.subtasks.insert(subtask.id.clone(), subtask);
-        Ok(stored)
+        if subtask.user_id.is_nil() {
+            subtask.user_id = self.user_id.clone();
+        }
+        g.touch("sub_task", subtask.id.as_str(), &self.device_id);
+        g.subtasks.insert(subtask.id.clone(), subtask.clone());
+        Ok(subtask)
     }
 
     fn delete_subtask(&self, id: &Id) -> CoreResult<()> {
@@ -823,6 +1012,8 @@ impl Store for InMemoryStore {
             .map_err(|e| CoreError::storage(e.to_string()))?;
         if let Some(s) = g.subtasks.get_mut(id) {
             s.deleted_at = Some(crate::model::Timestamp::now());
+            s.revision = s.revision.saturating_add(1);
+            g.touch("sub_task", id.as_str(), &self.device_id);
         }
         Ok(())
     }
@@ -843,14 +1034,17 @@ impl Store for InMemoryStore {
         Ok(out)
     }
 
-    fn upsert_motto(&self, motto: Motto) -> CoreResult<Motto> {
+    fn upsert_motto(&self, mut motto: Motto) -> CoreResult<Motto> {
         let mut g = self
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        let stored = motto.clone();
-        g.mottos.insert(motto.id.clone(), motto);
-        Ok(stored)
+        if motto.user_id.is_nil() {
+            motto.user_id = self.user_id.clone();
+        }
+        g.touch("motto", motto.id.as_str(), &self.device_id);
+        g.mottos.insert(motto.id.clone(), motto.clone());
+        Ok(motto)
     }
 
     fn delete_motto(&self, id: &Id) -> CoreResult<()> {
@@ -860,6 +1054,8 @@ impl Store for InMemoryStore {
             .map_err(|e| CoreError::storage(e.to_string()))?;
         if let Some(m) = g.mottos.get_mut(id) {
             m.deleted_at = Some(crate::model::Timestamp::now());
+            m.revision = m.revision.saturating_add(1);
+            g.touch("motto", id.as_str(), &self.device_id);
         }
         Ok(())
     }
@@ -901,6 +1097,164 @@ impl Store for InMemoryStore {
             }
         }
         u32::try_from(total).map_err(|_| CoreError::storage("today minutes overflow"))
+    }
+}
+
+// === InMemoryStore 的同步语义(e2e 闭环用,与 SqliteStore 行为对齐) ==========
+
+/// EntityKind serde 名(与 Inner.pending/origin 的键前缀一致)。
+fn kind_str(k: EntityKind) -> &'static str {
+    match k {
+        EntityKind::Task => "task",
+        EntityKind::Project => "project",
+        EntityKind::Tag => "tag",
+        EntityKind::SubTask => "sub_task",
+        EntityKind::PomodoroSession => "pomodoro_session",
+        EntityKind::Motto => "motto",
+        EntityKind::DailyReview => "daily_review",
+        EntityKind::WeeklyReview => "weekly_review",
+        EntityKind::MonthlyReview => "monthly_review",
+    }
+}
+
+fn cand<E: SyncEntity>(e: &E, kind: &str, id: &str, g: &Inner, device: &str) -> CoreResult<Change> {
+    change_of(e, g.origin_of(kind, id), device)
+}
+
+impl ChangeLogStore for InMemoryStore {
+    fn list_pending(&self, limit: usize) -> CoreResult<Vec<Change>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<Change> = Vec::new();
+        macro_rules! collect {
+            ($map:expr, $kind:literal, $key:ident) => {
+                for e in $map.values() {
+                    if out.len() >= limit {
+                        break;
+                    }
+                    let key = e.$key.to_string();
+                    if !g.pending.contains(&format!("{}/{}", $kind, key)) {
+                        continue;
+                    }
+                    out.push(cand(e, $kind, &key, &g, &self.device_id)?);
+                }
+            };
+        }
+        collect!(g.tasks, "task", id);
+        collect!(g.projects, "project", id);
+        collect!(g.tags, "tag", id);
+        collect!(g.subtasks, "sub_task", id);
+        collect!(g.pomodoros, "pomodoro_session", id);
+        collect!(g.mottos, "motto", id);
+        collect!(g.daily_reviews, "daily_review", date);
+        collect!(g.weekly_reviews, "weekly_review", week_start);
+        collect!(g.monthly_reviews, "monthly_review", year_month);
+        out.sort_by_key(|c| c.updated_at);
+        Ok(out)
+    }
+
+    fn apply_remote(&self, change: &Change) -> CoreResult<()> {
+        let kind = kind_str(change.entity);
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        macro_rules! decode {
+            ($t:ty) => {{
+                let mut e: $t = serde_json::from_value(change.payload.clone())
+                    .map_err(|e| CoreError::Validation(format!("apply_remote payload: {e}")))?;
+                if e.user_id.is_nil() {
+                    e.user_id = self.user_id.clone();
+                }
+                e
+            }};
+        }
+        // 远端已裁定胜出:按权威载荷原样落库(revision 不 bump),settle pending
+        match change.entity {
+            EntityKind::Task => {
+                let e = decode!(Task);
+                g.tasks.insert(e.id.clone(), e);
+            }
+            EntityKind::Project => {
+                let e = decode!(Project);
+                g.projects.insert(e.id.clone(), e);
+            }
+            EntityKind::Tag => {
+                let e = decode!(Tag);
+                g.tags.insert(e.id.clone(), e);
+            }
+            EntityKind::SubTask => {
+                let e = decode!(SubTask);
+                g.subtasks.insert(e.id.clone(), e);
+            }
+            EntityKind::PomodoroSession => {
+                let e = decode!(PomodoroSession);
+                g.pomodoros.insert(e.id.clone(), e);
+            }
+            EntityKind::Motto => {
+                let e = decode!(Motto);
+                g.mottos.insert(e.id.clone(), e);
+            }
+            EntityKind::DailyReview => {
+                let e = decode!(DailyReview);
+                g.daily_reviews.insert(e.date.clone(), e);
+            }
+            EntityKind::WeeklyReview => {
+                let e = decode!(WeeklyReview);
+                g.weekly_reviews.insert(e.week_start.clone(), e);
+            }
+            EntityKind::MonthlyReview => {
+                let e = decode!(MonthlyReview);
+                g.monthly_reviews.insert(e.year_month.clone(), e);
+            }
+        }
+        g.settle(kind, &change.entity_id);
+        g.origin.insert(
+            format!("{kind}/{}", change.entity_id),
+            change.device_id.clone(),
+        );
+        Ok(())
+    }
+
+    fn mark_synced(&self, keys: &[(EntityKind, String)]) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        for (kind, key) in keys {
+            g.settle(kind_str(*kind), key);
+        }
+        Ok(())
+    }
+
+    fn local_candidate(&self, kind: EntityKind, id: &str) -> CoreResult<Option<Change>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        macro_rules! probe {
+            ($map:expr, $kind:literal, $key:expr) => {
+                match $key.and_then(|k| $map.get(k)) {
+                    Some(e) => Some(cand(e, $kind, id, &g, &self.device_id)?),
+                    None => None,
+                }
+            };
+        }
+        Ok(match kind {
+            EntityKind::Task => probe!(g.tasks, "task", Id::parse(id).as_ref()),
+            EntityKind::Project => probe!(g.projects, "project", Id::parse(id).as_ref()),
+            EntityKind::Tag => probe!(g.tags, "tag", Id::parse(id).as_ref()),
+            EntityKind::SubTask => probe!(g.subtasks, "sub_task", Id::parse(id).as_ref()),
+            EntityKind::PomodoroSession => {
+                probe!(g.pomodoros, "pomodoro_session", Id::parse(id).as_ref())
+            }
+            EntityKind::Motto => probe!(g.mottos, "motto", Id::parse(id).as_ref()),
+            EntityKind::DailyReview => probe!(g.daily_reviews, "daily_review", Some(id)),
+            EntityKind::WeeklyReview => probe!(g.weekly_reviews, "weekly_review", Some(id)),
+            EntityKind::MonthlyReview => probe!(g.monthly_reviews, "monthly_review", Some(id)),
+        })
     }
 }
 

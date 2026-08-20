@@ -67,6 +67,9 @@ pub enum Repeat {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
     pub id: Id,
+    /// 归属用户(多租户隔离,ADR-007;本地 = 本机用户 UUID,Store 写入时盖章)
+    #[serde(default = "crate::model::nil_user_id")]
+    pub user_id: Id,
 
     pub title: String,
     #[serde(default)]
@@ -126,6 +129,7 @@ impl Task {
     pub fn new(title: impl Into<String>) -> Self {
         Self {
             id: Id::new(),
+            user_id: Id::nil(),
             title: title.into(),
             description: String::new(),
             project_id: None,
