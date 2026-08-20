@@ -12,17 +12,26 @@
 | [`pomoflow`](https://github.com/zyq-hfyc/pomoflow) | TypeScript + Python + PyInstaller | 「不需要同步」的用户,继续维护 v1.x |
 | **`pomoflow-next`**(本仓库) | Tauri 2 + Rust + 薄 Web UI | 「准备多端同步」的用户,v2 渐进 |
 
-## 当前进度(v1 功能复刻完成)
+## 当前进度(v1 功能复刻完成,同步线 P0.5/P1a 进行中)
 
-- ✅ Cargo workspace(`crates/core` + `apps/desktop` + `tools/migrate-v1`)
+- ✅ Cargo workspace(`crates/core` + `apps/desktop` + `tools/migrate-v1` + `services/sync-server`)
 - ✅ `crates/core`:域模型 + LWW 同步 + 存储(含版本化 SQLite 迁移) + 业务校验 +
-  统计聚合 + 重复任务日期引擎 + 拖拽排序校验,79 个测试
+  统计聚合 + 重复任务日期引擎 + 拖拽排序校验
+- ✅ 同步地基(P0.5):实体 `user_id` 归属、`sync_state` 待推送队列、Push/Pull 协议
+  (seq 游标)、同步引擎、双端 mock 七场景闭环 —— 契约见
+  [docs/同步协议详细设计.md](https://github.com/zyq-hfyc/pomoflow/blob/main/docs/同步协议详细设计.md)
+  (ADR-009/010/011)
+- ✅ `services/sync-server` 云端同步服务(P1a 服务端):axum + PostgreSQL,
+  Push/Pull + LWW 裁决(与桌面共享 core 代码)—— **部署见
+  [services/sync-server/README.md](./services/sync-server/README.md)**
 - ✅ `apps/desktop` Tauri 2 桌面端:v1 全功能 —— 计时器(挂钟制/自动链/任务接续/
   提醒)、任务页(6 视图 + 重复任务引擎 + 手账月历复盘)、统计页(6 维度 + SVG 图表)、
   设置页(7 标签:计时/清单树拖拽/标签/8 主题背景/名言/通知文案/中英双语)、xlsx 导出、
   帮助页、托盘/通知/开机自启
 - ✅ `tools/migrate-v1`:v1 SQLite → v2 store 一键迁移(全表,含重复实例/子任务/名言)
 - ✅ CI + 三平台 Release(tag 触发)
+- ⏳ 进行中:桌面端同步接线(设置页服务器地址/Token + sync_now)→ 双端闭环实测;
+  任务全景见 [docs/协作任务清单.md](./docs/协作任务清单.md)
 
 完整路线与 ADR 见 [docs/architecture.md § 13](https://github.com/zyq-hfyc/pomoflow/blob/main/docs/architecture.md)
 (权威文档在原仓库,本仓库只做执行)。
@@ -34,7 +43,8 @@ pomoflow-next/
 ├── crates/core/                # 域模型 + 同步 + 存储抽象(纯 Rust lib)
 ├── apps/desktop/               # Tauri 2 桌面端(P1)
 ├── tools/migrate-v1/           # v1 → v2 数据迁移 CLI
-├── docs/                       # 仓库内文档
+├── services/sync-server/       # 云端同步服务(P1a,部署说明在其 README)
+├── docs/                       # 仓库内文档(含协作任务清单)
 ├── Cargo.toml                  # workspace root
 ├── rust-toolchain.toml         # Rust 版本锁
 └── .github/workflows/          # CI / Release
