@@ -307,7 +307,7 @@
                 {/if}
                 <div class="day-divider"></div>
                 <ReviewTextarea
-                  value={dailyMap.get(day.iso)?.content ?? null}
+                  value={dailyMap.get(day.iso)?.content || null} // 空内容行(ADR-010)等同未写
                   placeholder={t.journal.dailyReviewPlaceholder}
                   rows={2}
                   onSave={(text) => saveDaily(day.iso, text)}
@@ -320,7 +320,7 @@
           <div class="weekly-block">
             <div class="weekly-label">{t.journal.weeklyReview}</div>
             <ReviewTextarea
-              value={weeklyMap.get(week.startISO)?.content ?? null}
+              value={weeklyMap.get(week.startISO)?.content || null}
               placeholder={t.journal.weeklyReviewPlaceholder}
               rows={5}
               onSave={(text) => saveWeekly(week.startISO, text)}

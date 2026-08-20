@@ -115,7 +115,7 @@
   <div class="monthly-block">
     <div class="label">{t.monthPanel.monthlyReview}</div>
     <ReviewTextarea
-      value={monthly?.content ?? null}
+      value={monthly?.content || null}
       placeholder={t.monthPanel.monthlyPlaceholder}
       rows={6}
       onSave={saveMonthly}

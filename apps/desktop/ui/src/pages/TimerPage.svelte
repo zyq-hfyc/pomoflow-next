@@ -225,7 +225,8 @@
   async function refreshTodayReview() {
     try {
       const r: DailyReview | null = await api.getDailyReview(todayISO());
-      todayReview = r?.content ?? null;
+      // 空内容行(ADR-010 删除语义)等同未写
+      todayReview = r?.content || null;
     } catch (e) {
       console.warn("refresh review", e);
     }

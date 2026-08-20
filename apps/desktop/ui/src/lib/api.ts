@@ -40,7 +40,12 @@ interface SyncMeta {
   updated_at?: string;
 }
 
-export interface Task extends SyncMeta {
+/** 同步实体公共字段:归属用户(多租户;本地由后端盖章,前端只读) */
+interface UserScoped {
+  user_id?: string;
+}
+
+export interface Task extends SyncMeta, UserScoped {
   id: string;
   title: string;
   description?: string;
@@ -70,7 +75,7 @@ export interface TaskView extends Task {
   subtasks: SubTask[];
 }
 
-export interface Project extends SyncMeta {
+export interface Project extends SyncMeta, UserScoped {
   id: string;
   name: string;
   color?: string;
@@ -80,7 +85,7 @@ export interface Project extends SyncMeta {
   created_at?: string;
 }
 
-export interface Tag extends SyncMeta {
+export interface Tag extends SyncMeta, UserScoped {
   id: string;
   name: string;
   color?: string;
@@ -89,7 +94,7 @@ export interface Tag extends SyncMeta {
   created_at?: string;
 }
 
-export interface PomodoroSession extends SyncMeta {
+export interface PomodoroSession extends SyncMeta, UserScoped {
   id: string;
   task_id?: string | null;
   project_id?: string | null;
@@ -101,7 +106,7 @@ export interface PomodoroSession extends SyncMeta {
   created_at?: string;
 }
 
-export interface SubTask extends SyncMeta {
+export interface SubTask extends SyncMeta, UserScoped {
   id: string;
   task_id: string;
   title: string;
@@ -111,7 +116,7 @@ export interface SubTask extends SyncMeta {
 }
 
 /** 复盘族:Rust 侧只有 id / 键 / content / updated_at(无 created_at) */
-interface ReviewBase extends SyncMeta {
+interface ReviewBase extends SyncMeta, UserScoped {
   content: string;
   updated_at?: string;
 }
@@ -131,7 +136,7 @@ export interface MonthlyReview extends ReviewBase {
   year_month: string;
 }
 
-export interface Motto extends SyncMeta {
+export interface Motto extends SyncMeta, UserScoped {
   id: string;
   text: string;
   author: string | null;
