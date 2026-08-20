@@ -1,0 +1,150 @@
+<mxfile host="app.diagrams.net" agent="Claude Code" version="24.0.0">
+  <diagram name="PomoFlow 目标架构" id="pomoflow-arch">
+    <mxGraphModel dx="1400" dy="860" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="820" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- 背景分组(底层) -->
+        <mxCell id="bg1" value="① 客户端层 Client  —  Local-first:每端本地 SQLite,离线全功能;登录后按需同步" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=12;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="1320" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="bg2" value="② 云端微服务层  —  按语言擅长领域选型 · 弹性可扩展(K8s + HPA 自动扩缩)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=12;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="230" width="1320" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="bg3" value="③ 数据与基础设施" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;fontSize=12;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="570" width="1320" height="150" as="geometry" />
+        </mxCell>
+
+        <!-- 客户端 -->
+        <mxCell id="m" value="移动端&lt;br&gt;&lt;b&gt;Flutter + Drift&lt;/b&gt;&lt;br&gt;Dart · iOS / 安卓 / 鸿蒙&lt;br&gt;本地 SQLite(离线全功能)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="90" y="75" width="270" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="d" value="桌面端&lt;br&gt;&lt;b&gt;Tauri 2 + Rust&lt;/b&gt;(业务逻辑写 Rust)&lt;br&gt;Web UI · rusqlite · 内嵌 pomoflow_core&lt;br&gt;Win / macOS / Linux 三端一致" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="470" y="75" width="330" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="admin" value="管理后台(内网 · 不对用户开放)&lt;br&gt;&lt;b&gt;React + Ant Design Pro&lt;/b&gt;&lt;br&gt;TypeScript · 数据统计 / 会员权限" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="970" y="75" width="330" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- 共享 crate(桥接节点) -->
+        <mxCell id="core" value="⭐ &lt;b&gt;pomoflow-rs · core crate(Rust,桌面 + 云端共享)&lt;/b&gt;  —  域模型 / 同步协议 / LWW 合并 / 校验:两端同一份代码,合并算法零漂移" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=11;strokeWidth=3;" vertex="1" parent="1">
+          <mxGeometry x="250" y="193" width="900" height="32" as="geometry" />
+        </mxCell>
+
+        <!-- 网关 -->
+        <mxCell id="gw" value="API Gateway · &lt;b&gt;APISIX&lt;/b&gt;   —   统一入口 · JWT 校验 · 限流 · 路由" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="520" y="275" width="360" height="46" as="geometry" />
+        </mxCell>
+
+        <!-- 云端服务行 -->
+        <mxCell id="auth" value="认证服务&lt;br&gt;&lt;b&gt;Auth · Rust&lt;/b&gt;&lt;br&gt;axum · JWT / 会话" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="370" width="150" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="sync" value="同步服务&lt;br&gt;&lt;b&gt;Sync · Rust&lt;/b&gt; ⭐&lt;br&gt;axum + tokio + sqlx&lt;br&gt;Push/Pull · LWW 合并&lt;br&gt;内嵌 pomoflow_core" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;strokeWidth=3;" vertex="1" parent="1">
+          <mxGeometry x="230" y="365" width="180" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="user" value="用户服务&lt;br&gt;&lt;b&gt;User · Go&lt;/b&gt;&lt;br&gt;gin · 资料 / 设备" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="430" y="370" width="150" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="memb" value="会员权限&lt;br&gt;&lt;b&gt;Membership · Go&lt;/b&gt;&lt;br&gt;等级 / 权益 / 到期" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="600" y="370" width="150" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="notif" value="通知服务&lt;br&gt;&lt;b&gt;Notification · Go&lt;/b&gt;&lt;br&gt;推送 / 邮件" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="770" y="370" width="150" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ana" value="统计分析&lt;br&gt;&lt;b&gt;Analytics · Python&lt;/b&gt;&lt;br&gt;FastAPI + pandas&lt;br&gt;聚合 / 留存 / ML" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="940" y="370" width="170" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="bff" value="管理 BFF&lt;br&gt;&lt;b&gt;Admin BFF · Go&lt;/b&gt;&lt;br&gt;RBAC / 审计 / 白名单" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="370" width="170" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- 数据层 -->
+        <mxCell id="pg" value="&lt;b&gt;PostgreSQL&lt;/b&gt;&lt;br&gt;云端主库 · 按 user_id 隔离&lt;br&gt;主从 + 逻辑复制" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="120" y="610" width="200" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="redis" value="&lt;b&gt;Redis&lt;/b&gt;&lt;br&gt;缓存 / 会话 / 分布式锁&lt;br&gt;Token 黑名单" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="400" y="610" width="190" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="nats" value="&lt;b&gt;NATS&lt;/b&gt; 事件总线&lt;br&gt;服务解耦 / 异步通知 / 削峰" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="660" y="610" width="220" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" value="&lt;b&gt;对象存储 S3 / OSS&lt;/b&gt;&lt;br&gt;数据库备份 / 导入导出" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="950" y="610" width="210" height="95" as="geometry" />
+        </mxCell>
+
+        <!-- 边:客户端 → 网关/BFF -->
+        <mxCell id="e1" value="HTTPS + JWT" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6c8ebf;fontSize=10;strokeWidth=2;" edge="1" parent="1" source="m" target="gw">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="HTTPS + JWT" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#9673a6;fontSize=10;strokeWidth=2;" edge="1" parent="1" source="d" target="gw">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="REST(内网 / VPC + SSO)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#666666;fontSize=10;strokeWidth=2;" edge="1" parent="1" source="admin" target="bff">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- 边:共享 crate(虚线) -->
+        <mxCell id="e4" value="内嵌" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;html=1;strokeColor=#d6b656;fontSize=10;strokeWidth=2;endArrow=none;" edge="1" parent="1" source="d" target="core">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="共享同一份 Rust 代码(零漂移)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;html=1;strokeColor=#d6b656;fontSize=10;strokeWidth=2;endArrow=none;" edge="1" parent="1" source="core" target="sync">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- 边:网关 → 服务 -->
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#999999;endArrow=none;" edge="1" parent="1" source="gw" target="auth">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#999999;endArrow=none;" edge="1" parent="1" source="gw" target="sync">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#999999;endArrow=none;" edge="1" parent="1" source="gw" target="user">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#999999;endArrow=none;" edge="1" parent="1" source="gw" target="memb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#999999;endArrow=none;" edge="1" parent="1" source="gw" target="notif">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#999999;endArrow=none;" edge="1" parent="1" source="gw" target="ana">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- 边:服务 → 数据 -->
+        <mxCell id="e12" value="读写" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d79b00;fontSize=9;" edge="1" parent="1" source="sync" target="pg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" value="读写" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d79b00;fontSize=9;" edge="1" parent="1" source="user" target="pg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" value="读写" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d79b00;fontSize=9;" edge="1" parent="1" source="memb" target="pg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e15" value="只读副本" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d79b00;fontSize=9;" edge="1" parent="1" source="ana" target="pg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e19" value="读写" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d79b00;fontSize=9;" edge="1" parent="1" source="bff" target="pg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" value="会话" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d79b00;fontSize=9;" edge="1" parent="1" source="auth" target="redis">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e17" value="消费事件" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d79b00;fontSize=9;" edge="1" parent="1" source="notif" target="nats">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e18" value="消费事件" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d79b00;fontSize=9;" edge="1" parent="1" source="ana" target="nats">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- 图例 -->
+        <mxCell id="legend" value="&lt;b&gt;语言图例(按领域选型):&lt;/b&gt;  &lt;font color='#9673a6'&gt;■ Rust&lt;/font&gt; 性能/安全(Sync · Auth · 桌面后端 · core crate)   &lt;font color='#82b366'&gt;■ Go&lt;/font&gt; CRUD/事件高并发(User · Membership · Notification · Admin BFF)   &lt;font color='#d6b656'&gt;■ Python&lt;/font&gt; 数据/统计(Analytics)   &lt;font color='#6c8ebf'&gt;■ Dart / TS&lt;/font&gt; 客户端      |      &lt;b&gt;同步:&lt;/b&gt; 本地 SQLite ↔ 云端 增量 Push/Pull + LWW + UUID(登录后按需同步)" style="text;html=1;strokeColor=#b0b0b0;fillColor=#fafafa;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="740" width="1320" height="50" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
