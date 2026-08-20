@@ -14,6 +14,7 @@ pub mod commands;
 pub mod export;
 pub mod notify;
 pub mod repeat_service;
+pub mod sync_client;
 pub mod tray;
 
 /// 迁移前把 db 复制为 `store.db.<YYYYmmdd_HHMMSS>.bak`(v1 `database.py::_backup_db` 对齐)。
@@ -104,6 +105,10 @@ pub fn run() {
             commands::stats_range,
             commands::stats_overview,
             notify::send_notification,
+            sync_client::get_sync_config,
+            sync_client::set_sync_config,
+            sync_client::get_sync_identity,
+            sync_client::sync_now,
             export::export_tasks_xlsx,
         ])
         .setup(|app| {

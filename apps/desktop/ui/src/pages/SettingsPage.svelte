@@ -1,8 +1,8 @@
 <script lang="ts">
   // 设置页 —— v1 SettingsPage.tsx 布局移植:左侧二级菜单 + 右侧表单卡。
   //
-  // 8 个标签(与 v1 一致,account 排第一,内容为占位文案):账号 / 计时 / 清单 /
-  // 标签 / 主题 / 名言 / 通知 / 语言。
+  // 9 个标签:v1 的 8 个(账号占位 / 计时 / 清单 / 标签 / 主题 / 名言 / 通知 /
+  // 语言)+ v2 新增「数据同步」(P1a)。
   // 菜单激活态:accent-50 底 + accent-600 字 + 左侧指示条(词典 t.settings.tab.*)。
   // 各标签内容在 components/Settings/*(本文件只负责骨架与切换)。
 
@@ -15,6 +15,7 @@
     Palette,
     Quote,
     Bell,
+    RefreshCw,
     Languages,
   } from "lucide-svelte";
   import { getDict } from "../lib/i18n.svelte";
@@ -24,6 +25,7 @@
   import ThemeSetting from "../components/Settings/ThemeSetting.svelte";
   import MottoManager from "../components/Settings/MottoManager.svelte";
   import NotificationTemplateSetting from "../components/Settings/NotificationTemplateSetting.svelte";
+  import SyncSetting from "../components/Settings/SyncSetting.svelte";
   import LanguageSetting from "../components/Settings/LanguageSetting.svelte";
 
   const t = $derived(getDict());
@@ -36,6 +38,7 @@
     | "theme"
     | "motto"
     | "notification"
+    | "sync"
     | "language";
 
   let activeTab = $state<SettingTab>("timer");
@@ -50,6 +53,7 @@
     { key: "theme", icon: Palette as any, label: t.settings.tab.theme },
     { key: "motto", icon: Quote as any, label: t.settings.tab.motto },
     { key: "notification", icon: Bell as any, label: t.settings.tab.notification },
+    { key: "sync", icon: RefreshCw as any, label: t.settings.tab.sync },
     { key: "language", icon: Languages as any, label: t.settings.tab.language },
   ]);
 </script>
@@ -99,6 +103,8 @@
         <MottoManager />
       {:else if activeTab === "notification"}
         <NotificationTemplateSetting />
+      {:else if activeTab === "sync"}
+        <SyncSetting />
       {:else if activeTab === "language"}
         <LanguageSetting />
       {/if}

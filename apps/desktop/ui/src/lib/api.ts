@@ -416,6 +416,36 @@ export const statsOverview = (
 export const sendSystemNotification = (title: string, body: string) =>
   invoke<void>("send_notification", { title, body });
 
+// === 同步(P1a;配置存 SQLite meta,与 Rust 侧引擎同侧) ===
+
+export interface SyncConfig {
+  server_url: string | null;
+  token: string | null;
+}
+
+export interface SyncIdentity {
+  user_id: string;
+  device_id: string;
+}
+
+export interface SyncReport {
+  pushed: number;
+  conflicts: number;
+  dropped: number;
+  pulled: number;
+}
+
+export const getSyncConfig = () => invoke<SyncConfig>("get_sync_config");
+
+/** 保存/清除配置(传空串或 null 清除);地址须 http(s),服务端规范化。 */
+export const setSyncConfig = (serverUrl: string | null, token: string | null) =>
+  invoke<void>("set_sync_config", { serverUrl, token });
+
+export const getSyncIdentity = () => invoke<SyncIdentity>("get_sync_identity");
+
+/** 手动全量同步:push 推到清空 + pull 拉到空批;返回统计。 */
+export const syncNow = () => invoke<SyncReport>("sync_now");
+
 // === Export(xlsx) ===
 
 /** 导出一行(展示字段全部本地化/格式化后传入;Rust 不做 i18n) */

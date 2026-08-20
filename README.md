@@ -30,7 +30,8 @@
   帮助页、托盘/通知/开机自启
 - ✅ `tools/migrate-v1`:v1 SQLite → v2 store 一键迁移(全表,含重复实例/子任务/名言)
 - ✅ CI + 三平台 Release(tag 触发)
-- ⏳ 进行中:桌面端同步接线(设置页服务器地址/Token + sync_now)→ 双端闭环实测;
+- ⏳ 进行中:同步闭环实测 —— 桌面端接线已完成(设置 → 数据同步:服务器地址/Token、
+  本机标识、立即同步),待服务端实机部署后双端验证;
   任务全景见 [docs/协作任务清单.md](./docs/协作任务清单.md)
 
 完整路线与 ADR 见 [docs/architecture.md § 13](https://github.com/zyq-hfyc/pomoflow/blob/main/docs/architecture.md)
