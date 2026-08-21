@@ -1,10 +1,13 @@
-# Docker 构建上下文白名单:sync-server 镜像只需要 workspace 清单 + core + 服务本身。
-# 整仓库 21G+(target/node_modules/.git)被挡在上下文外,传给 docker daemon 的只有源码。
-*
-!Cargo.toml
-!Cargo.lock
-!rust-toolchain.toml
-!crates
-!crates/**
-!services
-!services/**
+# Docker 构建上下文黑名单:挡掉 21G+ 本地噪音(target/.git/node_modules 等),
+# 保留**完整 workspace**(根 Cargo.toml 的 members 声明了 4 个成员,
+# 缺 apps/desktop / tools/migrate-v1 的 manifest 会导致 cargo 直接报错
+# "failed to load manifest for workspace member")。
+# 剩余上下文 ≈ 源码几 MB,与 pack-deploy.sh 的部署包同口径。
+target
+.git
+.claude
+.github
+docs
+artifacts
+**/node_modules
+**/dist
