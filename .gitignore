@@ -74,3 +74,6 @@ docs/提示词.txt
 
 # sync-server 运行环境(容器/.env 提供,不入库)
 services/sync-server/.env
+
+# 本地保留的发布产物(安装包/部署包),不入库
+artifacts/
