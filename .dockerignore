@@ -1,0 +1,10 @@
+# Docker 构建上下文白名单:sync-server 镜像只需要 workspace 清单 + core + 服务本身。
+# 整仓库 21G+(target/node_modules/.git)被挡在上下文外,传给 docker daemon 的只有源码。
+*
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!crates
+!crates/**
+!services
+!services/**

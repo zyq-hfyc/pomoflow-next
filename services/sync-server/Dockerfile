@@ -4,10 +4,10 @@
 
 FROM rust:1-slim AS build
 WORKDIR /app
-COPY Cargo.toml rust-toolchain.toml ./
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY services/sync-server ./services/sync-server
-RUN cargo build --release -p sync-server
+RUN cargo build --release --locked -p sync-server
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
