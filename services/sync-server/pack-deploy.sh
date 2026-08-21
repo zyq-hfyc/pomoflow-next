@@ -27,6 +27,7 @@ tar -czf "$OUT" \
   --exclude='pomoflow-next/.claude' \
   --exclude='pomoflow-next/.github' \
   --exclude='pomoflow-next/docs' \
+  --exclude='pomoflow-next/artifacts' \
   --exclude='*/node_modules' \
   --exclude='*/dist' \
   -C .. pomoflow-next
