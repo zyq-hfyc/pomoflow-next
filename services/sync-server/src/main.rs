@@ -1,15 +1,18 @@
-//! PomoFlow Sync Service(P1a)—— 桌面端同步的云端落地。
+//! PomoFlow Sync Service —— 桌面端同步的云端落地。
 //!
 //! 端点:
-//! - `POST /v1/sync/push` 推送 pending 变更,服务端逐条 LWW 裁决(ADR-009)
-//! - `POST /v1/sync/pull` seq 游标增量拉取,排除本设备(ADR-011)
-//! - `GET  /healthz`      存活探针
+//! - `POST /v1/sync/push`  推送 pending 变更,服务端逐条 LWW 裁决(ADR-009)
+//! - `POST /v1/sync/pull`  seq 游标增量拉取,排除本设备(ADR-011)
+//! - `POST /v1/auth/*`     账号体系(P1b,ADR-007:register/login/refresh/logout)
+//! - `GET  /healthz`       存活探针
 //!
-//! 认证:MVP 为静态 Bearer Token(`SYNC_TOKEN` → `SYNC_USER_ID` 单账号);
-//! 注册/JWT/Refresh 多账号体系是 P1b(ADR-007)。
+//! 认证:Bearer Token 二选一 —— JWT(设置 `JWT_SECRET` 启用,多账号)或
+//! 静态 `SYNC_TOKEN`(`SYNC_TOKEN` → `SYNC_USER_ID` 单账号,P1a 兼容回落)。
 //!
 //! 与桌面端共享 `pomoflow-core` 的域模型与合并算法(ADR-005)——两端零漂移。
 
+mod auth;
+mod auth_handlers;
 mod handlers;
 mod state;
 
@@ -34,6 +37,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let user_id = Id::parse(&std::env::var("SYNC_USER_ID").expect("SYNC_USER_ID 必须设置"))
         .expect("SYNC_USER_ID 必须是 UUID");
     let port: u16 = env_or("PORT", "8080").parse().expect("PORT 非法");
+    let jwt_secret = std::env::var("JWT_SECRET")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
 
     let pool = PgPoolOptions::new()
         .max_connections(8)
@@ -42,19 +48,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .map_err(|e| format!("连接 PostgreSQL 失败(检查 DATABASE_URL): {e}"))?;
 
+    // 启动时幂等建表:schema.sql 全部是 CREATE TABLE/INDEX IF NOT EXISTS,
+    // 新库与"旧数据卷升级"(initdb 只在首次建卷时跑,新表不会自动出现)
+    // 都靠这一步收敛到最新结构。
+    sqlx::raw_sql(include_str!("../schema.sql"))
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("应用 schema.sql 失败: {e}"))?;
+
     log::info!(
-        "sync-server listening on 0.0.0.0:{port}, user={}",
-        user_id.as_str()
+        "sync-server listening on 0.0.0.0:{port}, user={}, auth={}",
+        user_id.as_str(),
+        if jwt_secret.is_some() { "jwt+static" } else { "static" }
     );
 
     let app = Router::new()
         .route("/v1/sync/push", post(handlers::push))
         .route("/v1/sync/pull", post(handlers::pull))
+        .route("/v1/auth/register", post(auth_handlers::register))
+        .route("/v1/auth/login", post(auth_handlers::login))
+        .route("/v1/auth/refresh", post(auth_handlers::refresh))
+        .route("/v1/auth/logout", post(auth_handlers::logout))
         .route("/healthz", get(handlers::healthz))
         .with_state(AppState {
             pool,
             token,
             user_id,
+            jwt_secret,
         });
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

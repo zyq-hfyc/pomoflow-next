@@ -13,7 +13,6 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use chrono::TimeZone;
-use pomoflow_core::model::Id;
 use pomoflow_core::sync::lww::{resolve_conflict, Resolution};
 use pomoflow_core::sync::{
     ApplyOutcome, Change, EntityKind, PullRequest, PullResponse, PushRequest, PushResponse,
@@ -22,6 +21,7 @@ use pomoflow_core::sync::{
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::auth_handlers::authenticate;
 use crate::state::{AppState, PULL_LIMIT};
 
 type ApiError = (StatusCode, String);
@@ -32,27 +32,6 @@ fn internal(e: sqlx::Error) -> ApiError {
 
 fn bad_request(e: serde_json::Error) -> ApiError {
     (StatusCode::BAD_REQUEST, format!("payload: {e}"))
-}
-
-/// MVP 认证:Bearer 静态 token(见 state.rs;完整 JWT 体系在 P1b)。
-fn auth(app: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
-    let provided = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
-    match provided {
-        Some(t) if t == app.token => Ok(()),
-        _ => Err((StatusCode::UNAUTHORIZED, "invalid token".into())),
-    }
-}
-
-/// 断言请求归属与 token 一致(多租户隔离的第一道闸,ADR-007)。
-fn same_user(app: &AppState, claimed: &Id) -> Result<(), ApiError> {
-    if claimed == &app.user_id {
-        Ok(())
-    } else {
-        Err((StatusCode::FORBIDDEN, "user mismatch".into()))
-    }
 }
 
 /// EntityKind → 快照表实体列(serde snake_case 名)。
@@ -93,8 +72,13 @@ pub async fn push(
     headers: HeaderMap,
     Json(req): Json<PushRequest>,
 ) -> Result<Json<PushResponse>, ApiError> {
-    auth(&app, &headers)?;
-    same_user(&app, &req.user_id)?;
+    // 认证 → 已认证 user_id(JWT 账号或静态 Token 回落);
+    // 归属断言:请求体声称的 user 必须与 token 一致(多租户第一道闸,ADR-007)
+    let auth_user = authenticate(&app, &headers)?;
+    if req.user_id != auth_user {
+        return Err((StatusCode::FORBIDDEN, "user mismatch".into()));
+    }
+    let user_str = auth_user.as_str();
 
     let mut results = Vec::with_capacity(req.changes.len());
 
@@ -103,7 +87,7 @@ pub async fn push(
         let dup: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM changelog WHERE user_id = $1 AND change_id = $2)",
         )
-        .bind(app.user_str())
+        .bind(user_str)
         .bind(change.id.to_string())
         .fetch_one(&app.pool)
         .await
@@ -121,7 +105,7 @@ pub async fn push(
             "SELECT revision, updated_ms, device_id, payload
              FROM snapshots WHERE user_id = $1 AND entity = $2 AND entity_id = $3",
         )
-        .bind(app.user_str())
+        .bind(user_str)
         .bind(kind_text(change.entity))
         .bind(&change.entity_id)
         .fetch_optional(&app.pool)
@@ -153,7 +137,7 @@ pub async fn push(
                  VALUES ($1, $2, $3, $4)
                  ON CONFLICT (user_id, change_id) DO NOTHING",
             )
-            .bind(app.user_str())
+            .bind(user_str)
             .bind(change.id.to_string())
             .bind(&change.device_id)
             .bind(&change_json)
@@ -171,7 +155,7 @@ pub async fn push(
                         device_id = excluded.device_id,
                         payload = excluded.payload",
                 )
-                .bind(app.user_str())
+                .bind(user_str)
                 .bind(kind_text(change.entity))
                 .bind(&change.entity_id)
                 .bind(change.revision as i64)
@@ -204,15 +188,18 @@ pub async fn pull(
     headers: HeaderMap,
     Json(req): Json<PullRequest>,
 ) -> Result<Json<PullResponse>, ApiError> {
-    auth(&app, &headers)?;
-    same_user(&app, &req.user_id)?;
+    let auth_user = authenticate(&app, &headers)?;
+    if req.user_id != auth_user {
+        return Err((StatusCode::FORBIDDEN, "user mismatch".into()));
+    }
+    let user_str = auth_user.as_str();
 
     let rows: Vec<(i64, Value)> = sqlx::query_as(
         "SELECT seq, change FROM changelog
          WHERE user_id = $1 AND seq > $2 AND device_id <> $3
          ORDER BY seq ASC LIMIT $4",
     )
-    .bind(app.user_str())
+    .bind(user_str)
     .bind(req.since.last_seq as i64)
     .bind(&req.device_id)
     .bind(PULL_LIMIT)

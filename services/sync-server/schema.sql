@@ -30,3 +30,27 @@ CREATE TABLE IF NOT EXISTS changelog (
 
 -- pull 查询路径:user 内按 seq 递增扫描
 CREATE INDEX IF NOT EXISTS idx_changelog_pull ON changelog (user_id, seq);
+
+-- === 账号体系(P1b,ADR-007)===============================================
+-- users:注册账号;password_hash 为 argon2 PHC 串。
+-- 首个注册账号可"继承" SYNC_USER_ID(存量单账号数据无缝并入,见 auth_handlers)。
+CREATE TABLE IF NOT EXISTS users (
+  id            TEXT PRIMARY KEY,          -- UUID
+  username      TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_ms    BIGINT NOT NULL
+);
+
+-- refresh_tokens:只存 SHA-256 摘要(库被拖走也拿不到原 token 可用);
+-- revoked_ms 非空 = 已吊销(轮换时旧 token 立即作废)。
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+  id         BIGSERIAL PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  device_id  TEXT NOT NULL DEFAULT '',
+  created_ms BIGINT NOT NULL,
+  expires_ms BIGINT NOT NULL,
+  revoked_ms BIGINT
+);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);

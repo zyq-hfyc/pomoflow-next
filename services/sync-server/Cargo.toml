@@ -31,6 +31,12 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 
+# 认证(P1b,ADR-007):argon2 密码哈希 / JWT 签发校验 / refresh token 摘要 / 随机数
+argon2 = "0.5"
+jsonwebtoken = "9"
+sha2 = "0.10"
+rand = "0.8"
+
 # 日志
 log = { workspace = true }
 env_logger = { workspace = true }

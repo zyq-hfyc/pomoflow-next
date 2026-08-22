@@ -11,10 +11,17 @@
 |------|------|------|
 | POST | `/v1/sync/push` | 推送 pending 变更;逐条 LWW 裁决,`Accepted / Conflicted(附权威快照) / Dropped`;`change_id` 幂等 |
 | POST | `/v1/sync/pull` | `SyncCursor{last_seq}` 游标增量拉取,排除请求方设备,分页 ≤500/批 |
+| POST | `/v1/auth/register` | 注册(需 `JWT_SECRET`;首账号可采纳存量数据,见下文账号体系) |
+| POST | `/v1/auth/login` | 登录 → access(JWT,15 分钟)+ refresh(30 天,轮换制) |
+| POST | `/v1/auth/refresh` | 刷新:旧 refresh 吊销 + 新一对签发 |
+| POST | `/v1/auth/logout` | 吊销指定 refresh token(幂等) |
 | GET | `/healthz` | 存活探针(含 DB 连通) |
 
-认证:HTTP `Authorization: Bearer <SYNC_TOKEN>`(MVP 单账号;注册/JWT/Refresh
-多账号体系是 P1b,ADR-007)。服务端强制请求 `user_id` 与 token 一致,不符即 403。
+认证:HTTP `Authorization: Bearer <token>`,两种 token 都认(ADR-007):
+- **JWT**(账号模式,设置 `JWT_SECRET` 启用):token 由 login 签发,负载即用户身份;
+- **静态 `SYNC_TOKEN`**(P1a 兼容回落):token → `SYNC_USER_ID` 固定映射。
+
+服务端强制请求体 `user_id` 与 token 身份一致,不符即 403(多租户第一道闸)。
 
 ## 设计说明(P1a 简化)
 
@@ -360,6 +367,53 @@ docker compose up -d --build
 | 桌面端报网络错误/连不上 | VM 不是桥接 / 防火墙没放行 / IP 填错 | 回查步骤 0;Windows 浏览器测 `http://<VM的IP>:8080/healthz` |
 | `healthz` 返回 `"ok":false` | 服务连不上数据库 | `docker compose logs sync-server` 看具体报错;`docker compose ps` 看 postgres 是否 healthy |
 | 端口被占用(`port is already allocated`) | 8080 被别的进程占 | 改 compose 里 `ports: ["8080:8080"]` 冒号左边的宿主端口(如 8081),桌面端地址同步改 |
+
+### 账号体系启用(可选,P1b;按步骤逐条执行)
+
+> 默认不启用(纯静态 Token,与 P1a 行为一致)。启用后桌面端可"注册/登录账号",
+> access token 15 分钟自动轮换,refresh 30 天且每次使用即作废(轮换制)。
+
+**步骤 A:服务端配置密钥(VM 上执行)**
+
+```bash
+# ① 生成 64 字符强随机密钥:openssl 随机读 32 字节输出为十六进制
+openssl rand -hex 32
+
+# ② 把输出粘贴进 .env 末尾(JWT_SECRET=后面),编辑器中操作
+nano /opt/pomoflow-next/services/sync-server/.env
+```
+
+```bash
+# ③ 重启服务让配置生效(改 .env 必须重启;预编译路径秒级)
+cd /opt/pomoflow-next/services/sync-server && docker compose up -d
+```
+
+```bash
+# ④ 验证账号体系已启用:未带认证调 login,返回 401/400 而非 503 即说明端点在
+curl -s -o /dev/null -w "%{http_code}\n" \
+     -H "Content-Type: application/json" \
+     -d '{"username":"probe","password":"probe-pass"}' \
+     http://127.0.0.1:8080/v1/auth/login
+```
+
+**步骤 B:桌面端注册首账号(Windows 上执行)**
+
+1. 先确保设置 → 数据同步里**服务器地址与静态令牌已保存**(注册请求要带
+   静态令牌作为运维凭证 —— 服务端据此把**第一个账号的 user_id 直接设为
+   SYNC_USER_ID**,你本机 98 条存量数据无缝并入该账号,无需任何数据迁移);
+2. 账号区填用户名(3-32 位字母/数字/`_`/`-`)和密码(≥8 位)→ 点**注册**;
+3. 显示"已登录"即成功;之后的同步自动用账号令牌,静态令牌仅作兜底保留。
+
+**步骤 C:第二台设备** —— 同样填服务器地址,**直接用账号登录**(不要注册);
+服务端校验账号 user_id 与本机数据归属一致后才放行(第一台采纳过的账号
+= 同一个 SYNC_USER_ID,天然一致)。
+
+> ⚠️ 陷阱:第二台设备如果**没先在服务器保存过静态令牌**就点注册,会注册出
+> 一个**全新 UUID 的第二账号**,与本机数据归属不一致 → 登录会被拒。记住:
+> **账号只注册一次,其余设备一律登录。**
+>
+> ⚠️ `JWT_SECRET` 更换 = 所有已登录客户端立即失效(access 验不过、refresh
+> 也解不开),需全部重新登录。密钥一旦启用务必进密码管理器保存。
 
 ### 升级顺序(⚠️ 新增实体类型后必读)
 
