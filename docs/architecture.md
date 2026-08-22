@@ -347,6 +347,32 @@ pomoflow-rs/                       (Cargo workspace)
   游标直接跳到最新 seq,会漏掉其它设备在本次 push 期间落库的中间变更。
   幂等以 `(user_id, change_id)` 去重,网络重试重复 push 不产生重复下发。
 
+### ADR-012 账号身份模型:混合式凭据 + 邮箱验证码 + 第三方身份表(2026-08-22)
+
+- **决策**:账号体系采用**混合式** —— 密码/邮箱作为 users 表的单槽位列
+  (`username` / `email` 唯一 + `password_hash` / `display_name` /
+  `email_verified_ms` / `password_changed_ms`);第三方身份(微信等)进独立表
+  `auth_identities(provider, provider_uid, union_id, ...)`。
+- **理由**:每个账号恰好一个密码、至多一个邮箱,用列表达最准确;第三方身份
+  可多个且凭据形状异质(openid/unionid),才值得一张表。全拆 identities 会
+  大改存量 register/login/change-password 代码,收益只有概念纯净。
+- **邮箱验证码**:6 位数字、10 分钟 TTL、单次有效、错 5 次作废;库里只存
+  `HMAC-SHA256(CODE_PEPPER, email:code)` 摘要(pepper 防 6 位码离线穷举);
+  发送频控按 email_codes 行数统计(每邮箱 60s/5 每时/10 每天 + 每 IP 10 每时),
+  单机无 Redis 的务实选择;`reset` 发码对不存在邮箱恒 202(防枚举)。
+- **关键安全语义**:找回密码与换绑邮箱均触发**全端踢出**;换绑邮箱必须验
+  当前密码(防会话被劫持者接管找回渠道);改用户名同改密码语义(验密码 +
+  其他设备下线 + 本机换新令牌)。
+- **裁剪决策(本期明确不做)**:手机短信/QQ/企业微信渠道(个人无企业资质)、
+  2FA(P4)、账号注销与数据导出(P4);**头像上传/个性签名列入 P6 社交化**
+  (2026-08-22 用户决策调整:远期上社交,资料完整化随社交批次一并做,
+  参考原型已有头像/签名设计)。
+  微信扫码:模型与 API 契约已预留(`auth_identities` + wechat/qrcode|login|bind
+  端点形状),待企业资质到位即插即用;unionid 用于多应用对齐账号。
+- **部署形态**:邮箱渠道/会话管理等全部落在单体 sync-server(对 §7 目标
+  微服务架构的逻辑模块对齐,物理拆分留 P5);P1d 起新端点错误为结构化
+  JSON 信封(machine code),为 Flutter 多端复用做准备。
+
 ---
 
 ## 十三、现状 → 目标迁移路径
@@ -362,6 +388,12 @@ pomoflow-rs/                       (Cargo workspace)
    - **P3**:移动 Flutter 客户端 + 多端同步验证。
    - **P4**:Analytics(Python)、Membership、Notification、Admin BFF + 管理后台。
    - **P5**:K8s 化部署、可观测性、CI/CD、多端商店上架。
+   - **P6(远期,2026-08-22 决策)**:**社交化** —— 头像上传与个性签名(资料完整化,
+     原型已有设计)、好友/关注、专注房间(多人实时一起专注)、周榜与成就、
+     统计海报分享、好友动态与隐私开关(哪些数据对谁可见)。
+     依赖:P4 的 Notification(好友请求/房间事件通知)与 Analytics(排行聚合),
+     新增对象存储(头像,腾讯云 COS 或自建卷 + CDN);详细范围届时以独立 PRD +
+     ADR 定稿(隐私模型与内容审核是硬前提)。
 
 ---
 
