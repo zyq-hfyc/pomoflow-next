@@ -488,6 +488,31 @@ export const authLogin = (username: string, password: string) =>
 
 export const authLogout = () => invoke<void>("auth_logout");
 
+// === 账号完善(P1c:改密码 / 会话管理) ===
+
+/** 修改密码:成功后服务端全端踢出并给本机签发新令牌对(Rust 侧自动替换)。 */
+export const authChangePassword = (oldPassword: string, newPassword: string) =>
+  invoke<AuthStatus>("auth_change_password", { oldPassword, newPassword });
+
+/** 登录会话(= 有效 refresh token),current 标记本机。 */
+export interface SessionInfo {
+  id: number;
+  device_id: string;
+  device_name: string;
+  created_ms: number;
+  expires_ms: number;
+  current: boolean;
+}
+
+export const authListSessions = () => invoke<SessionInfo[]>("auth_list_sessions");
+
+/** 踢出指定会话(不能踢当前会话)。 */
+export const authRevokeSession = (id: number) =>
+  invoke<void>("auth_revoke_session", { id });
+
+/** 退出其他所有设备,返回踢出数量。 */
+export const authRevokeOthers = () => invoke<number>("auth_revoke_others");
+
 /** 监听后台自动同步结果(设置页展示"最近自动同步");返回取消监听函数。 */
 export const onAutoSync = (cb: (e: AutoSyncEvent) => void) =>
   listen<AutoSyncEvent>("sync://auto", (ev) => cb(ev.payload));

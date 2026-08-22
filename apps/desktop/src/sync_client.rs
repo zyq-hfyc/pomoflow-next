@@ -59,6 +59,20 @@ fn meta_nonempty(store: &SqliteStore, key: &str) -> Result<Option<String>, Strin
     Ok(store.get_meta(key).map_err(es)?.filter(|v| !v.is_empty()))
 }
 
+/// 会话管理用的设备自报:(device_id, 友好名)。
+/// 友好名 = 平台 + 设备短码(如 "windows·a1b2c3d4"),纯本地拼接无 I/O。
+fn device_report(store: &SqliteStore) -> (String, String) {
+    let device_id = store.local_device_id().to_string();
+    let os = match std::env::consts::OS {
+        "windows" => "Windows",
+        "macos" => "macOS",
+        "linux" => "Linux",
+        other => other,
+    };
+    let short: String = device_id.chars().take(8).collect();
+    (device_id.clone(), format!("{os}·{short}"))
+}
+
 // === 配置与标识 ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -427,9 +441,11 @@ async fn auth_request(
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| e.to_string())?;
-    let mut req = client
-        .post(format!("{url}{path}"))
-        .json(&serde_json::json!({ "username": username, "password": password }));
+    let (device_id, device_name) = device_report(store);
+    let mut req = client.post(format!("{url}{path}")).json(&serde_json::json!({
+        "username": username, "password": password,
+        "device_id": device_id, "device_name": device_name,
+    }));
     if let Some(op) = operator_token {
         // 注册首账号:静态 Token 作为运维凭证随请求 → 服务端采纳 SYNC_USER_ID
         req = req.bearer_auth(op);
@@ -602,4 +618,119 @@ where
         status: None,
         msg: format!("响应解析失败: {e}"),
     })
+}
+
+// === P1c:账号完善 —— 改密码 / 会话管理 =======================================
+
+/// 服务端 SessionInfo 镜像(serde snake_case)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionInfo {
+    pub id: i64,
+    pub device_id: String,
+    pub device_name: String,
+    pub created_ms: i64,
+    pub expires_ms: i64,
+    /// 是否本机当前会话(不可自我踢出)
+    pub current: bool,
+}
+
+/// 会话类请求的公共前奏:拿 url/client/refresh,refresh 缺失 = 未登录。
+async fn session_context(
+    store: &SqliteStore,
+) -> Result<(String, reqwest::Client, String), String> {
+    let url = meta_nonempty(store, META_URL)?.ok_or("未配置同步服务器")?;
+    let refresh = meta_nonempty(store, META_REFRESH)?.ok_or("尚未登录账号".to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok((url, client, refresh))
+}
+
+#[tauri::command]
+pub async fn auth_change_password(
+    old_password: String,
+    new_password: String,
+    state: State<'_, AppState>,
+) -> Result<AuthStatus, String> {
+    let store = state.store.clone();
+    let url = meta_nonempty(&store, META_URL)?.ok_or("未配置同步服务器")?;
+    let access =
+        meta_nonempty(&store, META_ACCESS)?.ok_or("尚未登录账号".to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let (device_id, device_name) = device_report(&store);
+    let body = serde_json::json!({
+        "old_password": old_password, "new_password": new_password,
+        "device_id": device_id, "device_name": device_name,
+    });
+    let resp = post_json::<_, AuthTokensResp>(&client, &format!("{url}/v1/auth/change-password"), &access, &body)
+        .await
+        .map_err(|e| e.msg)?;
+    // 服务端已全端踢出并给本机签发新对:替换本地令牌,自己不掉线
+    if resp.user_id != store.local_user_id().to_string() {
+        return Err("服务端返回了异常的账号归属,已忽略".to_string());
+    }
+    store.set_meta(META_ACCESS, &resp.access_token).map_err(es)?;
+    store.set_meta(META_REFRESH, &resp.refresh_token).map_err(es)?;
+    store.set_meta(META_AUTH_USER, &resp.username).map_err(es)?;
+    Ok(AuthStatus {
+        username: resp.username,
+        user_id: resp.user_id,
+    })
+}
+
+#[tauri::command]
+pub async fn auth_list_sessions(
+    state: State<'_, AppState>,
+) -> Result<Vec<SessionInfo>, String> {
+    let store = state.store.clone();
+    let (url, client, refresh) = session_context(&store).await?;
+    let body = serde_json::json!({ "refresh_token": refresh });
+    let sessions = post_json::<_, Vec<SessionInfo>>(
+        &client,
+        &format!("{url}/v1/auth/sessions"),
+        "",
+        &body,
+    )
+    .await
+    .map_err(|e| e.msg)?;
+    Ok(sessions)
+}
+
+#[tauri::command]
+pub async fn auth_revoke_session(id: i64, state: State<'_, AppState>) -> Result<(), String> {
+    let store = state.store.clone();
+    let (url, client, refresh) = session_context(&store).await?;
+    let body = serde_json::json!({ "refresh_token": refresh, "revoke_id": id });
+    post_json::<_, serde_json::Value>(
+        &client,
+        &format!("{url}/v1/auth/sessions/revoke"),
+        "",
+        &body,
+    )
+    .await
+    .map_err(|e| e.msg)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn auth_revoke_others(state: State<'_, AppState>) -> Result<u64, String> {
+    let store = state.store.clone();
+    let (url, client, refresh) = session_context(&store).await?;
+    let body = serde_json::json!({ "refresh_token": refresh });
+    let resp = post_json::<_, serde_json::Value>(
+        &client,
+        &format!("{url}/v1/auth/sessions/revoke-others"),
+        "",
+        &body,
+    )
+    .await
+    .map_err(|e| e.msg)?;
+    Ok(resp
+        .get("revoked")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0))
 }
