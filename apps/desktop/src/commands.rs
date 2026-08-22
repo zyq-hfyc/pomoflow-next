@@ -30,6 +30,10 @@ use tauri::State;
 #[derive(Clone)]
 pub struct AppState {
     pub store: SqliteStore,
+    /// 手动「立即同步」与后台自动同步的串行化锁(P1b):两个 sync 循环并发
+    /// 会导致 pending 批重复推送与游标互踩,锁后天然安全。
+    /// 存 `Arc` 使 AppState 保持 `Clone`(锁本体跨 await 持有,必须用异步互斥)。
+    pub sync_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 /// 取得跨平台 SQLite 文件路径 —— 不引入 `dirs` crate,自己拼。

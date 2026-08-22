@@ -8,6 +8,7 @@
 //! - 此文件不依赖 `lib/store` 等其他模块;纯 invoke 包装,组件层自由组合。
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 // === 后端 model 类型(前端 mirror) ===
 
@@ -416,11 +417,15 @@ export const statsOverview = (
 export const sendSystemNotification = (title: string, body: string) =>
   invoke<void>("send_notification", { title, body });
 
-// === 同步(P1a;配置存 SQLite meta,与 Rust 侧引擎同侧) ===
+// === 同步(P1a 手动 / P1b 自动;配置存 SQLite meta,与 Rust 侧引擎同侧) ===
 
 export interface SyncConfig {
   server_url: string | null;
   token: string | null;
+  /** 启动时 + 定时自动同步(P1b) */
+  auto_sync: boolean;
+  /** 自动同步间隔(分钟,1..=1440) */
+  interval_min: number;
 }
 
 export interface SyncIdentity {
@@ -435,16 +440,39 @@ export interface SyncReport {
   pulled: number;
 }
 
+/** 后台自动同步结果事件(`sync://auto`,Rust 侧每次后台同步后发出)。 */
+export interface AutoSyncEvent {
+  ok: boolean;
+  error: string | null;
+  pushed: number;
+  pulled: number;
+  conflicts: number;
+  dropped: number;
+  /** 事件时间(Unix 毫秒) */
+  at_ms: number;
+}
+
 export const getSyncConfig = () => invoke<SyncConfig>("get_sync_config");
 
-/** 保存/清除配置(传空串或 null 清除);地址须 http(s),服务端规范化。 */
-export const setSyncConfig = (serverUrl: string | null, token: string | null) =>
-  invoke<void>("set_sync_config", { serverUrl, token });
+/**
+ * 保存/清除配置(地址传空串或 null 清除);地址须 http(s),服务端规范化。
+ * `autoSync`/`intervalMin` 为自动同步开关与间隔(改后 ≤30s 生效,无需重启)。
+ */
+export const setSyncConfig = (
+  serverUrl: string | null,
+  token: string | null,
+  autoSync: boolean,
+  intervalMin: number,
+) => invoke<void>("set_sync_config", { serverUrl, token, autoSync, intervalMin });
 
 export const getSyncIdentity = () => invoke<SyncIdentity>("get_sync_identity");
 
 /** 手动全量同步:push 推到清空 + pull 拉到空批;返回统计。 */
 export const syncNow = () => invoke<SyncReport>("sync_now");
+
+/** 监听后台自动同步结果(设置页展示"最近自动同步");返回取消监听函数。 */
+export const onAutoSync = (cb: (e: AutoSyncEvent) => void) =>
+  listen<AutoSyncEvent>("sync://auto", (ev) => cb(ev.payload));
 
 // === Export(xlsx) ===
 

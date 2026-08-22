@@ -50,7 +50,12 @@ pub fn run() {
         backup_store_file(&path);
     }
     let store = SqliteStore::open(&path).expect("open sqlite store");
-    let state = AppState { store };
+    // 手动/后台同步共用的串行化锁(P1b;锁本体随 setup 移交后台任务)
+    let sync_lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+    let state = AppState {
+        store: store.clone(),
+        sync_lock: sync_lock.clone(),
+    };
 
     // 2. 启动 Tauri + 注入 state + 注册 command handler + 加载插件
     tauri::Builder::default()
@@ -111,12 +116,16 @@ pub fn run() {
             sync_client::sync_now,
             export::export_tasks_xlsx,
         ])
-        .setup(|app| {
+        .setup(move |app| {
             // 注册通知 AUMID 显示名:dev 模式下插件不给 toast 设 AUMID,
             // Windows 回落 PowerShell 标识 → 通知签名显示错误(见 notify.rs)
             notify::register_aumid(&app.config().identifier);
             info!("Tauri app setup complete, building tray...");
             tray::build(app)?;
+            // P1b:后台自动同步 —— 启动 3 秒后一次,之后每 30s 读配置、按间隔到期执行;
+            // 开关/间隔改 meta 即生效(≤30s),无需重启
+            sync_client::spawn_auto_sync(app.handle().clone(), store, sync_lock);
+            info!("auto sync background task spawned");
             Ok(())
         })
         .run(tauri::generate_context!())

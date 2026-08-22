@@ -3135,6 +3135,7 @@ dependencies = [
  "tauri-plugin-autostart",
  "tauri-plugin-dialog",
  "tauri-plugin-notification",
+ "tokio",
  "winreg 0.52.0",
 ]
 

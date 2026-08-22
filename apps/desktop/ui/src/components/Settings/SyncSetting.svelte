@@ -1,10 +1,12 @@
 <script lang="ts">
-  // 设置页「数据同步」标签(P1a)—— 服务器连接 / 本机标识 / 立即同步。
+  // 设置页「数据同步」标签(P1a 连接 / P1b 自动同步)。
   //
-  // 配置(服务器地址 + Token)存 SQLite meta(与 Rust 侧同步引擎同侧);
-  // 本机标识的 user_id 需要用户填进服务端 .env 的 SYNC_USER_ID(两端一致,
-  // 否则服务端 403),所以这里展示 + 一键复制。
+  // 配置(服务器地址 + Token + 自动同步开关与间隔)存 SQLite meta(与 Rust 侧
+  // 同步引擎同侧);本机标识的 user_id 需要用户填进服务端 .env 的 SYNC_USER_ID
+  //(两端一致,否则服务端 403),所以这里展示 + 一键复制。
   // 「立即同步」走 sync_now 命令:push 推到清空 → pull 拉到空批 → 游标推进。
+  // 自动同步(P1b):Rust 侧常驻任务启动时 + 定时执行,结果经 `sync://auto`
+  // 事件推来,这里监听并展示「最近自动同步」;开关/间隔保存后 ≤30s 生效。
 
   import { onMount } from "svelte";
   import { RefreshCw } from "lucide-svelte";
@@ -13,6 +15,8 @@
     setSyncConfig,
     getSyncIdentity,
     syncNow,
+    onAutoSync,
+    type AutoSyncEvent,
   } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
 
@@ -20,30 +24,54 @@
 
   let serverUrl = $state("");
   let token = $state("");
+  let autoSync = $state(false);
+  let intervalMin = $state(5);
   let identity = $state<{ user_id: string; device_id: string } | null>(null);
 
   let savedFlash = $state(false);
   let syncing = $state(false);
   let resultText = $state("");
+  let lastAutoText = $state("");
   let error = $state<string | null>(null);
   let copiedField = $state<"user" | "device" | null>(null);
 
-  onMount(async () => {
+  onMount(() => {
+    void load();
+    // 监听后台自动同步结果;组件卸载(切标签)时取消,避免重复监听累积
+    let unlisten: (() => void) | null = null;
+    void onAutoSync(applyAutoEvent).then((un) => (unlisten = un));
+    return () => unlisten?.();
+  });
+
+  async function load() {
     try {
       const [cfg, id] = await Promise.all([getSyncConfig(), getSyncIdentity()]);
       serverUrl = cfg.server_url ?? "";
       token = cfg.token ?? "";
+      autoSync = cfg.auto_sync;
+      intervalMin = cfg.interval_min;
       identity = id;
     } catch (e) {
       error = String(e);
     }
-  });
+  }
+
+  function applyAutoEvent(e: AutoSyncEvent) {
+    const time = new Date(e.at_ms).toLocaleTimeString();
+    lastAutoText = e.ok
+      ? fmt(t.settings.sync.autoLastOk, {
+          time,
+          pushed: e.pushed,
+          pulled: e.pulled,
+        })
+      : fmt(t.settings.sync.autoLastErr, { time, error: e.error ?? "" });
+  }
 
   async function save() {
     error = null;
     savedFlash = false;
     try {
-      await setSyncConfig(serverUrl || null, token || null);
+      await setSyncConfig(serverUrl || null, token || null, autoSync, intervalMin);
       savedFlash = true;
       setTimeout(() => (savedFlash = false), 1500);
     } catch (e) {
@@ -131,6 +159,34 @@
           </button>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- 自动同步(P1b) -->
+  <section class="group">
+    <h3 class="group-title">{t.settings.sync.autoSection}</h3>
+    <div class="group-body">
+      <div class="form-row">
+        <span class="row-label">{t.settings.sync.autoEnable}</span>
+        <label class="switch">
+          <input type="checkbox" bind:checked={autoSync} />
+          <span class="track" aria-hidden="true"></span>
+        </label>
+      </div>
+      {#if autoSync}
+        <div class="form-row">
+          <span class="row-label">{t.settings.sync.autoInterval}</span>
+          <select class="input" bind:value={intervalMin}>
+            {#each [1, 5, 10, 30, 60] as n (n)}
+              <option value={n}>{fmt(t.settings.sync.intervalOption, { n })}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
+      <p class="hint">{t.settings.sync.autoHint}</p>
+      {#if lastAutoText}
+        <p class="hint">{lastAutoText}</p>
+      {/if}
     </div>
   </section>
 
@@ -307,6 +363,56 @@
     font-size: 0.75rem;
     line-height: 1.6;
     color: var(--color-text-muted);
+  }
+  .group-body > .hint {
+    /* form-row 有 1px 分隔线,hint 紧贴会显得挤;补内边距 */
+    padding: 0 1rem 0.75rem;
+    margin: 0.5rem 0 0;
+  }
+
+  .switch {
+    display: inline-flex;
+    cursor: pointer;
+  }
+  .switch input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .track {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    border-radius: 999px;
+    background: var(--color-border);
+    transition: background 0.2s;
+  }
+  .track::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 20%);
+    transition: transform 0.2s;
+  }
+  .switch input:checked + .track {
+    background: var(--color-accent-500);
+  }
+  .switch input:checked + .track::after {
+    transform: translateX(18px);
+  }
+  .switch input:focus-visible + .track {
+    box-shadow: var(--shadow-focus);
+  }
+
+  select.input {
+    /* select 与 input 同款外观;系统箭头保留(原生可用性优先) */
+    appearance: auto;
   }
 
   .result {

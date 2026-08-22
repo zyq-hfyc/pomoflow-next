@@ -44,6 +44,9 @@ winreg = "0.52"
 # 同步客户端 HTTP 传输(P1a;rustls 避免原生 OpenSSL 依赖)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
+# 自动同步后台任务(P1b):手动/后台同步的串行化锁 + 定时 sleep
+tokio = { version = "1", features = ["sync", "time"] }
+
 # xlsx 导出(v1 ExcelJS 对应物;表头/标签由前端 i18n 传入,Rust 不做本地化)
 rust_xlsxwriter = "0.79"
 

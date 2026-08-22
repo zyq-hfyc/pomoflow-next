@@ -237,6 +237,14 @@ export const en: Dict = {
       syncing: 'Syncing…',
       result: 'Done: pushed {pushed}, pulled {pulled}, conflicts resolved {conflicts}, dropped {dropped}',
       notConfigured: 'Save the server URL and token first',
+      autoSection: 'Auto Sync',
+      autoEnable: 'Enable auto sync',
+      autoInterval: 'Interval',
+      intervalOption: 'Every {n} min',
+      autoHint:
+        'When on: syncs 3s after launch, then in the background on the interval (toggling or changing the interval applies within 30s of saving — no restart needed). Save the server URL and token first; manual "Sync now" always works.',
+      autoLastOk: 'Last auto sync {time}: pushed {pushed}, pulled {pulled}',
+      autoLastErr: 'Last auto sync failed {time}: {error}',
     },
     language: {
       title: 'Interface Language',
