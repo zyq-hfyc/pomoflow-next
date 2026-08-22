@@ -108,6 +108,61 @@ cargo check --all-targets
 cargo test --all-targets
 ```
 
+## 启动桌面端客户端(apps/desktop)
+
+### 前置条件(一次性)
+
+| 依赖 | 版本 | 说明 |
+|------|------|------|
+| Rust 工具链 | stable | 见上文「开发环境要求」,与 `rust-toolchain.toml` 一致 |
+| C/C++ 链接工具链 | — | 见上文「开发环境要求」(Windows 必装,否则编译阶段报链接错误) |
+| Node.js(含 npm) | ≥ 20 | UI 侧构建用;本仓库统一用 npm,不需要 pnpm/yarn |
+
+### 安装依赖(每台开发机一次)
+
+```bash
+# ① 安装 UI 依赖(Svelte 5 + Vite + Tauri 前端 API,约 1-2 分钟)
+#    --prefix 表示在 apps/desktop/ui 子目录里执行,不用手动 cd 过去
+npm --prefix apps/desktop/ui install
+
+# ② 安装 tauri-cli 的 npm wrapper(提供 npm run dev / npm run build 入口)
+npm --prefix apps/desktop install
+```
+
+### 开发模式启动(日常用这个)
+
+```bash
+# 在仓库根执行;--prefix 指到桌面端目录,等价于 cd apps/desktop && npm run dev
+npm --prefix apps/desktop run dev
+```
+
+这条命令实际执行 `tauri dev`,会自动完成三件事:
+
+1. 启动 Vite 开发服务器(localhost:1420)—— 改前端代码(Svelte/CSS/TS)**保存即热更新**,无需重启;
+2. 编译 Rust 侧 —— 首次全量编译约几分钟,之后增量编译秒级;改 Rust 代码会自动重编并重启窗口;
+3. 编译完成自动弹出 PomoFlow 主窗口。
+
+- **预期**:终端输出 Rust 编译进度 → 最后打印 `Running \`target\...pomoflow-desktop.exe\`` → 窗口弹出。
+- **退出**:直接关窗口,或回终端按 `Ctrl+C`。
+
+### 打正式安装包(.exe)
+
+```bash
+# 在仓库根执行;等价于 cd apps/desktop && npm run build
+# 实际执行 `tauri build`:tsc 类型检查 → vite 打包前端 → Rust release 编译 → NSIS 打安装包
+# 首次约 5-10 分钟(release 全量编译),之后有增量缓存
+npm --prefix apps/desktop run build
+```
+
+产物位置(注意在**仓库根** `target/`,不在 apps/desktop 下):
+
+| 产物 | 路径 | 用途 |
+|------|------|------|
+| NSIS 安装包 | `target/release/bundle/nsis/PomoFlow_<版本>_x64-setup.exe` | 双击安装,带开始菜单/卸载项 |
+| 绿色单文件 | `target/release/pomoflow-desktop.exe` | 免安装直接运行 |
+
+> 已安装过旧版再装新版:直接运行新 setup.exe 覆盖安装即可,用户数据(SQLite store)不受影响。
+
 ## 与 v1 的数据迁移
 
 `tools/migrate-v1` CLI 把 v1 `pomoflow.db`(SQLite)一键导入 v2 store
