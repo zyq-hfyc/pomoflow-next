@@ -40,11 +40,46 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
 pub struct Credentials {
     pub username: String,
     pub password: String,
+    /// 登录设备标识/友好名(桌面端上报,会话管理展示用;可缺省)
+    #[serde(default)]
+    pub device_id: Option<String>,
+    #[serde(default)]
+    pub device_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct RefreshRequest {
     pub refresh_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub old_password: String,
+    pub new_password: String,
+    #[serde(default)]
+    pub device_id: Option<String>,
+    #[serde(default)]
+    pub device_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RevokeSessionRequest {
+    /// 调用方自己的 refresh token(证明身份 + 定位"当前会话")
+    pub refresh_token: String,
+    /// 要吊销的会话行 id(来自 sessions 列表)
+    pub revoke_id: i64,
+}
+
+/// 会话(= 一条有效 refresh token)的展示信息。
+#[derive(Debug, Serialize)]
+pub struct SessionInfo {
+    pub id: i64,
+    pub device_id: String,
+    pub device_name: String,
+    pub created_ms: i64,
+    pub expires_ms: i64,
+    /// 是否调用方当前会话(不可自我踢出)
+    pub current: bool,
 }
 
 /// 登录/注册成功返回的四件套。
@@ -66,11 +101,13 @@ fn require_jwt(app: &AppState) -> Result<&str, ApiError> {
 }
 
 /// 签发一对新 token 并把 refresh 落库。
+#[allow(clippy::too_many_arguments)]
 async fn issue_tokens(
     app: &AppState,
     user_id: &str,
     username: &str,
     device_id: &str,
+    device_name: &str,
 ) -> Result<AuthTokens, ApiError> {
     let secret = require_jwt(app)?;
     let access = auth::issue_access(secret, user_id).map_err(|e| {
@@ -79,12 +116,14 @@ async fn issue_tokens(
     let refresh = auth::new_refresh_token();
     let now = chrono::Utc::now().timestamp_millis();
     sqlx::query(
-        "INSERT INTO refresh_tokens (user_id, token_hash, device_id, created_ms, expires_ms)
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO refresh_tokens
+            (user_id, token_hash, device_id, device_name, created_ms, expires_ms)
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(user_id)
     .bind(auth::sha256_hex(&refresh))
     .bind(device_id)
+    .bind(device_name)
     .bind(now)
     .bind(now + auth::REFRESH_TTL_SECS * 1000)
     .execute(&app.pool)
@@ -150,7 +189,14 @@ pub async fn register(
         Err(e) => return Err(internal(e)),
     }
 
-    let tokens = issue_tokens(&app, &user_id, &username, "").await?;
+    let tokens = issue_tokens(
+        &app,
+        &user_id,
+        &username,
+        req.device_id.as_deref().unwrap_or(""),
+        req.device_name.as_deref().unwrap_or(""),
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(tokens)))
 }
 
@@ -176,7 +222,14 @@ pub async fn login(
     if !auth::verify_password(&req.password, &password_hash) {
         return Err((StatusCode::UNAUTHORIZED, "用户名或密码错误".into()));
     }
-    let tokens = issue_tokens(&app, &user_id, &username, "").await?;
+    let tokens = issue_tokens(
+        &app,
+        &user_id,
+        &username,
+        req.device_id.as_deref().unwrap_or(""),
+        req.device_name.as_deref().unwrap_or(""),
+    )
+    .await?;
     Ok(Json(tokens))
 }
 
@@ -187,8 +240,8 @@ pub async fn refresh(
 ) -> Result<Json<AuthTokens>, ApiError> {
     require_jwt(&app)?;
     let now = chrono::Utc::now().timestamp_millis();
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT u.id, u.username FROM refresh_tokens rt
+    let row: Option<(String, String, String, String)> = sqlx::query_as(
+        "SELECT u.id, u.username, rt.device_id, rt.device_name FROM refresh_tokens rt
          JOIN users u ON u.id = rt.user_id
          WHERE rt.token_hash = $1 AND rt.revoked_ms IS NULL AND rt.expires_ms > $2",
     )
@@ -198,7 +251,7 @@ pub async fn refresh(
     .await
     .map_err(internal)?;
 
-    let Some((user_id, username)) = row else {
+    let Some((user_id, username, device_id, device_name)) = row else {
         return Err((StatusCode::UNAUTHORIZED, "refresh token 无效或已过期".into()));
     };
     // 轮换:吊销旧的(已吊销/过期的不可能走到这里)
@@ -209,7 +262,7 @@ pub async fn refresh(
         .await
         .map_err(internal)?;
 
-    let tokens = issue_tokens(&app, &user_id, &username, "").await?;
+    let tokens = issue_tokens(&app, &user_id, &username, &device_id, &device_name).await?;
     Ok(Json(tokens))
 }
 
@@ -227,6 +280,168 @@ pub async fn logout(
         .await
         .map_err(internal)?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// === P1c:账号完善 —— 改密码 / 会话管理 ======================================
+
+/// POST /v1/auth/change-password(JWT 认证)—— 验旧密码后更新哈希,
+/// **吊销该用户全部 refresh token**(其他设备强制重新登录),
+/// 并给当前设备签发新的一对(调用方替换本地令牌,自己不掉线)。
+pub async fn change_password(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ChangePasswordRequest>,
+) -> Result<Json<AuthTokens>, ApiError> {
+    let auth_user = authenticate(&app, &headers)?;
+    let user_str = auth_user.as_str();
+    let hash: Option<String> =
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+            .bind(user_str)
+            .fetch_optional(&app.pool)
+            .await
+            .map_err(internal)?;
+    let Some(hash) = hash else {
+        return Err((StatusCode::NOT_FOUND, "账号不存在".into()));
+    };
+    if !auth::verify_password(&req.old_password, &hash) {
+        return Err((StatusCode::UNAUTHORIZED, "旧密码不正确".into()));
+    }
+    if !auth::valid_password(&req.new_password) {
+        return Err((StatusCode::BAD_REQUEST, "新密码需 8-128 位".into()));
+    }
+    let new_hash = auth::hash_password(&req.new_password)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let now = chrono::Utc::now().timestamp_millis();
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(&new_hash)
+        .bind(user_str)
+        .execute(&app.pool)
+        .await
+        .map_err(internal)?;
+    // 全端踢出:旧 refresh 全部吊销
+    sqlx::query(
+        "UPDATE refresh_tokens SET revoked_ms = $1 WHERE user_id = $2 AND revoked_ms IS NULL",
+    )
+    .bind(now)
+    .bind(user_str)
+    .execute(&app.pool)
+    .await
+    .map_err(internal)?;
+    let username: String = sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
+        .bind(user_str)
+        .fetch_one(&app.pool)
+        .await
+        .map_err(internal)?;
+    let tokens = issue_tokens(
+        &app,
+        user_str,
+        &username,
+        req.device_id.as_deref().unwrap_or(""),
+        req.device_name.as_deref().unwrap_or(""),
+    )
+    .await?;
+    Ok(Json(tokens))
+}
+
+/// 会话请求的公共内核:用调用方 refresh token 定位用户与当前行 id。
+async fn resolve_session(
+    app: &AppState,
+    refresh_token: &str,
+) -> Result<(String, i64), ApiError> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let row: Option<(String, i64)> = sqlx::query_as(
+        "SELECT user_id, id FROM refresh_tokens
+         WHERE token_hash = $1 AND revoked_ms IS NULL AND expires_ms > $2",
+    )
+    .bind(auth::sha256_hex(refresh_token))
+    .bind(now)
+    .fetch_optional(&app.pool)
+    .await
+    .map_err(internal)?;
+    row.ok_or((StatusCode::UNAUTHORIZED, "refresh token 无效或已过期".into()))
+}
+
+/// POST /v1/auth/sessions —— 有效会话列表(current 标记调用方自己)。
+pub async fn sessions(
+    State(app): State<AppState>,
+    Json(req): Json<RefreshRequest>,
+) -> Result<Json<Vec<SessionInfo>>, ApiError> {
+    let (user_id, current_id) = resolve_session(&app, &req.refresh_token).await?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let rows: Vec<(i64, String, String, i64, i64)> = sqlx::query_as(
+        "SELECT id, device_id, device_name, created_ms, expires_ms
+         FROM refresh_tokens
+         WHERE user_id = $1 AND revoked_ms IS NULL AND expires_ms > $2
+         ORDER BY created_ms DESC",
+    )
+    .bind(&user_id)
+    .bind(now)
+    .fetch_all(&app.pool)
+    .await
+    .map_err(internal)?;
+    let out = rows
+        .into_iter()
+        .map(|(id, device_id, device_name, created_ms, expires_ms)| SessionInfo {
+            id,
+            device_id,
+            device_name,
+            created_ms,
+            expires_ms,
+            current: id == current_id,
+        })
+        .collect();
+    Ok(Json(out))
+}
+
+/// POST /v1/auth/sessions/revoke —— 踢出指定会话(不能踢自己;下线自己请用 logout)。
+pub async fn revoke_session(
+    State(app): State<AppState>,
+    Json(req): Json<RevokeSessionRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let (user_id, current_id) = resolve_session(&app, &req.refresh_token).await?;
+    if req.revoke_id == current_id {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "不能踢出当前会话(请用退出登录)".into(),
+        ));
+    }
+    let now = chrono::Utc::now().timestamp_millis();
+    let n = sqlx::query(
+        "UPDATE refresh_tokens SET revoked_ms = $1
+         WHERE id = $2 AND user_id = $3 AND revoked_ms IS NULL",
+    )
+    .bind(now)
+    .bind(req.revoke_id)
+    .bind(&user_id)
+    .execute(&app.pool)
+    .await
+    .map_err(internal)?
+    .rows_affected();
+    if n == 0 {
+        return Err((StatusCode::NOT_FOUND, "会话不存在或已下线".into()));
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// POST /v1/auth/sessions/revoke-others —— 退出其他所有设备(保留当前会话)。
+pub async fn revoke_others(
+    State(app): State<AppState>,
+    Json(req): Json<RefreshRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let (user_id, current_id) = resolve_session(&app, &req.refresh_token).await?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let n = sqlx::query(
+        "UPDATE refresh_tokens SET revoked_ms = $1
+         WHERE user_id = $2 AND id <> $3 AND revoked_ms IS NULL",
+    )
+    .bind(now)
+    .bind(&user_id)
+    .bind(current_id)
+    .execute(&app.pool)
+    .await
+    .map_err(internal)?
+    .rows_affected();
+    Ok(Json(serde_json::json!({ "ok": true, "revoked": n })))
 }
 
 /// 认证 sync 端点:Bearer → JWT(若启用)→ 静态 Token 回落;返回已认证 user_id。

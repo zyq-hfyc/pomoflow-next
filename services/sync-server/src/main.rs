@@ -69,6 +69,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/auth/login", post(auth_handlers::login))
         .route("/v1/auth/refresh", post(auth_handlers::refresh))
         .route("/v1/auth/logout", post(auth_handlers::logout))
+        .route("/v1/auth/change-password", post(auth_handlers::change_password))
+        .route("/v1/auth/sessions", post(auth_handlers::sessions))
+        .route("/v1/auth/sessions/revoke", post(auth_handlers::revoke_session))
+        .route(
+            "/v1/auth/sessions/revoke-others",
+            post(auth_handlers::revoke_others),
+        )
         .route("/healthz", get(handlers::healthz))
         .with_state(AppState {
             pool,

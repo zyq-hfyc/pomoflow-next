@@ -15,6 +15,10 @@
 | POST | `/v1/auth/login` | 登录 → access(JWT,15 分钟)+ refresh(30 天,轮换制) |
 | POST | `/v1/auth/refresh` | 刷新:旧 refresh 吊销 + 新一对签发 |
 | POST | `/v1/auth/logout` | 吊销指定 refresh token(幂等) |
+| POST | `/v1/auth/change-password` | 改密码:验旧密码 → 全端踢出 → 给当前设备新令牌对 |
+| POST | `/v1/auth/sessions` | 会话列表(refresh 认证;`current` 标记调用方) |
+| POST | `/v1/auth/sessions/revoke` | 踢出指定会话(不能踢当前) |
+| POST | `/v1/auth/sessions/revoke-others` | 退出其他所有设备(保留当前) |
 | GET | `/healthz` | 存活探针(含 DB 连通) |
 
 认证:HTTP `Authorization: Bearer <token>`,两种 token 都认(ADR-007):
@@ -407,6 +411,12 @@ curl -s -o /dev/null -w "%{http_code}\n" \
 **步骤 C:第二台设备** —— 同样填服务器地址,**直接用账号登录**(不要注册);
 服务端校验账号 user_id 与本机数据归属一致后才放行(第一台采纳过的账号
 = 同一个 SYNC_USER_ID,天然一致)。
+
+**步骤 D(P1c,可选):改密码与设备管理** —— 登录后设置页会出现:
+
+- 「修改密码」:验旧密码后**全部设备强制重新登录**(本机自动换取新令牌不掉线);
+- 「设备管理」:列出所有登录中的设备(名称 = 平台·设备短码 + 登录时间),
+  可单独踢出,或一键「退出其他设备」。
 
 > ⚠️ 陷阱:第二台设备如果**没先在服务器保存过静态令牌**就点注册,会注册出
 > 一个**全新 UUID 的第二账号**,与本机数据归属不一致 → 登录会被拒。记住:

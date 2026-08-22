@@ -44,13 +44,18 @@ CREATE TABLE IF NOT EXISTS users (
 -- refresh_tokens:只存 SHA-256 摘要(库被拖走也拿不到原 token 可用);
 -- revoked_ms 非空 = 已吊销(轮换时旧 token 立即作废)。
 CREATE TABLE IF NOT EXISTS refresh_tokens (
-  id         BIGSERIAL PRIMARY KEY,
-  user_id    TEXT NOT NULL,
-  token_hash TEXT NOT NULL UNIQUE,
-  device_id  TEXT NOT NULL DEFAULT '',
-  created_ms BIGINT NOT NULL,
-  expires_ms BIGINT NOT NULL,
-  revoked_ms BIGINT
+  id          BIGSERIAL PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  token_hash  TEXT NOT NULL UNIQUE,
+  device_id   TEXT NOT NULL DEFAULT '',
+  device_name TEXT NOT NULL DEFAULT '',
+  created_ms  BIGINT NOT NULL,
+  expires_ms  BIGINT NOT NULL,
+  revoked_ms  BIGINT
 );
 
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+
+-- P1c:会话管理需要友好设备名(旧数据卷升级;PG 支持 ADD COLUMN IF NOT EXISTS,
+-- 新建表时上方定义已含该列,此句幂等无害)
+ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS device_name TEXT NOT NULL DEFAULT '';
