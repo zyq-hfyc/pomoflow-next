@@ -1,0 +1,23 @@
+# PomoFlow sync-server 运行时镜像 —— 预编译二进制版(推荐路径)
+#
+# 二进制由 Windows 本地交叉编译产出(bash services/sync-server/build-local.sh,
+# cargo-zigbuild → x86_64-unknown-linux-musl 静态链接),服务器上"构建"只是拷贝一个
+# 文件:秒级完成,不下载 Rust 工具链,不产生任何构建缓存。
+# 背景:2026-08-22 事故 —— 服务器端 docker build 的 Rust 构建缓存把 40G 磁盘塞满,
+#       导致 GDM 无法启动。此文件即为根治方案。
+#
+# 构建上下文:services/sync-server/(要求 bin/sync-server 已由 build-local.sh 生成)
+#   docker compose up -d --build    # docker-compose.yml 已默认指向本文件
+# 如需在服务器上从源码构建(不推荐,需 ≥30G 空闲磁盘):
+#   docker compose -f docker-compose.build.yml up -d --build
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+# ⚠️ Windows 打出的 tar 不保留执行位(644),COPY 原样继承 → 容器启动报
+#    "executable file not found"(2026-08-22 部署实战踩坑)。
+#    镜像内强制加执行位根治,别指望构建上下文里的文件属性。
+COPY bin/sync-server /usr/local/bin/sync-server
+RUN chmod +x /usr/local/bin/sync-server
+EXPOSE 8080
+CMD ["sync-server"]

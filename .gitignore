@@ -75,5 +75,8 @@ docs/提示词.txt
 # sync-server 运行环境(容器/.env 提供,不入库)
 services/sync-server/.env
 
+# 本地交叉编译的 Linux 二进制(build-local.sh 产物,随部署包分发,不入库)
+services/sync-server/bin/
+
 # 本地保留的发布产物(安装包/部署包),不入库
 artifacts/

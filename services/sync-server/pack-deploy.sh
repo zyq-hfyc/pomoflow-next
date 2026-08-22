@@ -1,25 +1,37 @@
 #!/usr/bin/env bash
 # 打包「服务器最小部署集」—— 排除 target/.git/node_modules 等本地噪音。
 #
-# 背景:整仓库 21G+(构建产物),服务器只需要源码子集 + docker compose 即可构建。
-# 产物:target/pomoflow-sync-deploy-<日期>.tar.gz(约几 MB)
+# 背景:服务器只需要 源码子集 + 预编译二进制 + docker compose 物料即可部署;
+#       服务器端编译会吃 10-20G 磁盘(2026-08-22 事故),默认不走。
+# 产物:artifacts/pomoflow-sync-deploy-<日期>.tar.gz(有预编译二进制时约 15-20M)
 #
 # 用法(仓库根或任意目录均可,脚本自定位):
-#   bash services/sync-server/pack-deploy.sh
+#   bash services/sync-server/build-local.sh    # ① 先在本地交叉编译出二进制(改代码后需重跑)
+#   bash services/sync-server/pack-deploy.sh    # ② 再打部署包
 # 上传(三选一):
-#   scp target/pomoflow-sync-deploy-*.tar.gz user@<vm-ip>:/opt/
+#   scp artifacts/pomoflow-sync-deploy-*.tar.gz user@<vm-ip>:/opt/
 #   或 WinSCP 拖拽 / VMware 共享文件夹
 # 服务器解压部署:
 #   tar -xzf pomoflow-sync-deploy-*.tar.gz
 #   cd pomoflow-next/services/sync-server
 #   cp .env.example .env && vim .env     # 填 SYNC_USER_ID / SYNC_TOKEN
-#   docker compose up -d --build
+#   docker compose up -d --build         # 预编译路径:秒级,仅拷贝二进制
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."   # 仓库根
 STAMP="$(date +%Y%m%d)"
-OUT="target/pomoflow-sync-deploy-${STAMP}.tar.gz"
-mkdir -p target
+OUT="artifacts/pomoflow-sync-deploy-${STAMP}.tar.gz"
+mkdir -p artifacts
+
+BIN="services/sync-server/bin/sync-server"
+if [ -f "$BIN" ]; then
+  echo "✔ 检测到预编译二进制 → 部署包走「免编译」路径(服务器构建秒级、零缓存)"
+else
+  echo "⚠ 未找到 $BIN"
+  echo "  部署包将退回「服务器端构建」模式:需在服务器上编译 Rust,"
+  echo "  构建缓存+镜像层实测占 10-20G 磁盘,40G 小盘会被塞满(2026-08-22 事故)。"
+  echo "  强烈建议先在本地执行: bash services/sync-server/build-local.sh"
+fi
 
 tar -czf "$OUT" \
   --exclude='pomoflow-next/target' \
@@ -28,6 +40,7 @@ tar -czf "$OUT" \
   --exclude='pomoflow-next/.github' \
   --exclude='pomoflow-next/docs' \
   --exclude='pomoflow-next/artifacts' \
+  --exclude='*/.env' \
   --exclude='*/node_modules' \
   --exclude='*/dist' \
   -C .. pomoflow-next

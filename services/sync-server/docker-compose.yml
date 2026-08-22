@@ -1,9 +1,15 @@
 # PomoFlow 同步服务 · 开发环境(VMware Ubuntu / 腾讯云同用)
 #
-# 用法:
-#   cp .env.example .env && 编辑 .env(至少改 SYNC_USER_ID / SYNC_TOKEN)
-#   docker compose up -d --build
-#   桌面端(下一批接入)将指向 http://<本机局域网IP>:8080
+# 用法(默认走「预编译」路径:服务器上不做任何编译,build 只是拷贝二进制,秒级):
+#   Windows 本地先产出二进制:  bash services/sync-server/build-local.sh
+#   再打部署包:               bash services/sync-server/pack-deploy.sh
+#   服务器解压后:
+#     cp .env.example .env && 编辑 .env(至少改 SYNC_USER_ID / SYNC_TOKEN)
+#     docker compose up -d --build
+#
+# 如需在服务器上从源码构建(不推荐:Rust 构建缓存实测可吃 10-20G 磁盘,
+# 40G 小盘会被塞满导致系统故障;确需此路径务必保证 ≥30G 空闲磁盘):
+#   docker compose -f docker-compose.build.yml up -d --build
 #
 # 公网部署(腾讯云)时:
 #   - 移除 postgres 的 5432 端口映射(只留容器内网),或改绑 127.0.0.1
@@ -30,8 +36,8 @@ services:
 
   sync-server:
     build:
-      context: ..
-      dockerfile: services/sync-server/Dockerfile
+      context: .            # = services/sync-server/,仅需 bin/sync-server 一个产物
+      dockerfile: Dockerfile.prebuilt
     restart: unless-stopped
     depends_on:
       postgres:

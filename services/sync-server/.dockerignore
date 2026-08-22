@@ -1,0 +1,12 @@
+# 预编译路径的构建上下文是本目录(services/sync-server/),用这份局部 ignore 瘦身。
+# 注意:绝不能排除 bin/(Dockerfile.prebuilt 要 COPY 它)。
+
+# 密钥绝不进入构建上下文(哪怕 Dockerfile 不会 COPY 它,也别发给 daemon)
+.env
+
+# 文档/源码此路径用不到,减一点上下文体积
+*.md
+src/
+
+# 本机杂物
+*.tar.gz
