@@ -47,6 +47,16 @@ services:
       SYNC_TOKEN: ${SYNC_TOKEN:?请在 .env 设置 SYNC_TOKEN}
       SYNC_USER_ID: ${SYNC_USER_ID:?请在 .env 设置 SYNC_USER_ID}
       PORT: "8080"
+      # P1d 账号体系变量转发(⚠️ compose 只把列在 environment 里的变量传进容器,
+      # 漏转发会导致 .env 里配了 JWT_SECRET 但服务仍是 auth=static —— 2026-08-22
+      # 实机部署踩坑,已在 VM 修复并回同步到仓库)。留空 = 功能关闭,语义不变。
+      JWT_SECRET: ${JWT_SECRET:-}
+      CODE_PEPPER: ${CODE_PEPPER:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
     ports:
       - "8080:8080"
 

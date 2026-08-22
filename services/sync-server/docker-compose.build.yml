@@ -40,6 +40,14 @@ services:
       SYNC_TOKEN: ${SYNC_TOKEN:?请在 .env 设置 SYNC_TOKEN}
       SYNC_USER_ID: ${SYNC_USER_ID:?请在 .env 设置 SYNC_USER_ID}
       PORT: "8080"
+      # P1d 变量转发(与 docker-compose.yml 同步,见其注释)
+      JWT_SECRET: ${JWT_SECRET:-}
+      CODE_PEPPER: ${CODE_PEPPER:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
     ports:
       - "8080:8080"
 
