@@ -404,7 +404,6 @@ mod tests {
 /// 服务端 AuthTokens 响应镜像(serde snake_case)。
 #[derive(Debug, Deserialize)]
 struct AuthTokensResp {
-    #[allow(dead_code)] // user_id 在 auth_request 里有用,留给结构完整
     user_id: String,
     username: String,
     access_token: String,
@@ -458,6 +457,12 @@ async fn auth_request(
     }
     let tokens: AuthTokensResp =
         serde_json::from_str(&text).map_err(|e| format!("响应解析失败: {e}"))?;
+    save_tokens(store, tokens)
+}
+
+/// token 对落库(带归属守卫):账号 user_id 必须与本机数据 user_id 一致,
+/// 否则拒绝 —— 防把 A 用户的数据推到 B 账号名下。
+fn save_tokens(store: &SqliteStore, tokens: AuthTokensResp) -> Result<AuthStatus, String> {
     if tokens.user_id != store.local_user_id().to_string() {
         return Err(format!(
             "该账号({})与本机数据归属不一致,不能在此设备登录(多账号需各自独立数据目录)",
@@ -733,4 +738,223 @@ pub async fn auth_revoke_others(state: State<'_, AppState>) -> Result<u64, Strin
         .get("revoked")
         .and_then(|v| v.as_u64())
         .unwrap_or(0))
+}
+
+// === P1d:邮箱渠道命令(验证码/邮箱注册登录/找回/换绑/资料/用户名) ==============
+
+/// 服务端结构化错误信封镜像(`errors::ApiErr`)。
+#[derive(Debug, Deserialize)]
+struct AccountErrorEnvelope {
+    error: AccountErrorBody,
+}
+#[derive(Debug, Deserialize)]
+struct AccountErrorBody {
+    #[allow(dead_code)]
+    code: String,
+    message: String,
+}
+
+/// 桌面侧资料快照(auth_get_profile 镜像,serde snake_case)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountProfile {
+    pub user_id: String,
+    pub username: String,
+    pub display_name: String,
+    pub email: Option<String>,
+    pub email_verified: bool,
+    pub created_ms: i64,
+    pub password_changed_ms: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SendCodeResp {
+    #[allow(dead_code)]
+    ok: bool,
+    #[allow(dead_code)]
+    expires_in: i64,
+}
+
+fn short_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+fn account_url(store: &SqliteStore, path: &str) -> Result<String, String> {
+    let url = meta_nonempty(store, META_URL)?.ok_or("请先在「数据同步」保存服务器地址")?;
+    Ok(format!("{url}{path}"))
+}
+
+/// 把非 2xx 响应转可读错误:优先解结构化信封(message),回落原文。
+fn api_error_text(status: reqwest::StatusCode, text: &str) -> String {
+    if let Ok(env) = serde_json::from_str::<AccountErrorEnvelope>(text) {
+        return env.error.message;
+    }
+    format!("服务器返回 {status}: {text}")
+}
+
+/// POST 账号端点(无认证)。
+async fn post_account<T, R>(store: &SqliteStore, path: &str, body: &T) -> Result<R, String>
+where
+    T: serde::Serialize,
+    R: serde::de::DeserializeOwned,
+{
+    let resp = short_client()?
+        .post(account_url(store, path)?)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("网络错误: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(api_error_text(status, &text));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("响应解析失败: {e}"))
+}
+
+/// POST 账号端点(Bearer access,账号登录态)。
+async fn post_account_authed<T, R>(store: &SqliteStore, path: &str, body: &T) -> Result<R, String>
+where
+    T: serde::Serialize,
+    R: serde::de::DeserializeOwned,
+{
+    let access =
+        meta_nonempty(store, META_ACCESS)?.ok_or("尚未登录账号".to_string())?;
+    let resp = short_client()?
+        .post(account_url(store, path)?)
+        .bearer_auth(access)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("网络错误: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(api_error_text(status, &text));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("响应解析失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn auth_send_email_code(
+    email: String,
+    purpose: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let store = state.store.clone();
+    let body = serde_json::json!({ "email": email.trim(), "purpose": purpose });
+    post_account::<_, SendCodeResp>(&store, "/v1/auth/email/send-code", &body).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn auth_register_email(
+    email: String,
+    code: String,
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<AuthStatus, String> {
+    let store = state.store.clone();
+    let (device_id, device_name) = device_report(&store);
+    let body = serde_json::json!({
+        "email": email.trim(), "code": code.trim(), "password": password,
+        "device_id": device_id, "device_name": device_name,
+    });
+    let tokens: AuthTokensResp =
+        post_account(&store, "/v1/auth/register-email", &body).await?;
+    save_tokens(&store, tokens)
+}
+
+#[tauri::command]
+pub async fn auth_login_email(
+    email: String,
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<AuthStatus, String> {
+    let store = state.store.clone();
+    let (device_id, device_name) = device_report(&store);
+    let body = serde_json::json!({
+        "email": email.trim(), "password": password,
+        "device_id": device_id, "device_name": device_name,
+    });
+    let tokens: AuthTokensResp = post_account(&store, "/v1/auth/login-email", &body).await?;
+    save_tokens(&store, tokens)
+}
+
+#[tauri::command]
+pub async fn auth_reset_password(
+    email: String,
+    code: String,
+    new_password: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let store = state.store.clone();
+    let body = serde_json::json!({
+        "email": email.trim(), "code": code.trim(), "new_password": new_password,
+    });
+    post_account::<_, serde_json::Value>(&store, "/v1/auth/reset-password", &body).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn auth_bind_email(
+    email: String,
+    code: String,
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let store = state.store.clone();
+    let body = serde_json::json!({
+        "email": email.trim(), "code": code.trim(), "password": password,
+    });
+    post_account_authed::<_, serde_json::Value>(&store, "/v1/auth/email/bind", &body).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn auth_get_profile(
+    state: State<'_, AppState>,
+) -> Result<AccountProfile, String> {
+    let store = state.store.clone();
+    let access =
+        meta_nonempty(&store, META_ACCESS)?.ok_or("尚未登录账号".to_string())?;
+    let resp = short_client()?
+        .get(account_url(&store, "/v1/auth/profile")?)
+        .bearer_auth(access)
+        .send()
+        .await
+        .map_err(|e| format!("网络错误: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(api_error_text(status, &text));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("响应解析失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn auth_update_display_name(
+    display_name: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let store = state.store.clone();
+    let body = serde_json::json!({ "display_name": display_name });
+    post_account_authed::<_, serde_json::Value>(&store, "/v1/auth/profile", &body).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn auth_update_username(
+    username: String,
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<AuthStatus, String> {
+    let store = state.store.clone();
+    let body = serde_json::json!({ "username": username.trim(), "password": password });
+    // 服务端:验密码 + 其他设备全下线 + 给本机新令牌对 → 落库替换
+    let tokens: AuthTokensResp =
+        post_account_authed(&store, "/v1/auth/username", &body).await?;
+    save_tokens(&store, tokens)
 }

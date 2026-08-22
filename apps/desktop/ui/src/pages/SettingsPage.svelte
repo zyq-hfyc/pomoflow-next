@@ -27,6 +27,8 @@
   import NotificationTemplateSetting from "../components/Settings/NotificationTemplateSetting.svelte";
   import SyncSetting from "../components/Settings/SyncSetting.svelte";
   import LanguageSetting from "../components/Settings/LanguageSetting.svelte";
+  import AccountTab from "../components/Settings/Account/AccountTab.svelte";
+  import { accountTabSignal } from "../lib/ui-bus.svelte";
 
   const t = $derived(getDict());
 
@@ -42,6 +44,11 @@
     | "language";
 
   let activeTab = $state<SettingTab>("timer");
+
+  // 数据同步页「前往账号管理」→ 切到账号 tab(ui-bus 信号)
+  $effect(() => {
+    if (accountTabSignal() > 0) activeTab = "account";
+  });
 
   // lucide-svelte 1.x 导出 Svelte 4 SvelteComponentTyped,与 Svelte 5 Component
   // 类型不兼容 —— 与 ProjectSidebar 同款,赋值处 `as any` 绕过(运行期正常)。
@@ -87,10 +94,7 @@
   <main class="content">
     <div class="card">
       {#if activeTab === "account"}
-        <!-- v1 SettingsPage:156-160 —— 账号占位 -->
-        <div class="account-placeholder">
-          <p>{t.settings.accountNotOpen}</p>
-        </div>
+        <AccountTab />
       {:else if activeTab === "timer"}
         <TimerSetting />
       {:else if activeTab === "lists"}
@@ -123,18 +127,6 @@
       flex-direction: row;
       height: calc(100vh - var(--topbar-height, 43px));
     }
-  }
-
-  .account-placeholder {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 16rem;
-    color: var(--color-text-muted);
-  }
-  .account-placeholder p {
-    margin: 0;
   }
 
   .menu {

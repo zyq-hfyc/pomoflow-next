@@ -121,6 +121,14 @@ pub fn run() {
             sync_client::auth_list_sessions,
             sync_client::auth_revoke_session,
             sync_client::auth_revoke_others,
+            sync_client::auth_send_email_code,
+            sync_client::auth_register_email,
+            sync_client::auth_login_email,
+            sync_client::auth_reset_password,
+            sync_client::auth_bind_email,
+            sync_client::auth_get_profile,
+            sync_client::auth_update_display_name,
+            sync_client::auth_update_username,
             export::export_tasks_xlsx,
         ])
         .setup(move |app| {

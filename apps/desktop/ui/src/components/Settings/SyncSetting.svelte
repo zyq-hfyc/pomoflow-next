@@ -16,9 +16,6 @@
     getSyncIdentity,
     syncNow,
     onAutoSync,
-    authRegister,
-    authLogin,
-    authLogout,
     authChangePassword,
     authListSessions,
     authRevokeSession,
@@ -27,6 +24,7 @@
     type SessionInfo,
   } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
+  import { requestAccountTab } from "../../lib/ui-bus.svelte";
 
   const t = $derived(getDict());
 
@@ -36,10 +34,6 @@
   let intervalMin = $state(5);
   let identity = $state<{ user_id: string; device_id: string } | null>(null);
   let authUser = $state<string | null>(null);
-
-  let username = $state("");
-  let password = $state("");
-  let authBusy = $state<"login" | "register" | "logout" | null>(null);
 
   // P1c:改密码 + 会话管理
   let oldPass = $state("");
@@ -76,28 +70,6 @@
       identity = id;
     } catch (e) {
       error = String(e);
-    }
-  }
-
-  async function onAuth(kind: "login" | "register") {
-    if (authBusy) return;
-    if (!username.trim() || !password) {
-      error = t.settings.sync.accountMissing;
-      return;
-    }
-    authBusy = kind;
-    error = null;
-    try {
-      const st =
-        kind === "register"
-          ? await authRegister(username.trim(), password)
-          : await authLogin(username.trim(), password);
-      authUser = st.username;
-      password = "";
-    } catch (e) {
-      error = String(e);
-    } finally {
-      authBusy = null;
     }
   }
 
@@ -161,20 +133,6 @@
       error = String(e);
     } finally {
       sessionBusy = false;
-    }
-  }
-
-  async function onLogout() {
-    if (authBusy) return;
-    authBusy = "logout";
-    error = null;
-    try {
-      await authLogout();
-      authUser = null;
-    } catch (e) {
-      error = String(e);
-    } finally {
-      authBusy = null;
     }
   }
 
@@ -248,57 +206,17 @@
           <span class="row-label">{t.settings.sync.loggedIn}</span>
           <div class="id-cell">
             <code class="id-text">{authUser}</code>
-            <button
-              type="button"
-              class="copy"
-              disabled={authBusy !== null}
-              onclick={() => void onLogout()}
-            >
-              {authBusy === "logout" ? t.settings.sync.loggingOut : t.settings.sync.logout}
+            <button type="button" class="copy" onclick={requestAccountTab}>
+              {t.settings.sync.manageAccount} →
             </button>
           </div>
         </div>
       {:else}
         <div class="form-row">
-          <span class="row-label">{t.settings.sync.accountUser}</span>
-          <input
-            class="input"
-            type="text"
-            bind:value={username}
-            placeholder={t.settings.sync.accountUserPh}
-            spellcheck="false"
-            autocomplete="username"
-          />
-        </div>
-        <div class="form-row">
-          <span class="row-label">{t.settings.sync.accountPass}</span>
-          <input
-            class="input"
-            type="password"
-            bind:value={password}
-            placeholder={t.settings.sync.accountPassPh}
-            spellcheck="false"
-            autocomplete="current-password"
-          />
-        </div>
-        <div class="form-row">
-          <span class="row-label"></span>
+          <span class="row-label">{t.settings.sync.notLoggedIn}</span>
           <div class="actions">
-            <button
-              type="button"
-              class="action"
-              disabled={authBusy !== null}
-              onclick={() => void onAuth("login")}
-            >
-              {authBusy === "login" ? t.settings.sync.working : t.settings.sync.login}
-            </button>
-            <button
-              type="button"
-              class="action"
-              disabled={authBusy !== null}
-              onclick={() => void onAuth("register")}
-            >
-              {authBusy === "register" ? t.settings.sync.working : t.settings.sync.register}
+            <button type="button" class="action" onclick={requestAccountTab}>
+              {t.settings.account.tabLogin} / {t.settings.account.tabRegister} →
             </button>
           </div>
         </div>

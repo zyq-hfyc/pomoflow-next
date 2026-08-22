@@ -513,6 +513,45 @@ export const authRevokeSession = (id: number) =>
 /** 退出其他所有设备,返回踢出数量。 */
 export const authRevokeOthers = () => invoke<number>("auth_revoke_others");
 
+// === 邮箱渠道(P1d:验证码/邮箱注册登录/找回/换绑/资料) ===
+
+/** 发邮箱验证码。purpose: "register" | "reset" | "bind";服务端有频控(429)。 */
+export const authSendEmailCode = (email: string, purpose: "register" | "reset" | "bind") =>
+  invoke<void>("auth_send_email_code", { email, purpose });
+
+export const authRegisterEmail = (email: string, code: string, password: string) =>
+  invoke<AuthStatus>("auth_register_email", { email, code, password });
+
+export const authLoginEmail = (email: string, password: string) =>
+  invoke<AuthStatus>("auth_login_email", { email, password });
+
+/** 找回密码:验码 → 重置 → 服务端全端踢出(本机也需重新登录)。 */
+export const authResetPassword = (email: string, code: string, newPassword: string) =>
+  invoke<void>("auth_reset_password", { email, code, newPassword });
+
+/** 绑定/换绑邮箱(需新邮箱验证码 + 当前密码)。 */
+export const authBindEmail = (email: string, code: string, password: string) =>
+  invoke<void>("auth_bind_email", { email, code, password });
+
+export interface AccountProfile {
+  user_id: string;
+  username: string;
+  display_name: string;
+  email: string | null;
+  email_verified: boolean;
+  created_ms: number;
+  password_changed_ms: number | null;
+}
+
+export const authGetProfile = () => invoke<AccountProfile>("auth_get_profile");
+
+export const authUpdateDisplayName = (displayName: string) =>
+  invoke<void>("auth_update_display_name", { displayName });
+
+/** 改用户名(验密码;其他设备下线,本机自动换新令牌)。 */
+export const authUpdateUsername = (username: string, password: string) =>
+  invoke<AuthStatus>("auth_update_username", { username, password });
+
 /** 监听后台自动同步结果(设置页展示"最近自动同步");返回取消监听函数。 */
 export const onAutoSync = (cb: (e: AutoSyncEvent) => void) =>
   listen<AutoSyncEvent>("sync://auto", (ev) => cb(ev.payload));
