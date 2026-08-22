@@ -31,6 +31,7 @@ type MigrationFn = fn(&Connection) -> CoreResult<()>;
 const MIGRATIONS: &[MigrationFn] = &[
     migration_001_repeat_meta_and_audit,
     migration_002_sync_foundation,
+    migration_003_task_tag_sync,
 ];
 
 /// 当前代码支持的最新 schema 版号(= 已应用迁移数)。
@@ -294,6 +295,40 @@ fn migration_002_sync_foundation(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
+// === 迁移 3:任务↔标签关联同步(task_tag_sync)=================================
+
+/// v2 → v3:
+/// - 建 `task_tag_sync`(per-task 的 LWW 元信息;关联数据仍在 task_tags 单一事实源);
+/// - **存量关联回填**:每个打过标签的 task 一行 pending(revision=1)—— 此前
+///   `task_tags` 不参与同步是已知缺口(v1 同步协议详细设计"已知范围外"),
+///   升级后首次同步即把历史标签关联全量补推上云;
+/// - pending partial index(list_pending 扫描用)。
+///
+/// 幂等:CREATE TABLE/INDEX IF NOT EXISTS + INSERT OR IGNORE(主键 task_id 兜底,
+/// 已同步行不会被重置回 pending)。
+fn migration_003_task_tag_sync(conn: &Connection) -> CoreResult<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS task_tag_sync (
+           task_id TEXT PRIMARY KEY,
+           user_id TEXT NOT NULL DEFAULT '',
+           revision INTEGER NOT NULL DEFAULT 1,
+           updated_at_ms INTEGER NOT NULL,
+           sync_state TEXT NOT NULL DEFAULT 'pending',
+           origin_device TEXT NOT NULL DEFAULT ''
+         );
+         CREATE INDEX IF NOT EXISTS idx_task_tag_sync_pending
+           ON task_tag_sync(sync_state) WHERE sync_state = 'pending';
+         INSERT OR IGNORE INTO task_tag_sync
+           (task_id, user_id, revision, updated_at_ms, sync_state, origin_device)
+         SELECT DISTINCT tt.task_id, t.user_id, 1,
+                CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+                'pending', ''
+         FROM task_tags tt JOIN tasks t ON t.id = tt.task_id;",
+    )
+    .map_err(|e| CoreError::storage(format!("task_tag_sync: {e}")))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,5 +418,59 @@ mod tests {
             .unwrap();
         let version = run_migrations(&conn).unwrap();
         assert_eq!(version, latest_version());
+    }
+
+    /// v2 库(已有 task_tags 存量关联,版本停在 2)升级 v3:
+    /// task_tag_sync 按task 回填 pending 行(集合为载荷,不逐关联),幂等可重跑。
+    #[test]
+    fn migration_003_backfills_task_tag_sync() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::store::sqlite::SCHEMA_SQL)
+            .unwrap();
+        // 模拟 v2 存量:两个任务共 3 条关联,版本停在 2
+        conn.execute_batch(
+            "INSERT INTO tasks (id, user_id, title, updated_at_ms) VALUES
+               ('t1', 'u1', '任务1', 1), ('t2', 'u2', '任务2', 1);
+             INSERT INTO tags (id, user_id, name, updated_at_ms) VALUES
+               ('g1', 'u1', '红', 1), ('g2', 'u1', '蓝', 1);
+             INSERT INTO task_tags (task_id, tag_id) VALUES
+               ('t1','g1'), ('t1','g2'), ('t2','g1');
+             PRAGMA user_version = 2;",
+        )
+        .unwrap();
+
+        assert_eq!(run_migrations(&conn).unwrap(), latest_version());
+
+        // 每个 task 一行(t1/t2),非逐关联 3 行;全部 pending、revision=1
+        let (rows, pending): (i64, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), SUM(CASE WHEN sync_state = 'pending' THEN 1 ELSE 0 END)
+                 FROM task_tag_sync",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((rows, pending), (2, 2));
+        let (user_id, rev): (String, i64) = conn
+            .query_row(
+                "SELECT user_id, revision FROM task_tag_sync WHERE task_id = 't1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((user_id.as_str(), rev), ("u1", 1));
+
+        // 已同步的行不被重跑回填重置;重复迁移行数不变
+        conn.execute_batch("UPDATE task_tag_sync SET sync_state = 'synced';")
+            .unwrap();
+        assert_eq!(run_migrations(&conn).unwrap(), latest_version());
+        let synced: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_tag_sync WHERE sync_state = 'synced'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(synced, 2, "INSERT OR IGNORE 不应把已同步行重置回 pending");
     }
 }

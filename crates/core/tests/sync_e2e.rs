@@ -5,7 +5,7 @@
 //! (ADR-009:revision → updated_at → device_id)—— 与将来真 Sync Service
 //! 用同一段代码。设备端是 `InMemoryStore`(实现 `ChangeLogStore`)。
 //!
-//! 七场景(ADR-006/009/010/011 的活文档):
+//! 八场景(ADR-006/009/010/011 的活文档):
 //! 1. 单端修改收敛
 //! 2. 并发修改按 revision 裁决,输家经 Conflicted 收敛
 //! 3. 时钟回拨:updated_at 更大但 revision 更小 → 仍按 revision 收敛(ADR-009)
@@ -13,8 +13,9 @@
 //! 5. 离线多次修改只推最终快照
 //! 6. pull 回环过滤(不见自己的变更)+ 游标分页(ADR-011)
 //! 7. 重复 push(change_id 幂等)不产生重复下发
+//! 8. 任务↔标签关联(TaskTagLink,task_id 为键/tag 集合为载荷)跨设备同步
 
-use pomoflow_core::model::{DailyReview, Id, Task, Timestamp};
+use pomoflow_core::model::{DailyReview, Id, Tag, Task, TaskTagLink, Timestamp};
 use pomoflow_core::store::{InMemoryStore, Store, TaskQuery};
 use pomoflow_core::sync::engine::{apply_pull_response, apply_push_outcomes, build_push_request};
 use pomoflow_core::sync::{
@@ -433,4 +434,56 @@ fn duplicate_push_is_idempotent() {
 fn changelog_store_impl_available() {
     let s = InMemoryStore::new();
     let _: Box<dyn ChangeLogStore> = Box::new(s);
+}
+
+/// 8. 任务↔标签关联(TaskTagLink)跨设备同步:
+///    集合为载荷整体 LWW,清空/删除任务走空集 tombstone(ADR-010 同语义)。
+#[test]
+fn task_tag_links_sync_across_devices() {
+    let user = Id::new();
+    let a = InMemoryStore::with_user_device(user.clone(), "dev-a");
+    let b = InMemoryStore::with_user_device(user, "dev-b");
+    let mut cloud = FakeCloud::new();
+
+    // A:任务 + 标签 + 打标;另一个任务从不动标签(不应产生 task_tag 变更)
+    let task = new_task(&a, "带标签的任务");
+    let tag = Tag::new("红");
+    let tag_id = tag.id.clone();
+    a.upsert_tag(tag).unwrap();
+    a.set_tags_for_task(&task, std::slice::from_ref(&tag_id))
+        .unwrap();
+    let plain = new_task(&a, "无标签任务");
+
+    full_push(&mut cloud, &a);
+    pull_all(&cloud, &b);
+
+    let tags_b = b.list_tags_for_tasks(std::slice::from_ref(&task)).unwrap();
+    assert_eq!(tags_b[&task].len(), 1, "B 应看到 A 打的标签");
+    assert!(
+        cloud
+            .log
+            .iter()
+            .all(|(_, c)| !(c.entity == EntityKind::TaskTag && c.entity_id == plain.as_str())),
+        "从不动标签的任务不应产生 task_tag 变更(空集不建行)"
+    );
+
+    // B 清空标签 → 空集 tombstone 传回 A,A 收敛为无标签
+    b.set_tags_for_task(&task, &[]).unwrap();
+    full_push(&mut cloud, &b);
+    pull_all(&cloud, &a);
+    let tags_a = a.list_tags_for_tasks(std::slice::from_ref(&task)).unwrap();
+    assert!(!tags_a.contains_key(&task), "A 应收敛为无标签");
+
+    // A 删除任务 → 关联 tombstone 入队(空集 + revision 递增:打标1→清空2→删除3)
+    a.delete_task(&task).unwrap();
+    let pending: Vec<Change> = a
+        .list_pending(100)
+        .unwrap()
+        .into_iter()
+        .filter(|c| c.entity == EntityKind::TaskTag)
+        .collect();
+    assert_eq!(pending.len(), 1);
+    let p: TaskTagLink = serde_json::from_value(pending[0].payload.clone()).unwrap();
+    assert!(p.tag_ids.is_empty(), "删除任务后关联载荷应为空集");
+    assert_eq!(p.revision, 3, "打标1 → 远端清空2 → 本地删除3");
 }

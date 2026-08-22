@@ -49,6 +49,8 @@ pub enum EntityKind {
     Task,
     Project,
     Tag,
+    /// 任务↔标签关联(以 task_id 为键,tag 集合为载荷整体 LWW,见 TaskTagLink)
+    TaskTag,
     SubTask,
     PomodoroSession,
     Motto,
@@ -283,6 +285,7 @@ macro_rules! impl_sync_entity {
 impl_sync_entity!(crate::model::Task, EntityKind::Task, key id);
 impl_sync_entity!(crate::model::Project, EntityKind::Project, key id);
 impl_sync_entity!(crate::model::Tag, EntityKind::Tag, key id);
+impl_sync_entity!(crate::model::TaskTagLink, EntityKind::TaskTag, key task_id);
 impl_sync_entity!(crate::model::SubTask, EntityKind::SubTask, key id);
 impl_sync_entity!(
     crate::model::PomodoroSession,

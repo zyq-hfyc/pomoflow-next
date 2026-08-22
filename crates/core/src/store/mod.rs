@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{CoreError, CoreResult};
 use crate::model::{
     DailyReview, Id, MonthlyReview, Motto, NotificationTemplate, PomodoroSession, Priority,
-    Project, SubTask, Tag, Task, WeeklyReview,
+    Project, SubTask, Tag, Task, TaskTagLink, Timestamp, WeeklyReview,
 };
 use crate::sync::{change_of, Change, ChangeLogStore, EntityKind, SyncEntity};
 
@@ -208,6 +208,10 @@ struct Inner {
     projects: HashMap<Id, Project>,
     tags: HashMap<Id, Tag>,
     task_tags: HashMap<Id, Vec<Id>>,
+    /// 任务↔标签关联的同步元信息:task_id → (revision, updated_at)。
+    /// 关联数据本身在 `task_tags`(单一事实源),这里只存 LWW 元数据,
+    /// 与 SqliteStore 的 `task_tag_sync` 表语义对齐。
+    task_tag_meta: HashMap<Id, (u64, Timestamp)>,
     pomodoros: HashMap<Id, PomodoroSession>,
     subtasks: HashMap<Id, SubTask>,
     daily_reviews: HashMap<String, DailyReview>,
@@ -408,6 +412,13 @@ impl Store for InMemoryStore {
             task.deleted_at = Some(crate::model::Timestamp::now());
             task.revision = task.revision.saturating_add(1);
             g.touch("task", id.as_str(), &self.device_id);
+        }
+        // 关联标签清空 + 空集 tombstone(载荷=空集合,ADR-010;与 SqliteStore 对齐)
+        g.task_tags.remove(id);
+        if let Some((rev, _)) = g.task_tag_meta.get(id).cloned() {
+            g.task_tag_meta
+                .insert(id.clone(), (rev + 1, Timestamp::now()));
+            g.touch("task_tag", id.as_str(), &self.device_id);
         }
         Ok(())
     }
@@ -678,8 +689,27 @@ impl Store for InMemoryStore {
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        // 校验所有 tag_id 存在(可选;为减少 InMemoryStore 复杂度,这里只插入)
-        g.task_tags.insert(task_id.clone(), tag_ids.to_vec());
+        // 排序去重:同集合 → 同载荷,消除顺序抖动(与 SqliteStore 同规格)
+        let mut sorted: Vec<Id> = tag_ids.to_vec();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+        sorted.dedup_by(|a, b| a.0 == b.0);
+        // 同步元信息:空集合且无历史行 → 不建行(不给没打过标签的任务造噪音)
+        let has = g.task_tag_meta.contains_key(task_id);
+        if !sorted.is_empty() || has {
+            let (rev, _) = g
+                .task_tag_meta
+                .get(task_id)
+                .cloned()
+                .unwrap_or((0, Timestamp::now()));
+            g.task_tag_meta
+                .insert(task_id.clone(), (rev + 1, Timestamp::now()));
+            g.touch("task_tag", task_id.as_str(), &self.device_id);
+        }
+        if sorted.is_empty() {
+            g.task_tags.remove(task_id);
+        } else {
+            g.task_tags.insert(task_id.clone(), sorted);
+        }
         Ok(())
     }
 
@@ -1111,6 +1141,7 @@ fn kind_str(k: EntityKind) -> &'static str {
         EntityKind::SubTask => "sub_task",
         EntityKind::PomodoroSession => "pomodoro_session",
         EntityKind::Motto => "motto",
+        EntityKind::TaskTag => "task_tag",
         EntityKind::DailyReview => "daily_review",
         EntityKind::WeeklyReview => "weekly_review",
         EntityKind::MonthlyReview => "monthly_review",
@@ -1151,6 +1182,33 @@ impl ChangeLogStore for InMemoryStore {
         collect!(g.daily_reviews, "daily_review", date);
         collect!(g.weekly_reviews, "weekly_review", week_start);
         collect!(g.monthly_reviews, "monthly_review", year_month);
+        // task_tag:以 task_id 为键,载荷 = 当前 tag 集合(task_tags 写入侧已排序
+        // 去重;空集合 = 清除 tombstone,ADR-010)
+        for (task_id, (rev, upd)) in g.task_tag_meta.iter() {
+            if out.len() >= limit {
+                break;
+            }
+            if !g
+                .pending
+                .contains(&format!("task_tag/{}", task_id.as_str()))
+            {
+                continue;
+            }
+            let link = TaskTagLink {
+                task_id: task_id.clone(),
+                tag_ids: g.task_tags.get(task_id).cloned().unwrap_or_default(),
+                user_id: self.user_id.clone(),
+                revision: *rev,
+                updated_at: *upd,
+            };
+            out.push(cand(
+                &link,
+                "task_tag",
+                task_id.as_str(),
+                &g,
+                &self.device_id,
+            )?);
+        }
         out.sort_by_key(|c| c.updated_at);
         Ok(out)
     }
@@ -1209,6 +1267,21 @@ impl ChangeLogStore for InMemoryStore {
                 let e = decode!(MonthlyReview);
                 g.monthly_reviews.insert(e.year_month.clone(), e);
             }
+            // 关联实体:按权威载荷原样落库(revision 不 bump),settle pending
+            EntityKind::TaskTag => {
+                let mut e = decode!(TaskTagLink);
+                let mut sorted = e.tag_ids.clone();
+                sorted.sort_by(|a, b| a.0.cmp(&b.0));
+                sorted.dedup_by(|a, b| a.0 == b.0);
+                e.tag_ids = sorted;
+                g.task_tag_meta
+                    .insert(e.task_id.clone(), (e.revision, e.updated_at));
+                if e.tag_ids.is_empty() {
+                    g.task_tags.remove(&e.task_id);
+                } else {
+                    g.task_tags.insert(e.task_id.clone(), e.tag_ids.clone());
+                }
+            }
         }
         g.settle(kind, &change.entity_id);
         g.origin.insert(
@@ -1254,6 +1327,22 @@ impl ChangeLogStore for InMemoryStore {
             EntityKind::DailyReview => probe!(g.daily_reviews, "daily_review", Some(id)),
             EntityKind::WeeklyReview => probe!(g.weekly_reviews, "weekly_review", Some(id)),
             EntityKind::MonthlyReview => probe!(g.monthly_reviews, "monthly_review", Some(id)),
+            EntityKind::TaskTag => {
+                match Id::parse(id).and_then(|k| g.task_tag_meta.get(&k).map(|m| (k, m.0, m.1))) {
+                    Some((task_id, rev, upd)) => {
+                        let tag_ids = g.task_tags.get(&task_id).cloned().unwrap_or_default();
+                        let link = TaskTagLink {
+                            task_id,
+                            tag_ids,
+                            user_id: self.user_id.clone(),
+                            revision: rev,
+                            updated_at: upd,
+                        };
+                        Some(cand(&link, "task_tag", id, &g, &self.device_id)?)
+                    }
+                    None => None,
+                }
+            }
         })
     }
 }
@@ -1295,4 +1384,54 @@ mod tests {
         let err = s.upsert_tag(dup).unwrap_err();
         assert!(matches!(err, CoreError::Conflict(_)));
     }
+}
+
+#[test]
+fn task_tag_sync_semantics_matches_sqlite() {
+    use crate::sync::ChangeLogStore;
+    let a = InMemoryStore::with_user_device(Id::new(), "dev-a");
+    let task = Task::new("t");
+    let tag = Tag::new("g");
+    let tag_id = tag.id.clone();
+    let task_id = task.id.clone();
+    a.upsert_task(task).unwrap();
+    a.upsert_tag(tag.clone()).unwrap();
+    // 重复传入 → 载荷去重
+    a.set_tags_for_task(&task_id, &[tag_id.clone(), tag_id.clone()])
+        .unwrap();
+    let ch = a
+        .list_pending(100)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.entity == EntityKind::TaskTag)
+        .expect("应有 task_tag pending 变更");
+    let p: TaskTagLink = serde_json::from_value(ch.payload.clone()).unwrap();
+    assert_eq!(p.tag_ids, vec![tag_id]);
+    assert_eq!(p.revision, 1);
+
+    let b = InMemoryStore::with_user_device(a.local_user_id().clone(), "dev-b");
+    // 关联变更只带集合不带标签实体 —— 标签本身走自己的 Tag 变更,这里手工补齐
+    b.upsert_tag(tag).unwrap();
+    b.apply_remote(&ch).unwrap();
+    let m = b
+        .list_tags_for_tasks(std::slice::from_ref(&task_id))
+        .unwrap();
+    assert_eq!(m[&task_id].len(), 1);
+    assert!(b
+        .list_pending(100)
+        .unwrap()
+        .iter()
+        .all(|c| c.entity != EntityKind::TaskTag));
+
+    // 删除任务 → 空集 tombstone(revision 递增)
+    a.delete_task(&task_id).unwrap();
+    let tomb = a
+        .list_pending(100)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.entity == EntityKind::TaskTag)
+        .unwrap();
+    let tp: TaskTagLink = serde_json::from_value(tomb.payload.clone()).unwrap();
+    assert!(tp.tag_ids.is_empty());
+    assert_eq!(tp.revision, 2);
 }

@@ -47,3 +47,25 @@ impl Tag {
         }
     }
 }
+
+/// 任务↔标签关联的同步载荷(同步协议"已知范围外"项的落地)。
+///
+/// 关联表不逐行同步:以 `task_id` 为键、tag 集合为载荷**整体 LWW** ——
+/// 与 Store 的 `set_tags_for_task` 全量替换语义天然对齐,无需逐关联 tombstone。
+/// 空 `tag_ids` = 无标签/已清除(与 Review 空内容=删除同语义,ADR-010)。
+///
+/// 注意:`tag_ids` 指向的标签可能已被删除(task_tags 无外键,死引用在
+/// 查询侧 JOIN 活标签时自然不可见);两侧都跑同一套删除级联,最终收敛一致。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskTagLink {
+    pub task_id: Id,
+    /// 关联标签集合(Store 写入前排序去重,消除顺序抖动导致的伪冲突)
+    #[serde(default)]
+    pub tag_ids: Vec<Id>,
+    #[serde(default = "crate::model::nil_user_id")]
+    pub user_id: Id,
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub updated_at: Timestamp,
+}

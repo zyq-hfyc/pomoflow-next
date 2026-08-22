@@ -36,7 +36,8 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use crate::error::{CoreError, CoreResult};
 use crate::model::{
     DailyReview, Id, MonthlyReview, Motto, NotificationTemplate, PomodoroSession, Priority,
-    Project, Reminder, Repeat, SubTask, Tag, Task, TaskStatus, Timestamp, WeeklyReview,
+    Project, Reminder, Repeat, SubTask, Tag, Task, TaskStatus, TaskTagLink, Timestamp,
+    WeeklyReview,
 };
 use crate::store::{Store, TaskDateFilter, TaskQuery};
 use crate::sync::{change_of, Change, ChangeLogStore, EntityKind};
@@ -149,6 +150,77 @@ impl SqliteStore {
             *entity.user_id() = self.user_id.clone();
         }
         entity
+    }
+
+    /// 任务标签关联落地的双态内核(`set_tags_for_task` / `apply_remote` 共用):
+    /// 单事务里全量替换 `task_tags`(排序去重,同集合 → 同载荷)+ upsert
+    /// `task_tag_sync` 元信息。
+    /// - `pending = true`:本地写,revision/updated 由调用方自增后传入;
+    /// - `pending = false`:应用远端权威值**原样**落库(不本地 bump),标 synced。
+    ///
+    /// 空 `tag_ids` 且该任务无同步行 → 不建行(不给没打过标签的任务造同步噪音)。
+    fn set_tags_for_task_marked(
+        &self,
+        task_id: &Id,
+        tag_ids: &[Id],
+        revision: u64,
+        updated_at: Timestamp,
+        origin: &str,
+        pending: bool,
+    ) -> CoreResult<()> {
+        let mut sorted: Vec<&Id> = tag_ids.iter().collect();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+        sorted.dedup_by(|a, b| a.0 == b.0);
+
+        let conn = self.lock()?;
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| CoreError::storage(format!("begin tx: {e}")))?;
+        tx.execute(
+            "DELETE FROM task_tags WHERE task_id = ?",
+            params![task_id.as_str()],
+        )
+        .map_err(|e| CoreError::storage(format!("clear task_tags: {e}")))?;
+        for tag_id in &sorted {
+            tx.execute(
+                "INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)",
+                params![task_id.as_str(), tag_id.as_str()],
+            )
+            .map_err(|e| CoreError::storage(format!("insert task_tag: {e}")))?;
+        }
+        let has_row: bool = tx
+            .query_row(
+                "SELECT 1 FROM task_tag_sync WHERE task_id = ?",
+                params![task_id.as_str()],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(|e| CoreError::storage(format!("probe task_tag_sync: {e}")))?
+            .is_some();
+        if !sorted.is_empty() || has_row {
+            let state = if pending { "pending" } else { "synced" };
+            tx.execute(
+                "INSERT INTO task_tag_sync
+                    (task_id, user_id, revision, updated_at_ms, sync_state, origin_device)
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(task_id) DO UPDATE SET
+                    user_id=excluded.user_id, revision=excluded.revision,
+                    updated_at_ms=excluded.updated_at_ms, sync_state=excluded.sync_state,
+                    origin_device=excluded.origin_device",
+                params![
+                    task_id.as_str(),
+                    self.user_id.as_str(),
+                    revision as i64,
+                    ts_to_ms(updated_at),
+                    state,
+                    origin
+                ],
+            )
+            .map_err(|e| CoreError::storage(format!("upsert task_tag_sync: {e}")))?;
+        }
+        tx.commit()
+            .map_err(|e| CoreError::storage(format!("commit: {e}")))?;
+        Ok(())
     }
 
     fn lock(&self) -> CoreResult<std::sync::MutexGuard<'_, Connection>> {
@@ -290,6 +362,21 @@ CREATE TABLE IF NOT EXISTS task_tags (
 
 CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags(tag_id);
 
+-- 任务↔标签关联的同步元信息:关联数据本身仍在 task_tags(单一事实源),
+-- 这里只存 per-task 的 LWW 元数据;载荷在 list_pending 时现查 task_tags 组装。
+-- (新表,SCHEMA 与迁移 003 各建一次,IF NOT EXISTS 幂等)
+CREATE TABLE IF NOT EXISTS task_tag_sync (
+  task_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL DEFAULT '',
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at_ms INTEGER NOT NULL,
+  sync_state TEXT NOT NULL DEFAULT 'pending',
+  origin_device TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_tag_sync_pending
+  ON task_tag_sync(sync_state) WHERE sync_state = 'pending';
+
 CREATE TABLE IF NOT EXISTS pomodoros (
   id TEXT PRIMARY KEY NOT NULL,
   task_id TEXT,
@@ -426,6 +513,41 @@ fn dt_from_ms(ms: i64) -> CoreResult<DateTime<Utc>> {
     Utc.timestamp_millis_opt(ms)
         .single()
         .ok_or_else(|| CoreError::storage(format!("invalid datetime ms: {ms}")))
+}
+
+/// task_tag_sync 行 → (TaskTagLink, origin)。`tag_ids` 列由查询侧从 task_tags
+/// 现查(GROUP_CONCAT;NULL = 空集即清除 tombstone),这里解析后排序去重,
+/// 与写入侧同规格,保证"同一集合 → 同一载荷",不因顺序产生伪冲突。
+fn row_to_task_tag_link(row: &Row<'_>) -> rusqlite::Result<(TaskTagLink, String)> {
+    let task_id_s: String = row.get("task_id")?;
+    let task_id = Id::parse(&task_id_s).ok_or_else(|| {
+        core_err(CoreError::storage(format!(
+            "invalid task_tag task_id: {task_id_s}"
+        )))
+    })?;
+    let user_id_s: String = row.get("user_id")?;
+    let user_id = Id::parse(&user_id_s).unwrap_or_else(Id::nil);
+    let joined: Option<String> = row.get("tag_ids")?;
+    let mut tag_ids: Vec<Id> = joined
+        .map(|s| {
+            s.split(',')
+                .filter(|p| !p.is_empty())
+                .map(|p| Id(p.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    tag_ids.sort_by(|a, b| a.0.cmp(&b.0));
+    tag_ids.dedup_by(|a, b| a.0 == b.0);
+    Ok((
+        TaskTagLink {
+            task_id,
+            tag_ids,
+            user_id,
+            revision: row.get::<_, i64>("revision")? as u64,
+            updated_at: ts_from_ms(row.get("updated_at_ms")?).map_err(core_err)?,
+        },
+        row.get("origin_device")?,
+    ))
 }
 
 // === 枚举 ↔ 字符串 ===
@@ -999,6 +1121,20 @@ impl Store for SqliteStore {
             params![now_ms(), now_ms(), self.device_id, id.as_str()],
         )
         .map_err(|e| CoreError::storage(format!("delete_task: {e}")))?;
+        // 关联标签一并清掉,并把关联同步行写成空集 tombstone(revision+1 + pending,
+        // 载荷=空集合,ADR-010 同语义);没打过标签的任务无行,UPDATE 自动 no-op
+        conn.execute(
+            "DELETE FROM task_tags WHERE task_id = ?",
+            params![id.as_str()],
+        )
+        .map_err(|e| CoreError::storage(format!("delete_task task_tags: {e}")))?;
+        conn.execute(
+            "UPDATE task_tag_sync SET revision = revision + 1, updated_at_ms = ?,
+                sync_state = 'pending', origin_device = ?
+             WHERE task_id = ?",
+            params![now_ms(), self.device_id, id.as_str()],
+        )
+        .map_err(|e| CoreError::storage(format!("delete_task task_tag_sync: {e}")))?;
         Ok(())
     }
 
@@ -1311,25 +1447,21 @@ impl Store for SqliteStore {
     }
 
     fn set_tags_for_task(&self, task_id: &Id, tag_ids: &[Id]) -> CoreResult<()> {
-        let conn = self.lock()?;
-        let tx = conn
-            .unchecked_transaction()
-            .map_err(|e| CoreError::storage(format!("begin tx: {e}")))?;
-        tx.execute(
-            "DELETE FROM task_tags WHERE task_id = ?",
-            params![task_id.as_str()],
-        )
-        .map_err(|e| CoreError::storage(format!("clear task_tags: {e}")))?;
-        for tag_id in tag_ids {
-            tx.execute(
-                "INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)",
-                params![task_id.as_str(), tag_id.as_str()],
+        // 本地写:revision 自增 + pending(0 → 1 起步),origin = 本机设备
+        let cur: u64 = {
+            let conn = self.lock()?;
+            conn.query_row(
+                "SELECT revision FROM task_tag_sync WHERE task_id = ?",
+                params![task_id.as_str()],
+                |row| row.get::<_, i64>(0),
             )
-            .map_err(|e| CoreError::storage(format!("insert task_tag: {e}")))?;
-        }
-        tx.commit()
-            .map_err(|e| CoreError::storage(format!("commit: {e}")))?;
-        Ok(())
+            .optional()
+            .map_err(|e| CoreError::storage(format!("read task_tag revision: {e}")))?
+            .map(|v| v.unsigned_abs())
+            .unwrap_or(0)
+        };
+        let device = self.device_id.clone();
+        self.set_tags_for_task_marked(task_id, tag_ids, cur + 1, Timestamp::now(), &device, true)
     }
 
     fn list_pomodoros(&self) -> CoreResult<Vec<PomodoroSession>> {
@@ -2169,6 +2301,30 @@ impl ChangeLogStore for SqliteStore {
         scan!("daily_reviews", row_to_daily_review);
         scan!("weekly_reviews", row_to_weekly_review);
         scan!("monthly_reviews", row_to_monthly_review);
+
+        // task_tag:关联载荷从 task_tags 现查组装(空集合 = 清除 tombstone,ADR-010)
+        if out.len() < limit {
+            let sql = format!(
+                "SELECT s.task_id, s.revision, s.updated_at_ms, s.origin_device, s.user_id,
+                        (SELECT GROUP_CONCAT(tag_id) FROM task_tags WHERE task_id = s.task_id)
+                            AS tag_ids
+                 FROM task_tag_sync s
+                 WHERE s.sync_state = 'pending'
+                 ORDER BY s.updated_at_ms ASC LIMIT {}",
+                limit - out.len()
+            );
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| CoreError::storage(format!("prepare pending task_tag_sync: {e}")))?;
+            let rows = stmt
+                .query_map([], row_to_task_tag_link)
+                .map_err(|e| CoreError::storage(format!("query pending task_tag_sync: {e}")))?;
+            for r in rows {
+                let (link, origin) =
+                    r.map_err(|e| CoreError::storage(format!("row pending task_tag_sync: {e}")))?;
+                out.push(change_of(&link, origin, &self.device_id)?);
+            }
+        }
         Ok(out)
     }
 
@@ -2193,6 +2349,23 @@ impl ChangeLogStore for SqliteStore {
             EntityKind::DailyReview => apply!(DailyReview, upsert_daily_review_marked),
             EntityKind::WeeklyReview => apply!(WeeklyReview, upsert_weekly_review_marked),
             EntityKind::MonthlyReview => apply!(MonthlyReview, upsert_monthly_review_marked),
+            // 关联实体走专用内核(键是 task_id,载荷是 tag 集合,非整实体 upsert)
+            EntityKind::TaskTag => {
+                let mut link: TaskTagLink = serde_json::from_value(change.payload.clone())
+                    .map_err(|e| CoreError::Validation(format!("apply_remote payload: {e}")))?;
+                if link.user_id.is_nil() {
+                    link.user_id = self.user_id.clone();
+                }
+                let origin = change.device_id.clone();
+                self.set_tags_for_task_marked(
+                    &link.task_id,
+                    &link.tag_ids,
+                    link.revision,
+                    link.updated_at,
+                    &origin,
+                    false,
+                )?;
+            }
         }
         Ok(())
     }
@@ -2230,6 +2403,7 @@ impl ChangeLogStore for SqliteStore {
                 EntityKind::DailyReview => mark!("daily_reviews", "date", ids),
                 EntityKind::WeeklyReview => mark!("weekly_reviews", "week_start", ids),
                 EntityKind::MonthlyReview => mark!("monthly_reviews", "year_month", ids),
+                EntityKind::TaskTag => mark!("task_tag_sync", "task_id", ids),
             }
         }
         Ok(())
@@ -2269,6 +2443,22 @@ impl ChangeLogStore for SqliteStore {
             }
             EntityKind::MonthlyReview => {
                 probe!("monthly_reviews", "year_month", row_to_monthly_review)
+            }
+            EntityKind::TaskTag => {
+                let hit = conn
+                    .query_row(
+                        "SELECT s.task_id, s.revision, s.updated_at_ms, s.origin_device,
+                                s.user_id,
+                                (SELECT GROUP_CONCAT(tag_id) FROM task_tags
+                                 WHERE task_id = s.task_id) AS tag_ids
+                         FROM task_tag_sync s WHERE s.task_id = ?",
+                        params![id],
+                        row_to_task_tag_link,
+                    )
+                    .optional()
+                    .map_err(|e| CoreError::storage(format!("candidate task_tag_sync: {e}")))?;
+                hit.map(|(link, origin)| change_of(&link, origin, &self.device_id))
+                    .transpose()
             }
         }
     }
@@ -2343,4 +2533,98 @@ mod tests {
             0
         );
     }
+}
+
+#[test]
+fn task_tag_sync_roundtrip() {
+    use crate::sync::ChangeLogStore;
+    let a = SqliteStore::open_in_memory().unwrap();
+    let task = Task::new("带标签");
+    let tag1 = Tag::new("红");
+    let tag2 = Tag::new("蓝");
+    let (t1, t2) = (tag1.id.clone(), tag2.id.clone());
+    a.upsert_task(task.clone()).unwrap();
+    a.upsert_tag(tag1).unwrap();
+    a.upsert_tag(tag2).unwrap();
+    // 乱序 + 重复传入 → 载荷应排序去重(同集合 → 同载荷)
+    a.set_tags_for_task(&task.id, &[t2.clone(), t1.clone(), t2.clone()])
+        .unwrap();
+
+    let change = a
+        .list_pending(100)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.entity == EntityKind::TaskTag)
+        .expect("打标签后应有 task_tag pending 变更");
+    assert_eq!(change.entity_id, task.id.as_str());
+    let payload: crate::model::TaskTagLink =
+        serde_json::from_value(change.payload.clone()).unwrap();
+    let mut expect = vec![t1.clone(), t2.clone()];
+    expect.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(payload.tag_ids, expect, "载荷应排序去重(与 id 顺序无关)");
+    assert_eq!(payload.revision, 1);
+
+    // 应用到第二台设备:关联落地,且不回推(pull 落库即 synced)
+    let b = SqliteStore::open_in_memory().unwrap();
+    b.upsert_task(task.clone()).unwrap();
+    b.upsert_tag(Tag {
+        id: t1.clone(),
+        ..Tag::new("红")
+    })
+    .unwrap();
+    b.upsert_tag(Tag {
+        id: t2.clone(),
+        ..Tag::new("蓝")
+    })
+    .unwrap();
+    b.apply_remote(&change).unwrap();
+    let tags_b = b
+        .list_tags_for_tasks(std::slice::from_ref(&task.id))
+        .unwrap();
+    assert_eq!(tags_b[&task.id].len(), 2);
+    assert!(b
+        .list_pending(100)
+        .unwrap()
+        .iter()
+        .all(|c| c.entity != EntityKind::TaskTag));
+
+    // 清空标签 → 空集 tombstone;B 应用后关联消失
+    a.set_tags_for_task(&task.id, &[]).unwrap();
+    let tomb = a
+        .list_pending(100)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.entity == EntityKind::TaskTag)
+        .unwrap();
+    let tp: crate::model::TaskTagLink = serde_json::from_value(tomb.payload.clone()).unwrap();
+    assert!(tp.tag_ids.is_empty());
+    assert_eq!(tp.revision, 2);
+    b.apply_remote(&tomb).unwrap();
+    let tags_b2 = b
+        .list_tags_for_tasks(std::slice::from_ref(&task.id))
+        .unwrap();
+    assert!(!tags_b2.contains_key(&task.id));
+}
+
+#[test]
+fn delete_task_emits_empty_task_tag_tombstone() {
+    let a = SqliteStore::open_in_memory().unwrap();
+    let task = Task::new("待删");
+    let tag = Tag::new("标签");
+    let tag_id = tag.id.clone();
+    a.upsert_task(task.clone()).unwrap();
+    a.upsert_tag(tag).unwrap();
+    a.set_tags_for_task(&task.id, &[tag_id]).unwrap();
+    a.delete_task(&task.id).unwrap();
+
+    let change = a
+        .list_pending(100)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.entity == EntityKind::TaskTag)
+        .expect("删任务应带出关联 tombstone");
+    let payload: crate::model::TaskTagLink =
+        serde_json::from_value(change.payload.clone()).unwrap();
+    assert!(payload.tag_ids.is_empty(), "任务删除后关联载荷应为空集");
+    assert_eq!(payload.revision, 2, "tombstone 应在原 revision 上 +1");
 }

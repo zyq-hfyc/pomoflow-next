@@ -30,7 +30,7 @@ pub use pomodoro::PomodoroSession;
 pub use project::Project;
 pub use review::{DailyReview, MonthlyReview, WeeklyReview};
 pub use subtask::SubTask;
-pub use tag::Tag;
+pub use tag::{Tag, TaskTagLink};
 pub use task::{Priority, Reminder, Repeat, Task, TaskStatus};
 
 use chrono::{DateTime, Utc};
