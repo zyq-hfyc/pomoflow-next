@@ -361,6 +361,17 @@ docker compose up -d --build
 | `healthz` 返回 `"ok":false` | 服务连不上数据库 | `docker compose logs sync-server` 看具体报错;`docker compose ps` 看 postgres 是否 healthy |
 | 端口被占用(`port is already allocated`) | 8080 被别的进程占 | 改 compose 里 `ports: ["8080:8080"]` 冒号左边的宿主端口(如 8081),桌面端地址同步改 |
 
+### 升级顺序(⚠️ 新增实体类型后必读)
+
+`EntityKind` 新增变体(如 `task_tag`)后,**先升级服务端、再升级桌面端**:
+
+1. Windows 本地 `build-local.sh` 重编服务端二进制 → `pack-deploy.sh` → VM 上
+   `docker compose up -d --build`(秒级);
+2. 之后再更新桌面客户端。
+
+原因:旧服务端二进制反序列化 PushRequest 时遇到不认识的实体名会拒绝整个请求
+(桌面端同步直接报错),直到服务端升级为止。反向(新服务端 + 旧客户端)无害。
+
 ### 迁移到腾讯云(测试完成后)
 
 代码不变,只换环境与安全等级:
