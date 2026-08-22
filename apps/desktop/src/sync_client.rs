@@ -794,15 +794,22 @@ fn api_error_text(status: reqwest::StatusCode, text: &str) -> String {
     format!("服务器返回 {status}: {text}")
 }
 
-/// POST 账号端点(无认证)。
-async fn post_account<T, R>(store: &SqliteStore, path: &str, body: &T) -> Result<R, String>
+/// POST 账号端点(bearer 可选:注册类请求带运维静态 Token 触发首账号采纳)。
+async fn post_account<T, R>(
+    store: &SqliteStore,
+    path: &str,
+    body: &T,
+    bearer: Option<&str>,
+) -> Result<R, String>
 where
     T: serde::Serialize,
     R: serde::de::DeserializeOwned,
 {
-    let resp = short_client()?
-        .post(account_url(store, path)?)
-        .json(body)
+    let mut req = short_client()?.post(account_url(store, path)?).json(body);
+    if let Some(b) = bearer {
+        req = req.bearer_auth(b);
+    }
+    let resp = req
         .send()
         .await
         .map_err(|e| format!("网络错误: {e}"))?;
@@ -845,7 +852,7 @@ pub async fn auth_send_email_code(
 ) -> Result<(), String> {
     let store = state.store.clone();
     let body = serde_json::json!({ "email": email.trim(), "purpose": purpose });
-    post_account::<_, SendCodeResp>(&store, "/v1/auth/email/send-code", &body).await?;
+    post_account::<_, SendCodeResp>(&store, "/v1/auth/email/send-code", &body, None).await?;
     Ok(())
 }
 
@@ -862,8 +869,12 @@ pub async fn auth_register_email(
         "email": email.trim(), "code": code.trim(), "password": password,
         "device_id": device_id, "device_name": device_name,
     });
+    // ★ 注册请求携带运维静态 Token:服务端据此在 users 为空时把新账号 id
+    // 设为 SYNC_USER_ID(首账号采纳,存量数据免迁移)。漏带会开出全新 UUID
+    // 账号,被本机归属守卫拒绝(2026-08-22 实测踩坑)。
+    let op_token = meta_nonempty(&store, META_TOKEN)?;
     let tokens: AuthTokensResp =
-        post_account(&store, "/v1/auth/register-email", &body).await?;
+        post_account(&store, "/v1/auth/register-email", &body, op_token.as_deref()).await?;
     save_tokens(&store, tokens)
 }
 
@@ -879,7 +890,7 @@ pub async fn auth_login_email(
         "email": email.trim(), "password": password,
         "device_id": device_id, "device_name": device_name,
     });
-    let tokens: AuthTokensResp = post_account(&store, "/v1/auth/login-email", &body).await?;
+    let tokens: AuthTokensResp = post_account(&store, "/v1/auth/login-email", &body, None).await?;
     save_tokens(&store, tokens)
 }
 
@@ -894,7 +905,7 @@ pub async fn auth_reset_password(
     let body = serde_json::json!({
         "email": email.trim(), "code": code.trim(), "new_password": new_password,
     });
-    post_account::<_, serde_json::Value>(&store, "/v1/auth/reset-password", &body).await?;
+    post_account::<_, serde_json::Value>(&store, "/v1/auth/reset-password", &body, None).await?;
     Ok(())
 }
 
