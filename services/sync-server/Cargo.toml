@@ -36,6 +36,15 @@ argon2 = "0.5"
 jsonwebtoken = "9"
 sha2 = "0.10"
 rand = "0.8"
+# P1d:邮箱验证码 HMAC 摘要(pepper 防 6 位码离线穷举)
+hmac = "0.12"
+# P1d:SMTP 发信(rustls 免原生 OpenSSL;builder 组装纯文本邮件)
+lettre = { version = "0.11", default-features = false, features = [
+  "builder",
+  "smtp-transport",
+  "tokio1",
+  "tokio1-rustls-tls",
+] }
 
 # 日志
 log = { workspace = true }

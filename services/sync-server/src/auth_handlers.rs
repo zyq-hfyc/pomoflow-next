@@ -94,7 +94,7 @@ pub struct AuthTokens {
     pub expires_in: i64,
 }
 
-fn require_jwt(app: &AppState) -> Result<&str, ApiError> {
+pub(crate) fn require_jwt(app: &AppState) -> Result<&str, ApiError> {
     app.jwt_secret
         .as_deref()
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "JWT_SECRET 未配置,账号体系未启用".into()))
@@ -102,7 +102,7 @@ fn require_jwt(app: &AppState) -> Result<&str, ApiError> {
 
 /// 签发一对新 token 并把 refresh 落库。
 #[allow(clippy::too_many_arguments)]
-async fn issue_tokens(
+pub(crate) async fn issue_tokens(
     app: &AppState,
     user_id: &str,
     username: &str,

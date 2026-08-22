@@ -19,6 +19,17 @@
 | POST | `/v1/auth/sessions` | 会话列表(refresh 认证;`current` 标记调用方) |
 | POST | `/v1/auth/sessions/revoke` | 踢出指定会话(不能踢当前) |
 | POST | `/v1/auth/sessions/revoke-others` | 退出其他所有设备(保留当前) |
+| POST | `/v1/auth/email/send-code` | 发邮箱验证码(P1d;purpose=register/reset/bind;频控) |
+| POST | `/v1/auth/register-email` | 邮箱注册(验证码+密码;首账号采纳同规则) |
+| POST | `/v1/auth/login-email` | 邮箱+密码登录 |
+| POST | `/v1/auth/reset-password` | 找回密码:验码 → 改哈希 → 全端踢出(含本机) |
+| POST | `/v1/auth/email/bind` | 绑定/换绑邮箱(JWT;验当前密码+新邮箱验证码) |
+| GET / POST | `/v1/auth/profile` | 资料:用户名/显示名/邮箱/验证状态;POST 改显示名 |
+| POST | `/v1/auth/username` | 改用户名(验密码;其他设备下线,本机换新令牌) |
+
+P1d 新端点错误为结构化 JSON:`{"error":{"code":"RATE_LIMITED","message":"…","retry_after_secs":58}}`
+(机器码:INVALID_EMAIL / INVALID_PASSWORD / USERNAME_TAKEN / EMAIL_TAKEN /
+CODE_INVALID / CODE_EXHAUSTED / RATE_LIMITED / UNAUTHORIZED);旧端点维持纯文本。
 | GET | `/healthz` | 存活探针(含 DB 连通) |
 
 认证:HTTP `Authorization: Bearer <token>`,两种 token 都认(ADR-007):
@@ -417,6 +428,44 @@ curl -s -o /dev/null -w "%{http_code}\n" \
 - 「修改密码」:验旧密码后**全部设备强制重新登录**(本机自动换取新令牌不掉线);
 - 「设备管理」:列出所有登录中的设备(名称 = 平台·设备短码 + 登录时间),
   可单独踢出,或一键「退出其他设备」。
+
+### 邮箱渠道启用(P1d,可选;按步骤逐条执行)
+
+**A. 决定邮件通道** —— 两种模式:
+
+| 模式 | 适用 | 配置 |
+|------|------|------|
+| **日志模式(默认)** | VMware 本地联调 | 什么都不配;验证码打印在服务端日志,`docker compose logs -f sync-server` 里找 `[mail:log-mode]` |
+| SMTP 真发信 | 给自己手机/其他邮箱真收码 | `.env` 加 SMTP_* 五项(见 .env.example;QQ 邮箱开 POP3/SMTP 拿授权码,约 2 分钟) |
+
+```bash
+# ①(可选)生成验证码 pepper,追加进 .env:CODE_PEPPER=<输出>
+#    不配也能跑(回落用 JWT_SECRET,启动日志会告警)
+openssl rand -hex 32
+
+# ② 编辑 .env,按需取消注释 SMTP_* 段并填入授权码
+nano /opt/pomoflow-next/services/sync-server/.env
+
+# ③ 重启生效;启动日志确认 mail=smtp 或 mail=log
+cd /opt/pomoflow-next/services/sync-server && docker compose up -d
+docker compose logs sync-server | grep mail=
+```
+
+```bash
+# ④ 验证发码(日志模式下码在服务端日志里;预期返回 202 {"ok":true,...})
+curl -s -H "Content-Type: application/json" \
+     -d '{"email":"test@example.com","purpose":"register"}' \
+     http://127.0.0.1:8080/v1/auth/email/send-code
+
+# ⑤ 验证频控:1 分钟内重复上面命令,第二次预期 429 + retry_after_secs
+```
+
+**B. 桌面端使用** —— 设置 → 账号:邮箱注册(发码→输码→设密码)/ 邮箱+密码登录 /
+忘记密码(邮箱收码重置,重置后**所有设备强制下线**)/ 已登录后绑定或换绑邮箱。
+
+**安全语义(设计如此,勿当 bug)**:验证码 6 位数字、10 分钟有效、单次使用、
+错 5 次作废;发送频控 每邮箱 60 秒/5 次每小时/10 次每天 + 每 IP 10 次每小时;
+库里只存 HMAC 摘要;`reset` 对不存在的邮箱也返回 202(防枚举)。
 
 > ⚠️ 陷阱:第二台设备如果**没先在服务器保存过静态令牌**就点注册,会注册出
 > 一个**全新 UUID 的第二账号**,与本机数据归属不一致 → 登录会被拒。记住:
