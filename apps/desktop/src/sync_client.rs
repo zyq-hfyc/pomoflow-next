@@ -35,6 +35,10 @@ const META_TOKEN: &str = "sync_token";
 const META_CURSOR: &str = "last_sync_seq";
 const META_AUTO: &str = "auto_sync_enabled"; // "1" 开 / 其他 关
 const META_INTERVAL: &str = "sync_interval_min";
+// 账号模式(P1b):登录后 access/refresh 存 meta,优先于静态 Token
+const META_ACCESS: &str = "auth_access_token";
+const META_REFRESH: &str = "auth_refresh_token";
+const META_AUTH_USER: &str = "auth_username";
 
 /// 自动同步间隔(分钟)边界:下限防高频打爆服务器,上限防形同虚设。
 const INTERVAL_MIN: u32 = 1;
@@ -65,6 +69,15 @@ pub struct SyncConfig {
     pub auto_sync: bool,
     /// 自动同步间隔(分钟,1..=1440)
     pub interval_min: u32,
+    /// 账号登录状态(None = 未登录,走静态 Token)
+    pub auth: Option<AuthAccount>,
+}
+
+/// 已登录账号(展示用;token 本体不回传前端)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthAccount {
+    pub username: String,
+    pub user_id: String,
 }
 
 #[tauri::command]
@@ -85,6 +98,12 @@ pub fn get_sync_config(state: State<'_, AppState>) -> Result<SyncConfig, String>
             .and_then(|v| v.parse().ok())
             .map(clamp_interval)
             .unwrap_or(INTERVAL_DEFAULT),
+        auth: state.store.get_meta(META_AUTH_USER).map_err(es)?.map(|u| {
+            AuthAccount {
+                username: u,
+                user_id: state.store.local_user_id().to_string(),
+            }
+        }),
     })
 }
 
@@ -268,7 +287,12 @@ pub fn spawn_auto_sync(
 
 async fn run_sync(store: &SqliteStore) -> Result<SyncReport, String> {
     let url = meta_nonempty(store, META_URL)?.ok_or("未配置同步服务器(设置 → 数据同步)")?;
-    let token = meta_nonempty(store, META_TOKEN)?.ok_or("未配置访问令牌")?;
+    // 账号 access token 优先(post_with_auto_refresh 内处理 401 自动刷新);
+    // 未登录回落静态 token(此时缺失即报错,与 P1a 行为一致)
+    if meta_nonempty(store, META_ACCESS)?.is_none() {
+        meta_nonempty(store, META_TOKEN)?.ok_or("未配置访问令牌")?;
+    }
+    let static_token = meta_nonempty(store, META_TOKEN)?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
@@ -284,7 +308,8 @@ async fn run_sync(store: &SqliteStore) -> Result<SyncReport, String> {
             break;
         }
         let resp: PushResponse =
-            post_json(&client, &format!("{url}/v1/sync/push"), &token, &req).await?;
+            post_with_auto_refresh(&client, &format!("{url}/v1/sync/push"), store, &static_token, &req)
+                .await?;
         for outcome in &resp.results {
             match outcome {
                 ApplyOutcome::Accepted { .. } => report.pushed += 1,
@@ -308,7 +333,8 @@ async fn run_sync(store: &SqliteStore) -> Result<SyncReport, String> {
             since: cursor,
         };
         let resp: PullResponse =
-            post_json(&client, &format!("{url}/v1/sync/pull"), &token, &req).await?;
+            post_with_auto_refresh(&client, &format!("{url}/v1/sync/pull"), store, &static_token, &req)
+                .await?;
         let n = resp.changes.len();
         apply_pull_response(store, &resp.changes).map_err(es)?;
         cursor = resp.next_cursor;
@@ -322,34 +348,6 @@ async fn run_sync(store: &SqliteStore) -> Result<SyncReport, String> {
     }
 
     Ok(report)
-}
-
-async fn post_json<T, R>(
-    client: &reqwest::Client,
-    url: &str,
-    token: &str,
-    body: &T,
-) -> Result<R, String>
-where
-    T: serde::Serialize,
-    R: serde::de::DeserializeOwned,
-{
-    let resp = client
-        .post(url)
-        .bearer_auth(token)
-        .json(body)
-        .send()
-        .await
-        .map_err(|e| format!("网络错误: {e}"))?;
-    let status = resp.status();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("读取响应失败: {e}"))?;
-    if !status.is_success() {
-        return Err(format!("服务器返回 {status}: {text}"));
-    }
-    serde_json::from_str(&text).map_err(|e| format!("响应解析失败: {e}"))
 }
 
 #[cfg(test)]
@@ -385,4 +383,223 @@ mod tests {
         assert_eq!(clamp_interval(60), 60);
         assert_eq!(clamp_interval(u32::MAX), 1440);
     }
+}
+
+// === 账号模式(P1b):登录/注册/退出 + access 过期自动刷新 ====================
+
+/// 服务端 AuthTokens 响应镜像(serde snake_case)。
+#[derive(Debug, Deserialize)]
+struct AuthTokensResp {
+    #[allow(dead_code)] // user_id 在 auth_request 里有用,留给结构完整
+    user_id: String,
+    username: String,
+    access_token: String,
+    refresh_token: String,
+}
+
+/// 已登录账号(返回给前端展示;不带 token)。
+#[derive(Debug, Clone, Serialize)]
+pub struct AuthStatus {
+    pub username: String,
+    pub user_id: String,
+}
+
+/// 带错误状态码的请求错误(401 判定用)。
+struct ReqErr {
+    status: Option<u16>,
+    msg: String,
+}
+
+/// 登录/注册共用:调服务端账号端点,成功后把 token 对存 meta 并返回账号信息。
+///
+/// 归属守卫:账号 user_id 必须与本机数据的 user_id 一致(服务端首账号采纳
+/// 机制保证这一点);不一致说明登的是别的账号 —— 本机数据不属它,直接拒绝,
+/// 避免把 A 用户的数据推到 B 账号名下。
+async fn auth_request(
+    store: &SqliteStore,
+    path: &str,
+    username: &str,
+    password: &str,
+    operator_token: Option<&str>,
+) -> Result<AuthStatus, String> {
+    let url = meta_nonempty(store, META_URL)?.ok_or("请先填写并保存服务器地址")?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut req = client
+        .post(format!("{url}{path}"))
+        .json(&serde_json::json!({ "username": username, "password": password }));
+    if let Some(op) = operator_token {
+        // 注册首账号:静态 Token 作为运维凭证随请求 → 服务端采纳 SYNC_USER_ID
+        req = req.bearer_auth(op);
+    }
+    let resp = req.send().await.map_err(|e| format!("网络错误: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("服务器返回 {status}: {text}"));
+    }
+    let tokens: AuthTokensResp =
+        serde_json::from_str(&text).map_err(|e| format!("响应解析失败: {e}"))?;
+    if tokens.user_id != store.local_user_id().to_string() {
+        return Err(format!(
+            "该账号({})与本机数据归属不一致,不能在此设备登录(多账号需各自独立数据目录)",
+            tokens.user_id
+        ));
+    }
+    store.set_meta(META_ACCESS, &tokens.access_token).map_err(es)?;
+    store
+        .set_meta(META_REFRESH, &tokens.refresh_token)
+        .map_err(es)?;
+    store.set_meta(META_AUTH_USER, &tokens.username).map_err(es)?;
+    Ok(AuthStatus {
+        username: tokens.username,
+        user_id: tokens.user_id,
+    })
+}
+
+/// 清空本地登录态(token 对 + 用户名)。
+fn clear_auth(store: &SqliteStore) -> Result<(), String> {
+    store.set_meta(META_ACCESS, "").map_err(es)?;
+    store.set_meta(META_REFRESH, "").map_err(es)?;
+    store.set_meta(META_AUTH_USER, "").map_err(es)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn auth_register(
+    username: String,
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<AuthStatus, String> {
+    let store = state.store.clone();
+    let op = meta_nonempty(&store, META_TOKEN)?;
+    auth_request(&store, "/v1/auth/register", &username, &password, op.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn auth_login(
+    username: String,
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<AuthStatus, String> {
+    let store = state.store.clone();
+    auth_request(&store, "/v1/auth/login", &username, &password, None).await
+}
+
+#[tauri::command]
+pub async fn auth_logout(state: State<'_, AppState>) -> Result<(), String> {
+    let store = state.store.clone();
+    // 尽力通知服务端吊销 refresh;网络失败不阻塞本地登出(本地清了才算退出)
+    if let (Some(url), Some(refresh)) = (
+        meta_nonempty(&store, META_URL)?,
+        meta_nonempty(&store, META_REFRESH)?,
+    ) {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let _ = client
+            .post(format!("{url}/v1/auth/logout"))
+            .json(&serde_json::json!({ "refresh_token": refresh }))
+            .send()
+            .await;
+    }
+    clear_auth(&store)
+}
+
+/// access token 过期后的刷新(refresh 轮换):成功返回新 access 并落 meta;
+/// 失败清空本地登录态(强制重新登录)。
+async fn refresh_access(client: &reqwest::Client, store: &SqliteStore) -> Result<String, String> {
+    let url = meta_nonempty(store, META_URL)?.ok_or("未配置同步服务器")?;
+    let refresh =
+        meta_nonempty(store, META_REFRESH)?.ok_or("登录已过期,请重新登录".to_string())?;
+    let resp = client
+        .post(format!("{url}/v1/auth/refresh"))
+        .json(&serde_json::json!({ "refresh_token": refresh }))
+        .send()
+        .await
+        .map_err(|e| format!("刷新登录态失败: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        clear_auth(store)?;
+        return Err("登录已过期,请重新登录(设置 → 数据同步)".to_string());
+    }
+    let tokens: AuthTokensResp = serde_json::from_str(&text)
+        .map_err(|e| format!("刷新响应解析失败: {e}"))?;
+    store.set_meta(META_ACCESS, &tokens.access_token).map_err(es)?;
+    store.set_meta(META_REFRESH, &tokens.refresh_token).map_err(es)?;
+    Ok(tokens.access_token)
+}
+
+/// 发 sync 请求:账号 access token 优先,未登录回落静态 token;
+/// 401 且在账号模式 → 自动 refresh 一次并重试(refresh 失败则要求重新登录)。
+async fn post_with_auto_refresh<T, R>(
+    client: &reqwest::Client,
+    url: &str,
+    store: &SqliteStore,
+    static_token: &Option<String>,
+    body: &T,
+) -> Result<R, String>
+where
+    T: serde::Serialize,
+    R: serde::de::DeserializeOwned,
+{
+    let access = meta_nonempty(store, META_ACCESS)?;
+    let token = access
+        .clone()
+        .or_else(|| static_token.clone())
+        .ok_or("未配置访问令牌(登录账号,或填写静态 Token)")?;
+    match post_json::<T, R>(client, url, &token, body).await {
+        Ok(v) => Ok(v),
+        Err(e) if e.status == Some(401) && access.is_some() => {
+            let new_access = refresh_access(client, store).await?;
+            post_json::<T, R>(client, url, &new_access, body)
+                .await
+                .map_err(|e| e.msg)
+        }
+        Err(e) => Err(e.msg),
+    }
+}
+
+async fn post_json<T, R>(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+    body: &T,
+) -> Result<R, ReqErr>
+where
+    T: serde::Serialize,
+    R: serde::de::DeserializeOwned,
+{
+    let resp = client
+        .post(url)
+        .bearer_auth(token)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| ReqErr {
+            status: None,
+            msg: format!("网络错误: {e}"),
+        })?;
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| ReqErr {
+            status: None,
+            msg: format!("读取响应失败: {e}"),
+        })?;
+    if !status.is_success() {
+        return Err(ReqErr {
+            status: Some(status.as_u16()),
+            msg: format!("服务器返回 {status}: {text}"),
+        });
+    }
+    serde_json::from_str(&text).map_err(|e| ReqErr {
+        status: None,
+        msg: format!("响应解析失败: {e}"),
+    })
 }

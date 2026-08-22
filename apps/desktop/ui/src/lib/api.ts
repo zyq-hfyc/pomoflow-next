@@ -426,6 +426,8 @@ export interface SyncConfig {
   auto_sync: boolean;
   /** 自动同步间隔(分钟,1..=1440) */
   interval_min: number;
+  /** 账号登录状态(null = 未登录,走静态 Token) */
+  auth: { username: string; user_id: string } | null;
 }
 
 export interface SyncIdentity {
@@ -469,6 +471,22 @@ export const getSyncIdentity = () => invoke<SyncIdentity>("get_sync_identity");
 
 /** 手动全量同步:push 推到清空 + pull 拉到空批;返回统计。 */
 export const syncNow = () => invoke<SyncReport>("sync_now");
+
+// === 账号体系(P1b;服务端配置 JWT_SECRET 后可用,优先于静态 Token) ===
+
+export interface AuthStatus {
+  username: string;
+  user_id: string;
+}
+
+/** 注册首个账号会自动采纳本机存量数据(服务端首账号采纳机制)。 */
+export const authRegister = (username: string, password: string) =>
+  invoke<AuthStatus>("auth_register", { username, password });
+
+export const authLogin = (username: string, password: string) =>
+  invoke<AuthStatus>("auth_login", { username, password });
+
+export const authLogout = () => invoke<void>("auth_logout");
 
 /** 监听后台自动同步结果(设置页展示"最近自动同步");返回取消监听函数。 */
 export const onAutoSync = (cb: (e: AutoSyncEvent) => void) =>

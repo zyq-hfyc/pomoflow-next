@@ -114,6 +114,9 @@ pub fn run() {
             sync_client::set_sync_config,
             sync_client::get_sync_identity,
             sync_client::sync_now,
+            sync_client::auth_register,
+            sync_client::auth_login,
+            sync_client::auth_logout,
             export::export_tasks_xlsx,
         ])
         .setup(move |app| {

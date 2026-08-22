@@ -16,6 +16,9 @@
     getSyncIdentity,
     syncNow,
     onAutoSync,
+    authRegister,
+    authLogin,
+    authLogout,
     type AutoSyncEvent,
   } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
@@ -27,6 +30,11 @@
   let autoSync = $state(false);
   let intervalMin = $state(5);
   let identity = $state<{ user_id: string; device_id: string } | null>(null);
+  let authUser = $state<string | null>(null);
+
+  let username = $state("");
+  let password = $state("");
+  let authBusy = $state<"login" | "register" | "logout" | null>(null);
 
   let savedFlash = $state(false);
   let syncing = $state(false);
@@ -50,9 +58,46 @@
       token = cfg.token ?? "";
       autoSync = cfg.auto_sync;
       intervalMin = cfg.interval_min;
+      authUser = cfg.auth?.username ?? null;
       identity = id;
     } catch (e) {
       error = String(e);
+    }
+  }
+
+  async function onAuth(kind: "login" | "register") {
+    if (authBusy) return;
+    if (!username.trim() || !password) {
+      error = t.settings.sync.accountMissing;
+      return;
+    }
+    authBusy = kind;
+    error = null;
+    try {
+      const st =
+        kind === "register"
+          ? await authRegister(username.trim(), password)
+          : await authLogin(username.trim(), password);
+      authUser = st.username;
+      password = "";
+    } catch (e) {
+      error = String(e);
+    } finally {
+      authBusy = null;
+    }
+  }
+
+  async function onLogout() {
+    if (authBusy) return;
+    authBusy = "logout";
+    error = null;
+    try {
+      await authLogout();
+      authUser = null;
+    } catch (e) {
+      error = String(e);
+    } finally {
+      authBusy = null;
     }
   }
 
@@ -116,6 +161,74 @@
 
 <div>
   <h2 class="tab-title">{t.settings.sync.title}</h2>
+
+  <!-- 账号登录(P1b;优先于静态 Token) -->
+  <section class="group">
+    <h3 class="group-title">{t.settings.sync.accountSection}</h3>
+    <div class="group-body">
+      {#if authUser}
+        <div class="form-row">
+          <span class="row-label">{t.settings.sync.loggedIn}</span>
+          <div class="id-cell">
+            <code class="id-text">{authUser}</code>
+            <button
+              type="button"
+              class="copy"
+              disabled={authBusy !== null}
+              onclick={() => void onLogout()}
+            >
+              {authBusy === "logout" ? t.settings.sync.loggingOut : t.settings.sync.logout}
+            </button>
+          </div>
+        </div>
+      {:else}
+        <div class="form-row">
+          <span class="row-label">{t.settings.sync.accountUser}</span>
+          <input
+            class="input"
+            type="text"
+            bind:value={username}
+            placeholder={t.settings.sync.accountUserPh}
+            spellcheck="false"
+            autocomplete="username"
+          />
+        </div>
+        <div class="form-row">
+          <span class="row-label">{t.settings.sync.accountPass}</span>
+          <input
+            class="input"
+            type="password"
+            bind:value={password}
+            placeholder={t.settings.sync.accountPassPh}
+            spellcheck="false"
+            autocomplete="current-password"
+          />
+        </div>
+        <div class="form-row">
+          <span class="row-label"></span>
+          <div class="actions">
+            <button
+              type="button"
+              class="action"
+              disabled={authBusy !== null}
+              onclick={() => void onAuth("login")}
+            >
+              {authBusy === "login" ? t.settings.sync.working : t.settings.sync.login}
+            </button>
+            <button
+              type="button"
+              class="action"
+              disabled={authBusy !== null}
+              onclick={() => void onAuth("register")}
+            >
+              {authBusy === "register" ? t.settings.sync.working : t.settings.sync.register}
+            </button>
+          </div>
+        </div>
+      {/if}
+      <p class="hint">{t.settings.sync.accountHint}</p>
+    </div>
+  </section>
 
   <!-- 服务器连接 -->
   <section class="group">
