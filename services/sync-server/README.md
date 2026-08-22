@@ -43,7 +43,27 @@ Analytics 按字段统计时,再从快照展开实体表**(数据已在 JSONB �
 >                                      └──────────────────────────────┘
 > ```
 >
-> 全程约 15-30 分钟(首次 docker 构建要下载 Rust 依赖,最耗时)。
+> 全程约 10-15 分钟(预编译路径:时间主要花在上传部署包和拉 postgres 镜像)。
+
+### 服务器环境要求(部署前先核对,避免装到一半把小盘 VM 搞挂)
+
+| 项目 | 最低要求 | 推荐 | 依据 / 说明 |
+|------|----------|------|-------------|
+| CPU | 1 vCPU | 2 vCPU | sync-server 运行时是单进程异步 IO,很轻 |
+| 内存 | 1 GB(纯命令行服务器) | 2-4 GB | ⚠️ Ubuntu **桌面版**的 GNOME 图形环境自身就吃 1-2G;VM 只给 2G 又装桌面版会很卡 |
+| 磁盘(系统盘**可用**空间) | **10 GB**(走预编译路径) | 20 GB+ | ⚠️ 若走"服务器端构建"路径需 **≥30 GB 可用**:Rust 构建缓存+镜像层实测占 10-20G。**2026-08-22 事故:40G 整盘被构建缓存塞满,GDM 无法启动,只能停机扩盘修复** |
+| 软件 | Docker Engine ≥ 20.10(含 compose 插件) | 同左 | 安装方法见步骤 1 |
+| 网络 | 能拉取 `postgres:16-alpine`、`debian:bookworm-slim` | 同左 | 国内需先配镜像加速器(步骤 1.5);预编译路径**不需要**拉 Rust 镜像 |
+
+### 部署方式二选一(默认且推荐 A)
+
+| 方式 | 服务器上要做的 | 服务器磁盘需求 | 首次启动耗时 | 适用场景 |
+|------|----------------|----------------|--------------|----------|
+| **A. 本地编译,上传即部署(默认)** | `COPY` 一个静态二进制,秒级 | 可用 ≥10 GB | <1 分钟 | 日常迭代、小盘 VM、后续腾讯云 |
+| B. 服务器端源码构建(兜底) | 下载 Rust 工具链并编译全部依赖 | 可用 ≥30 GB | 5-15 分钟,且留下 10-20G 缓存 | 本地实在无法交叉编译时才用 |
+
+- 方式 A:按本指南步骤 2 在 Windows 上产出二进制和部署包,服务器 `docker compose up -d --build`。
+- 方式 B 命令:`docker compose -f docker-compose.build.yml up -d --build`(其余步骤两方式完全相同)。
 
 ### 步骤 0:准备 VM 网络(桥接,拿局域网 IP)
 
@@ -122,18 +142,51 @@ docker pull postgres:16-alpine
 > `cr.console.aliyun.com → 镜像工具 → 镜像加速器`,拿到专属地址
 > `https://<你的id>.mirror.aliyuncs.com` 替换进 daemon.json 再重启。
 
-### 步骤 2:上传部署包到 VM
+### 步骤 2:Windows 本地编译 + 打部署包(方式 A 核心,一次性配置约 10 分钟)
 
-部署包在 **Windows 侧**生成(仓库根目录执行过 `bash services/sync-server/pack-deploy.sh`,
-产物在 `artifacts/pomoflow-sync-deploy-<日期>.tar.gz`,约 5MB)。
+**2a. 一次性环境准备**(每台开发机只做一次,三条命令逐条执行):
+
+```bash
+# 安装 cargo-zigbuild:交叉编译驱动,用 zig 充当 Linux 链接器,
+# 让 Windows 能直接产出 Linux 可执行文件(编译约 2-5 分钟,只装一次)
+cargo install cargo-zigbuild --locked
+```
+
+```bash
+# 安装 zig 工具链(pip 版,免手动下载配置;约 50MB)
+python -m pip install ziglang
+```
+
+```bash
+# 给 rustup 添加 musl 目标(静态链接的 Linux 目标,产物不依赖服务器任何库)
+rustup target add x86_64-unknown-linux-musl
+```
+
+**2b. 每次发布前编译 + 打包**(改过代码就重跑,首次约 5 分钟,之后增量更快):
+
+```bash
+# 交叉编译 sync-server → services/sync-server/bin/sync-server
+# (musl 静态链接,任意 x86_64 Linux 可直接运行;脚本会自动校验前置工具)
+bash services/sync-server/build-local.sh
+```
+
+```bash
+# 打部署包 → artifacts/pomoflow-sync-deploy-<日期>.tar.gz(约 15-20M,内含二进制)
+# 脚本检测到 bin/sync-server 才走"免编译"路径;没有会打警告
+bash services/sync-server/pack-deploy.sh
+```
+
+### 步骤 2.5:上传部署包到 VM
+
 三种方式任选:
 
 **方式 A:scp(在 Windows 的 Git Bash / PowerShell 里执行)**
 
 ```bash
 # scp = 跨机器安全拷贝。把部署包传到 VM 的 /opt 目录
-# 把 用户名 换成 VM 的登录用户(如 ubuntu/root),<VM的IP> 换成步骤 0 查到的 IP
-scp artifacts/pomoflow-sync-deploy-20260821.tar.gz 用户名@<VM的IP>:/opt/
+# 把 用户名 换成 VM 的登录用户(如 ubuntu/root),<VM的IP> 换成步骤 0 查到的 IP,
+# <日期> 换成步骤 2b 打包输出里的实际日期
+scp artifacts/pomoflow-sync-deploy-<日期>.tar.gz 用户名@<VM的IP>:/opt/
 ```
 
 **方式 B:WinSCP / FileZilla**(图形界面拖拽,主机填 VM 的 IP、端口 22、SFTP 协议)
@@ -146,8 +199,9 @@ scp artifacts/pomoflow-sync-deploy-20260821.tar.gz 用户名@<VM的IP>:/opt/
 # 进入上传目录
 cd /opt
 
-# 解压:会生成 pomoflow-next/ 目录(含完整源码 + docker 物料,约 200 个文件)
-tar -xzf pomoflow-sync-deploy-20260821.tar.gz
+# 解压:会生成 pomoflow-next/ 目录(源码 + 预编译二进制 + docker 物料)
+# 二进制位置:pomoflow-next/services/sync-server/bin/sync-server,compose 会自动 COPY 它
+tar -xzf pomoflow-sync-deploy-<日期>.tar.gz
 
 # 进入服务的部署目录(compose 文件所在处,后续命令都在这里执行)
 cd pomoflow-next/services/sync-server
@@ -186,8 +240,8 @@ openssl rand -hex 16
 
 ```bash
 # 一键构建并启动:
-#   --build  先按 Dockerfile 构建服务镜像(首次约 5-15 分钟:下载 Rust 工具链
-#            和全部依赖并编译 release;以后有缓存,秒级)
+#   --build  按 Dockerfile.prebuilt 构建服务镜像 —— 只是 COPY 部署包里自带的
+#            静态二进制,秒级完成;不下载 Rust 工具链、不产生构建缓存(省 10-20G 磁盘)
 #   -d       detached,后台运行,不占着终端
 #   compose 会自动:①起 postgres(首次初始化时执行 schema.sql 建表)
 #                 ②等 postgres 健康检查通过 ③起 sync-server 并连库
@@ -230,6 +284,52 @@ curl -H "Authorization: Bearer <SYNC_TOKEN>" \
    (任务/项目/标签/番茄记录/复盘/名言),首次同步即全量上云
 6. 第二台设备(或另一数据目录的客户端)同样配置后点立即同步 → 两边数据一致 = 闭环达成
 
+### 步骤 7.5:在服务器上核对数据真的上云了(推荐做一次)
+
+桌面端提示"推送 N 条"只代表服务端接受了请求;想亲眼看到数据,两招任选:
+
+**方法一:模拟第二台设备拉一次(顺带验证 pull 链路)**
+
+```bash
+# device_id 故意填 "probe":pull 会排除"请求方自己"的变更,
+# probe 什么都没推过,所以能拉到桌面端推上来的全量
+# <SYNC_TOKEN> / <SYNC_USER_ID> 换成 .env 里的值
+curl -s -H "Authorization: Bearer <SYNC_TOKEN>" \
+     -H "Content-Type: application/json" \
+     -d '{"user_id":"<SYNC_USER_ID>","device_id":"probe","since":{"last_seq":0}}' \
+     http://127.0.0.1:8080/v1/sync/pull
+```
+
+```bash
+# 只数条数:输出一个数字,应等于桌面端提示的"推送 N 条"的 N
+curl -s -H "Authorization: Bearer <SYNC_TOKEN>" \
+     -H "Content-Type: application/json" \
+     -d '{"user_id":"<SYNC_USER_ID>","device_id":"probe","since":{"last_seq":0}}' \
+     http://127.0.0.1:8080/v1/sync/pull | grep -o '"change_id"' | wc -l
+```
+
+**方法二:直接查 PostgreSQL(最权威)**
+
+```bash
+# ① 变更流水:推送一条记一行,总数应正好等于"推送 N 条"的 N
+docker compose exec postgres psql -U pomoflow -d pomoflow \
+  -c "SELECT count(*) AS changelog_rows, max(seq) FROM changelog;"
+```
+
+```bash
+# ② 权威快照按实体类型分组:看任务/项目/标签/番茄记录/复盘/名言各占多少
+#    ⚠️ 快照行数可能 < N 属正常:同一实体多次修改会被 UPSERT 成一行(LWW 只留赢家),
+#    changelog 流水才是逐条记录的 N
+docker compose exec postgres psql -U pomoflow -d pomoflow \
+  -c "SELECT entity, count(*) FROM snapshots GROUP BY entity ORDER BY count(*) DESC;"
+```
+
+```bash
+# ③ 抽查内容:看前 160 字符,确认是自己的真实数据(标题/项目名等)
+docker compose exec postgres psql -U pomoflow -d pomoflow \
+  -c "SELECT entity, left(change::text,160) FROM changelog ORDER BY seq LIMIT 2;"
+```
+
 ### 步骤 8:日常运维命令
 
 ```bash
@@ -253,6 +353,9 @@ docker compose up -d --build
 | `permission denied ... docker.sock` | 当前用户不在 docker 组 | `sudo usermod -aG docker $USER && newgrp docker`(或命令前加 sudo) |
 | 拉镜像 `connection refused` | 国内连不上 docker.io | 完成步骤 1.5 的加速器配置并重启 docker |
 | `failed to load manifest for workspace member` | 部署包是旧版(修复前打的) | 重新上传 `artifacts/` 里最新的 tar.gz 重解压 |
+| compose build 报 `bin/sync-server` COPY 失败 | 部署包没带预编译二进制(Windows 侧漏跑 `build-local.sh`) | Windows 补跑 `build-local.sh` + `pack-deploy.sh` 重传;或临时改用 `docker compose -f docker-compose.build.yml up -d --build`(需 ≥30G 可用磁盘) |
+| 容器启动报 `exec /usr/local/bin/sync-server: ...: executable file not found` | Windows 打的 tar 丢失执行位(644),二进制 COPY 进镜像后不可执行 | **已根治**:Dockerfile.prebuilt 里有 `RUN chmod +x`,更新部署包重新 `docker compose up -d --build` 即可;旧包临时处置 = 服务器上 `chmod +x services/sync-server/bin/sync-server` 后重 build |
+| 服务器磁盘 100% / GDM 起不来(黑屏卡 logo) | 走过服务器端构建路径,Rust 构建缓存+镜像层(10-20G)塞满磁盘 | TTY 登录(`Ctrl+Alt+F3`)→ `docker builder prune -f` 清缓存 → `df -h /` 确认;根治 = 改走方式 A(本地编译);磁盘不够就先扩容 |
 | 桌面端同步报 **403** | 请求的 user_id ≠ 服务端 `SYNC_USER_ID` | 把桌面端「用户 ID」填进 .env 的 `SYNC_USER_ID`,`docker compose up -d` 重启 |
 | 桌面端报网络错误/连不上 | VM 不是桥接 / 防火墙没放行 / IP 填错 | 回查步骤 0;Windows 浏览器测 `http://<VM的IP>:8080/healthz` |
 | `healthz` 返回 `"ok":false` | 服务连不上数据库 | `docker compose logs sync-server` 看具体报错;`docker compose ps` 看 postgres 是否 healthy |
