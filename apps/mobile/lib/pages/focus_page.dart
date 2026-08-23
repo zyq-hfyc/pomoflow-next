@@ -182,20 +182,21 @@ class _FocusPageState extends State<FocusPage> {
     final tasks = context.watch<TaskProvider>();
     final focusTask = tasks.focusTask;
     final progress = 1 - _left / _total;
-    // 自适应尺寸:不能盲目套 268。哪怕再调 padding,大圆 + 多 sliver
-    // 也会让圆环 visual 撑到 600px+,把任务 chip/模式分段压扁。策略:
-    //   1) 上限收到 232(原型 268 留足 14% 余量)
-    //   2) 宽度系数 .58(避免 393+ 宽屏撑满)
-    //   3) 高度系数 .30(留 70% 给下方 sliver 链)
+    // 圆环尺寸:用户实测反馈 228 仍嫌大(辉光 blur 4 视觉渗出 ~12px)。
+    // 收入 196 + 收紧 blur 到 3,visual 直径稳定 ~210px,留更多净空给上下控件。
+    //   - 上限 196(原型 268 留 27% 余量,字号 ~45px 仍清晰)
+    //   - 宽度系数 .50(避免 393+ 宽屏撑满)
+    //   - 高度系数 .26(留 74% 给下方 sliver 链)
     final media = MediaQuery.of(context);
     final ringSize = math.min(
-      math.min(232.0, media.size.width * .58),
-      media.size.height * .30,
+      math.min(196.0, media.size.width * .50),
+      media.size.height * .26,
     );
     return Padding(
-      // padding 30/14:辉光 blur=4 仍会渗 ~10px,原 26/6 顶部还行、底部
-      // 直接被任务 chip 吃,补足底距后从视觉上彻底隔离上下控件。
-      padding: const EdgeInsets.only(top: 30, bottom: 14),
+      // padding 26/6 对齐原型 .ring-wrap margin;配合 blur=3(已改)
+      // 渗出 ~6px,顶部 20px 净空给模式分段,底部刚好让 task chip 自身 14 top
+      // padding 隔开。
+      padding: const EdgeInsets.only(top: 26, bottom: 6),
       child: SizedBox(
         width: ringSize,
         height: ringSize,
@@ -508,12 +509,19 @@ class _RingPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final stroke = 12.0;
+    // 强制方形:实测 Flutter Web 上 CustomPaint(painter, child) 传给 painter
+    // 的 size.width 是父链最大可用宽度,height 才被 SizedBox 锁住。
+    // painter 用 arcRect.width/2 作半径,导致圆环被画成全屏宽。
+    // 取 min(w, h) 才能保证圆环是圆形而不是被拉宽的椭圆。
+    final side = math.min(size.width, size.height);
     final inset = stroke / 2 + 1;
+    final ox = (size.width - side) / 2 + inset;
+    final oy = (size.height - side) / 2 + inset;
     final arcRect = Rect.fromLTWH(
-      inset,
-      inset,
-      size.width - inset * 2,
-      size.height - inset * 2,
+      ox,
+      oy,
+      side - inset * 2,
+      side - inset * 2,
     );
 
     canvas.drawCircle(
@@ -540,7 +548,7 @@ class _RingPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeWidth = stroke
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
     final start = -math.pi / 2;
     final sweep = 2 * math.pi * progress;
     canvas.drawArc(arcRect, start, sweep, false, glow);
