@@ -5,6 +5,7 @@ import 'providers/auth_provider.dart';
 import 'providers/nav_provider.dart';
 import 'providers/task_provider.dart';
 import 'providers/theme_provider.dart';
+import 'services/sync_client.dart';
 import 'pages/login_page.dart';
 import 'pages/home_page.dart';
 import 'theme/app_theme.dart';
@@ -42,15 +43,29 @@ class PomoFlowApp extends StatelessWidget {
         // 这里直接 value 注入已 hydrate 的实例。
         ChangeNotifierProvider<TaskProvider>.value(value: taskProvider),
       ],
-      child: Consumer<ThemeProvider>(
-        builder: (context, theme, _) => MaterialApp(
-          title: 'PomoFlow',
-          debugShowCheckedModeBanner: false,
-          theme: buildAppTheme(),
-          darkTheme: buildAppDarkTheme(),
-          themeMode: theme.mode,
-          home: const _Root(),
-        ),
+      child: Builder(
+        builder: (context) {
+          // P3d-B-Phase-2:Provider 树就绪后,注入 SyncClient 依赖。
+          // AuthProvider 必须先 .initialize() → 走 Builder 让其 rebuild 后再装。
+          final auth = context.read<AuthProvider>();
+          SyncClient.configure(
+            db: () =>
+                taskProvider.db ??
+                (throw StateError('TaskProvider 是 demo 模式,db 不可用')),
+            deviceId: () => auth.deviceId,
+            userId: () => auth.userId,
+          );
+          return Consumer<ThemeProvider>(
+            builder: (context, theme, _) => MaterialApp(
+              title: 'PomoFlow',
+              debugShowCheckedModeBanner: false,
+              theme: buildAppTheme(),
+              darkTheme: buildAppDarkTheme(),
+              themeMode: theme.mode,
+              home: const _Root(),
+            ),
+          );
+        },
       ),
     );
   }

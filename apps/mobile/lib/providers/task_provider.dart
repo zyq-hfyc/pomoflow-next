@@ -142,6 +142,9 @@ class TaskProvider extends ChangeNotifier {
 
   AppDatabase? _db; // null = pure memory (web / test)
 
+  /// P3d-B-Phase-2:SyncClient 单例访问 db 的入口。`null` 走内存 demo 路径。
+  AppDatabase? get db => _db;
+
   final List<PfTask> _tasks = [];
   final List<PfJournal> _journals = [];
 
