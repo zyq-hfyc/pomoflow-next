@@ -27,6 +27,7 @@ use axum::Router;
 use pomoflow_core::model::Id;
 use sqlx::postgres::PgPoolOptions;
 use state::AppState;
+use tower_http::cors::{Any, CorsLayer};
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -108,6 +109,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/auth/export", get(email_handlers::export_data))
         .route("/v1/auth/login-logs", get(email_handlers::login_logs))
         .route("/healthz", get(handlers::healthz))
+        // CORS:Flutter Web(Chrome 预览)跨域;桌面端/Android 原生不走 CORS。
+        // 开发期 Any;P5 正式部署收敛到 nginx/gateway 层指定 origin。
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
         .with_state(AppState {
             pool: pool.clone(),
             token,

@@ -36,6 +36,9 @@ argon2 = "0.5"
 jsonwebtoken = "9"
 sha2 = "0.10"
 rand = "0.8"
+# CORS(P3a):Flutter Web(Chrome 预览)跨域;桌面端和 Android 原生不走 CORS,
+# 但开发期需要;P5 正式部署时收敛到 nginx/gateway 层
+tower-http = { version = "0.6", features = ["cors"] }
 # P1d:邮箱验证码 HMAC 摘要(pepper 防 6 位码离线穷举)
 hmac = "0.12"
 # P1d 头像:base64 编解码(客户端传 JSON,免 multipart)
