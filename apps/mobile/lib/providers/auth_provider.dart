@@ -39,6 +39,9 @@ class AuthProvider extends ChangeNotifier {
   /// Keychain/EncryptedSharedPreferences 落盘,跨次启动同一台设备一致。
   static const _kDeviceIdKey = 'flutter.auth_device_id';
 
+  /// === P3d-B-Phase-2 userId 持久化(与 device_id 同 keyset)===================
+  static const _kUserIdKey = 'flutter.auth_user_id';
+
   /// 复用 api_client.dart 的 FlutterSecureStorage 同实例;web 上自动 fallback 到 localStorage。
   static const _storage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
@@ -47,30 +50,52 @@ class AuthProvider extends ChangeNotifier {
   /// 由 [initialize] 异步加载;在登录之前完成,4 个 auth endpoint 直接读。
   String? _deviceId;
   String? _deviceName;
+  String? _userId;
 
   /// 当前 device_id(可能为 null,极罕见 initialize 失败时)。
   String get deviceId => _deviceId ?? 'flutter-unknown';
 
-  /// 应用启动时恢复登录态 + 设备标识。
+  /// 当前 user_id(账号 id,UUID 格式)。登录前为空,SyncClient 入口断言非空。
+  String? get userId => _userId;
+
+  /// 应用启动时恢复登录态 + 设备/用户标识。
   Future<void> initialize() async {
-    // 先恢复 device(独立于 ApiClient,这样 4 个 auth endpoint 都能拿)。
+    // 先恢复 device 与 userId(独立于 ApiClient,4 个 auth endpoint 都能拿)
     _deviceId = await _ensureDeviceId();
     _deviceName = await _resolveDeviceName(_deviceId!);
+    _userId = await _ensureUserId();
 
     await ApiClient.instance.initialize();
     if (ApiClient.instance.isConfigured) {
-      // 尝试拉 profile 验证登录态
+      // 尝试拉 profile 验证登录态 + 兜底 userId
       try {
         final profile = await ApiClient.instance.get('/v1/auth/profile');
         username = profile['username'] as String?;
         email = profile['email'] as String?;
         displayName = profile['display_name'] as String?;
+        // 如果 profile 里有 user_id 字段,覆盖回 secure storage 兜底的真值
+        final pid = profile['user_id'] as String?;
+        if (pid != null && pid.isNotEmpty && pid != _userId) {
+          _userId = pid;
+          await _storage.write(key: _kUserIdKey, value: pid);
+        }
       } catch (_) {
         // token 过期且 refresh 失败 → 已在 ApiClient 内清空
       }
     }
     initialized = true;
     notifyListeners();
+  }
+
+  /// 首次启动生成 UUID-like 写 secure storage,后续读出复用。与 device_id 同形态。
+  Future<String> _ensureUserId() async {
+    final existing = await _storage.read(key: _kUserIdKey);
+    if (existing != null && existing.isNotEmpty) return existing;
+    final rnd = math.Random.secure();
+    final bytes = List<int>.generate(16, (_) => rnd.nextInt(256));
+    final id = base64Url.encode(bytes).replaceAll('=', '');
+    await _storage.write(key: _kUserIdKey, value: id);
+    return id;
   }
 
   /// 首次启动生成 UUID-like 写 secure storage,后续读出复用。
@@ -170,6 +195,39 @@ class AuthProvider extends ChangeNotifier {
     });
   }
 
+  Future<void> _onAuthSuccess(Map<String, dynamic> resp) async {
+    await ApiClient.instance.saveTokens(
+      resp['access_token'] as String,
+      resp['refresh_token'] as String,
+    );
+    // AuthTokens 仅有 user_id / username / access/refresh;display_name / email
+    // 没在登录响应里,要靠 /v1/auth/profile 补齐(否则「我的」页头像昵称空白)。
+    final loginUid = resp['user_id'] as String?;
+    if (loginUid != null && loginUid.isNotEmpty) {
+      _userId = loginUid;
+      await _storage.write(key: _kUserIdKey, value: loginUid);
+    }
+    username = resp['username'] as String?;
+    try {
+      final profile = await ApiClient.instance.get('/v1/auth/profile');
+      username = profile['username'] as String? ?? username;
+      displayName = profile['display_name'] as String?;
+      email = profile['email'] as String?;
+      // profile 兜底 userId(若 server 给的不一致)
+      final pid = profile['user_id'] as String?;
+      if (pid != null && pid.isNotEmpty && pid != _userId) {
+        _userId = pid;
+        await _storage.write(key: _kUserIdKey, value: pid);
+      }
+    } catch (_) {
+      // 网络/profile 暂时拉不到:留 displayName/email 为 null,下次启动
+      // AuthProvider.initialize 再补一次,顶部头像降级为「?」首字母。
+    }
+    notifyListeners();
+  }
+
+  /// logout:清 JWT + userId/password/email/displayName(全端踢出场景下重登会重置),
+  /// device_id 保留(机器不变)。
   Future<void> logout() async {
     // 尽力通知服务端;本地必清。device_id 保留(机器不变,登出再登还是同设备)。
     try {
@@ -181,26 +239,9 @@ class AuthProvider extends ChangeNotifier {
     username = null;
     email = null;
     displayName = null;
-    notifyListeners();
-  }
-
-  Future<void> _onAuthSuccess(Map<String, dynamic> resp) async {
-    await ApiClient.instance.saveTokens(
-      resp['access_token'] as String,
-      resp['refresh_token'] as String,
-    );
-    // AuthTokens 仅有 username + access/refresh;display_name / email 没在登录
-    // 响应里,要靠 /v1/auth/profile 补齐(否则「我的」页头像昵称空白)。
-    username = resp['username'] as String?;
-    try {
-      final profile = await ApiClient.instance.get('/v1/auth/profile');
-      username = profile['username'] as String? ?? username;
-      displayName = profile['display_name'] as String?;
-      email = profile['email'] as String?;
-    } catch (_) {
-      // 网络/profile 暂时拉不到:留 displayName/email 为 null,下次启动
-      // AuthProvider.initialize 再补一次,顶部头像降级为「?」首字母。
-    }
+    // userId 同时清(全端踢出后,re-login 时 _onAuthSuccess 会重写)。
+    _userId = null;
+    await _storage.delete(key: _kUserIdKey);
     notifyListeners();
   }
 }
