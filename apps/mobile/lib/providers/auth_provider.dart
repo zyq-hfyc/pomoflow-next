@@ -115,8 +115,18 @@ class AuthProvider extends ChangeNotifier {
       resp['access_token'] as String,
       resp['refresh_token'] as String,
     );
+    // AuthTokens 仅有 username + access/refresh;display_name / email 没在登录
+    // 响应里,要靠 /v1/auth/profile 补齐(否则「我的」页头像昵称空白)。
     username = resp['username'] as String?;
-    displayName = resp['display_name'] as String?;
+    try {
+      final profile = await ApiClient.instance.get('/v1/auth/profile');
+      username = profile['username'] as String? ?? username;
+      displayName = profile['display_name'] as String?;
+      email = profile['email'] as String?;
+    } catch (_) {
+      // 网络/profile 暂时拉不到:留 displayName/email 为 null,下次启动
+      // AuthProvider.initialize 再补一次,顶部头像降级为「?」首字母。
+    }
     notifyListeners();
   }
 
