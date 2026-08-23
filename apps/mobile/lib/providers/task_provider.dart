@@ -174,9 +174,7 @@ class TaskProvider extends ChangeNotifier {
         _ => const <PfTask>[],
       };
 
-  // === 写操作(本地 + DB) =====================================================
-  // ⚠️ P3d-B-Phase-2 commit 4 计划在 4 个 mutator 末尾接 `db.markTaskPending()`
-  // 触发 sync_state='pending'。本批只做 ID 类型迁移不接 sync 钩子。
+  // === 写操作(本地 + DB;P3d-B-Phase-2 commit 4:mutator 末尾标 pending)=====
 
   Future<void> addTask(PfTask task) async {
     final id = task.id.isEmpty ? await _allocateId() : task.id;
@@ -199,6 +197,7 @@ class TaskProvider extends ChangeNotifier {
     final db = _db;
     if (db != null) {
       await db.raw.insert('tasks', _rowFromTask(t));
+      await _markPending(db, t.id);
     }
     notifyListeners();
   }
@@ -218,6 +217,8 @@ class TaskProvider extends ChangeNotifier {
     final db = _db;
     if (db != null) {
       await db.raw.insert('journals', _rowFromJournal(j));
+      // journals 表本批未加同步列,**P1 接入 Journal 同步时再 markPending 落地**;
+      // 当前 markPending 跳过 journal 列不存在的情况。
     }
     notifyListeners();
   }
@@ -232,6 +233,7 @@ class TaskProvider extends ChangeNotifier {
     final db = _db;
     if (db != null) {
       await db.updateTask(updated);
+      await _markPending(db, updated.id);
     }
     notifyListeners();
   }
@@ -241,6 +243,7 @@ class TaskProvider extends ChangeNotifier {
     final db = _db;
     if (db != null) {
       await db.setFocus(id);
+      // setFocus 是 UI 局部状态,不参与 LWW 同步,跳过 markPending。
     }
     notifyListeners();
   }
@@ -259,6 +262,7 @@ class TaskProvider extends ChangeNotifier {
         final db = _db;
         if (db != null) {
           await db.updateTask(updated);
+          await _markPending(db, updated.id);
         }
       }
     }
@@ -280,9 +284,7 @@ class TaskProvider extends ChangeNotifier {
 
   Future<String> nextId() async => await _allocateId();
 
-  Future<String> _allocateId() async {
-    return _uuid14();
-  }
+  Future<String> _allocateId() async => _uuid14();
 
   /// 14 字符 UUID 短码:用 Random.secure 生成 12 字节 → base64Url(16 字符)截前 14 位。
   /// 12 字节 = 96 位随机,生日前缀碰撞概率 ≈ 2⁻⁹⁶(可忽略)。
@@ -291,6 +293,23 @@ class TaskProvider extends ChangeNotifier {
     final bytes = List<int>.generate(12, (_) => rnd.nextInt(256));
     final b64 = base64Url.encode(bytes).replaceAll('=', '');
     return b64.substring(0, 14);
+  }
+
+  /// mutator 末尾调用:bump revision + sync_state='pending' +
+  /// updated_at_ms=now + payload=空 + originDevice/user_id 暂 ''(commit 5
+  /// 接 AuthProvider 实参)。
+  /// web 平台不调(demo() 内存)。
+  Future<void> _markPending(AppDatabase db, String id) async {
+    try {
+      await db.markTaskPending(
+        id: id,
+        payload: '',
+        originDevice: '',
+        userId: '',
+      );
+    } catch (_) {
+      // 列结构 / 任意同步异常 → 跳过,不阻塞 UI(commit 5/6 兜底)。
+    }
   }
 
   // === 映射(把 PfTask / PfJournal 转 sqflite row) ==============================
