@@ -22,6 +22,7 @@ mod state;
 
 use std::net::SocketAddr;
 
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::Router;
 use pomoflow_core::model::Id;
@@ -117,6 +118,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
+        // 头像上传(PATCH /v1/auth/avatar):base64 + JSON envelope 后约 2.7 MB,
+        // 超过 axum 默认 2 MB body limit 会 413。其它路由不需要这么大,综合放宽 8 MB。
+        .layer(DefaultBodyLimit::max(8 * 1024 * 1024))
         .with_state(AppState {
             pool: pool.clone(),
             token,
