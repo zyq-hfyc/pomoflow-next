@@ -8,7 +8,6 @@
 
   import type { Component } from "svelte";
   import {
-    UserRound,
     Clock,
     ListTodo,
     Tag,
@@ -27,13 +26,10 @@
   import NotificationTemplateSetting from "../components/Settings/NotificationTemplateSetting.svelte";
   import SyncSetting from "../components/Settings/SyncSetting.svelte";
   import LanguageSetting from "../components/Settings/LanguageSetting.svelte";
-  import AccountTab from "../components/Settings/Account/AccountTab.svelte";
-  import { accountTabSignal } from "../lib/ui-bus.svelte";
 
   const t = $derived(getDict());
 
   type SettingTab =
-    | "account"
     | "timer"
     | "lists"
     | "tags"
@@ -45,15 +41,9 @@
 
   let activeTab = $state<SettingTab>("timer");
 
-  // 数据同步页「前往账号管理」→ 切到账号 tab(ui-bus 信号)
-  $effect(() => {
-    if (accountTabSignal() > 0) activeTab = "account";
-  });
-
   // lucide-svelte 1.x 导出 Svelte 4 SvelteComponentTyped,与 Svelte 5 Component
   // 类型不兼容 —— 与 ProjectSidebar 同款,赋值处 `as any` 绕过(运行期正常)。
   const tabs = $derived<{ key: SettingTab; icon: Component<any>; label: string }[]>([
-    { key: "account", icon: UserRound as any, label: t.settings.tab.account },
     { key: "timer", icon: Clock as any, label: t.settings.tab.timer },
     { key: "lists", icon: ListTodo as any, label: t.settings.tab.lists },
     { key: "tags", icon: Tag as any, label: t.settings.tab.tags },
@@ -93,9 +83,7 @@
   <!-- 右侧内容卡 -->
   <main class="content">
     <div class="card">
-      {#if activeTab === "account"}
-        <AccountTab />
-      {:else if activeTab === "timer"}
+      {#if activeTab === "timer"}
         <TimerSetting />
       {:else if activeTab === "lists"}
         <ProjectManager />

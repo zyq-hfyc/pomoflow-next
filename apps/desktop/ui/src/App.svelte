@@ -18,8 +18,10 @@
     ChartColumn,
     Settings,
     HelpCircle,
+    UserRound,
   } from "lucide-svelte";
   import { currentRoute, navigate, ROUTES } from "./lib/router.svelte";
+  import { accountState, loadAccountState } from "./lib/accountState.svelte";
   import { getDict } from "./lib/i18n.svelte";
   import {
     getTimerState,
@@ -35,6 +37,7 @@
   import TasksPage from "./pages/TasksPage.svelte";
   import StatsPage from "./pages/StatsPage.svelte";
   import SettingsPage from "./pages/SettingsPage.svelte";
+  import AccountPage from "./pages/AccountPage.svelte";
   import HelpPage from "./pages/HelpPage.svelte";
 
   // === i18n 词典(响应式;setLang 后整棵导航栏重渲染) ===
@@ -53,6 +56,8 @@
   });
 
   onMount(() => {
+    // 顶部导航登录态(登录后品牌位换头像)
+    void loadAccountState();
     // 回前台立即校准剩余时间(v1 visibilitychange;后台/睡眠不漂移)
     void refreshNotificationTemplate();
     document.addEventListener("visibilitychange", () => {
@@ -85,6 +90,7 @@
     tasks: ListTodo,
     stats: ChartColumn,
     settings: Settings,
+    account: UserRound,
     help: HelpCircle,
   };
 </script>
@@ -92,10 +98,29 @@
 <main class="app app-bg">
   <header class="topbar">
     <!-- v1:logo(品牌番茄 SVG)+ 字标居左,导航紧跟其后靠左 -->
-    <div class="brand">
-      <span class="logo" aria-hidden="true"><TomatoIcon size={26} /></span>
-      <h1 class="brand-name">PomoFlow</h1>
-    </div>
+    {#if accountState().user}
+      <!-- 登录后:品牌位 = 用户头像,点击进账号页(用户要求) -->
+      <button
+        type="button"
+        class="brand brand-user"
+        onclick={() => navigate("/account")}
+        title={accountState().user?.username ?? ""}
+        aria-label={t.nav.account}
+      >
+        {#if accountState().avatar}
+          <img class="brand-avatar-img" src={accountState().avatar ?? ""} alt="" />
+        {:else}
+          <span class="brand-avatar-fallback">
+            {(accountState().user?.username ?? "?").slice(0, 1).toUpperCase()}
+          </span>
+        {/if}
+      </button>
+    {:else}
+      <div class="brand">
+        <span class="logo" aria-hidden="true"><TomatoIcon size={26} /></span>
+        <h1 class="brand-name">PomoFlow</h1>
+      </div>
+    {/if}
     <nav class="nav" aria-label={t.nav.mainNav}>
       {#each ROUTES as r (r.path)}
         {@const Icon = NAV_ICONS[r.labelKey] as any}
@@ -122,6 +147,8 @@
       <StatsPage />
     {:else if route === "/settings"}
       <SettingsPage />
+    {:else if route === "/account"}
+      <AccountPage />
     {:else if route === "/help"}
       <HelpPage />
     {:else}
@@ -155,6 +182,37 @@
     gap: 1.25rem;
   }
 
+  .brand-user {
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+  }
+  .brand-user:hover {
+    opacity: 0.85;
+  }
+  .brand-avatar-img,
+  .brand-avatar-fallback {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .brand-avatar-img {
+    object-fit: cover;
+    border: 1.5px solid color-mix(in srgb, var(--color-accent-500) 45%, transparent);
+  }
+  .brand-avatar-fallback {
+    background: color-mix(in srgb, var(--color-accent-500) 14%, transparent);
+    color: var(--color-accent-600);
+    font-size: 13px;
+    font-weight: 600;
+  }
   .brand {
     display: flex;
     align-items: center;

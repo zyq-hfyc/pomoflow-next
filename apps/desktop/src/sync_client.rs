@@ -60,7 +60,8 @@ fn meta_nonempty(store: &SqliteStore, key: &str) -> Result<Option<String>, Strin
 }
 
 /// 会话管理用的设备自报:(device_id, 友好名)。
-/// 友好名 = 平台 + 设备短码(如 "windows·a1b2c3d4"),纯本地拼接无 I/O。
+/// 优先报**本机机型**(如 "HUAWEI MateBook" / "Xiaomi Book Pro 16");
+/// 取不到机型时回落 平台·设备短码(如 "windows·a1b2c3d4")。
 fn device_report(store: &SqliteStore) -> (String, String) {
     let device_id = store.local_device_id().to_string();
     let os = match std::env::consts::OS {
@@ -70,7 +71,61 @@ fn device_report(store: &SqliteStore) -> (String, String) {
         other => other,
     };
     let short: String = device_id.chars().take(8).collect();
-    (device_id.clone(), format!("{os}·{short}"))
+    let fallback = format!("{os}·{short}");
+    // 机型超长截断(设备名列的展示宽度有限)
+    let name = machine_model()
+        .unwrap_or(fallback)
+        .chars()
+        .take(40)
+        .collect::<String>();
+    (device_id, name)
+}
+
+/// 读取本机机型:Windows 走注册表 BIOS(厂商 + SystemFamily 优先,主板代号兜底),
+/// Linux 走 DMI(/sys);取不到返回 None(回落 平台·短码)。
+/// 注册表/文件读取失败不致命 —— 设备名只是展示信息。
+fn machine_model() -> Option<String> {
+    let generic = |v: &str| {
+        v.trim().is_empty()
+            || v.trim().eq_ignore_ascii_case("System manufacturer")
+            || v.trim().eq_ignore_ascii_case("System Product Name")
+            || v.trim().eq_ignore_ascii_case("Default string")
+    };
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::HKEY_LOCAL_MACHINE;
+        use winreg::RegKey;
+        let bios = RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey(r"HARDWARE\DESCRIPTION\System\BIOS")
+            .ok()?;
+        let vendor: String = bios.get_value("SystemManufacturer").ok()?;
+        if generic(&vendor) {
+            return None;
+        }
+        // SystemFamily 是营销系列名(如 "MateBook");没有再用产品代号(如 "CREF-XX")
+        let family: String = bios.get_value("SystemFamily").unwrap_or_default();
+        let product: String = bios.get_value("SystemProductName").unwrap_or_default();
+        let model = if generic(&family) {
+            if generic(&product) {
+                return None;
+            }
+            product
+        } else {
+            family
+        };
+        Some(format!("{} {}", vendor.trim(), model.trim()))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let vendor = std::fs::read_to_string("/sys/class/dmi/id/sys_vendor").ok()?;
+        let product = std::fs::read_to_string("/sys/class/dmi/id/product_name").ok()?;
+        if generic(&vendor) || generic(&product) {
+            return None;
+        }
+        Some(format!("{} {}", vendor.trim(), product.trim()))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    None
 }
 
 // === 配置与标识 ===
@@ -546,7 +601,7 @@ async fn refresh_access(client: &reqwest::Client, store: &SqliteStore) -> Result
     let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
         clear_auth(store)?;
-        return Err("登录已过期,请重新登录(设置 → 数据同步)".to_string());
+        return Err("登录已过期,请到「账号」页重新登录".to_string());
     }
     let tokens: AuthTokensResp = serde_json::from_str(&text)
         .map_err(|e| format!("刷新响应解析失败: {e}"))?;
@@ -760,10 +815,18 @@ pub struct AccountProfile {
     pub user_id: String,
     pub username: String,
     pub display_name: String,
+    /// 个性签名(≤50 字,可空串)。
+    /// serde(default):旧服务端(签名功能之前)的 profile 响应没有此字段,
+    /// 容忍缺失 = 版本偏差时 UI 降级而不是整个资料加载失败(2026-08-22 实测坑)
+    #[serde(default)]
+    pub bio: String,
     pub email: Option<String>,
     pub email_verified: bool,
     pub created_ms: i64,
     pub password_changed_ms: Option<i64>,
+    /// 非空 = 注销申请中(冷静期起算时间);旧服务端无此字段 → None
+    #[serde(default)]
+    pub deletion_requested_ms: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -821,23 +884,58 @@ where
     serde_json::from_str(&text).map_err(|e| format!("响应解析失败: {e}"))
 }
 
-/// POST 账号端点(Bearer access,账号登录态)。
-async fn post_account_authed<T, R>(store: &SqliteStore, path: &str, body: &T) -> Result<R, String>
-where
-    T: serde::Serialize,
-    R: serde::de::DeserializeOwned,
-{
-    let access =
-        meta_nonempty(store, META_ACCESS)?.ok_or("尚未登录账号".to_string())?;
-    let resp = short_client()?
-        .post(account_url(store, path)?)
-        .bearer_auth(access)
-        .json(body)
+/// 已认证账号请求公共底座:任意 HTTP 方法 + 可选 JSON body。
+/// **401 → 自动 refresh 一次并重试**(access 15 分钟过期,与同步链路同语义;
+/// refresh 失败由 refresh_access 清空本地登录态并提示重新登录)。
+/// 2026-08-23 实测坑:头像/资料等命令原先直发旧 access,登录超 15 分钟后
+/// 全部报 invalid token —— 统一走此函数根治。
+async fn authed_fetch(
+    store: &SqliteStore,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<&serde_json::Value>,
+) -> Result<(reqwest::StatusCode, String), String> {
+    let client = short_client()?;
+    let url = account_url(store, path)?;
+    let access = meta_nonempty(store, META_ACCESS)?.ok_or("尚未登录账号".to_string())?;
+
+    let build = |token: &str| -> reqwest::RequestBuilder {
+        let mut req = client.request(method.clone(), &url).bearer_auth(token);
+        if let Some(b) = body {
+            req = req.json(b);
+        }
+        req
+    };
+
+    let resp = build(&access)
         .send()
         .await
         .map_err(|e| format!("网络错误: {e}"))?;
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
+    if status.as_u16() != 401 {
+        return Ok((status, text));
+    }
+    // access 过期:refresh 轮换一次,重试
+    let new_access = refresh_access(&client, store).await?;
+    let resp = build(&new_access)
+        .send()
+        .await
+        .map_err(|e| format!("网络错误: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    Ok((status, text))
+}
+
+/// POST 账号端点(Bearer access,账号登录态;401 自动刷新)。
+async fn post_account_authed<T, R>(store: &SqliteStore, path: &str, body: &T) -> Result<R, String>
+where
+    T: serde::Serialize,
+    R: serde::de::DeserializeOwned,
+{
+    let value = serde_json::to_value(body).map_err(|e| format!("请求序列化失败: {e}"))?;
+    let (status, text) =
+        authed_fetch(store, reqwest::Method::POST, path, Some(&value)).await?;
     if !status.is_success() {
         return Err(api_error_text(status, &text));
     }
@@ -929,16 +1027,8 @@ pub async fn auth_get_profile(
     state: State<'_, AppState>,
 ) -> Result<AccountProfile, String> {
     let store = state.store.clone();
-    let access =
-        meta_nonempty(&store, META_ACCESS)?.ok_or("尚未登录账号".to_string())?;
-    let resp = short_client()?
-        .get(account_url(&store, "/v1/auth/profile")?)
-        .bearer_auth(access)
-        .send()
-        .await
-        .map_err(|e| format!("网络错误: {e}"))?;
-    let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
+    let (status, text) =
+        authed_fetch(&store, reqwest::Method::GET, "/v1/auth/profile", None).await?;
     if !status.is_success() {
         return Err(api_error_text(status, &text));
     }
@@ -946,13 +1036,42 @@ pub async fn auth_get_profile(
 }
 
 #[tauri::command]
-pub async fn auth_update_display_name(
-    display_name: String,
+pub async fn auth_update_profile(
+    display_name: Option<String>,
+    bio: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let store = state.store.clone();
-    let body = serde_json::json!({ "display_name": display_name });
+    // 两字段都可选:传了才改(None 序列化为 null,服务端保持原值)
+    let body = serde_json::json!({ "display_name": display_name, "bio": bio });
     post_account_authed::<_, serde_json::Value>(&store, "/v1/auth/profile", &body).await?;
+    Ok(())
+}
+
+/// 申请注销(验当前密码;已绑验证邮箱的账号还须 purpose=delete 验证码)。
+#[tauri::command]
+pub async fn auth_request_deletion(
+    password: String,
+    code: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let store = state.store.clone();
+    let body = serde_json::json!({ "password": password, "code": code });
+    post_account_authed::<_, serde_json::Value>(&store, "/v1/auth/deletion/request", &body)
+        .await?;
+    Ok(())
+}
+
+/// 冷静期内撤销注销申请(验当前密码)。
+#[tauri::command]
+pub async fn auth_cancel_deletion(
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let store = state.store.clone();
+    let body = serde_json::json!({ "password": password });
+    post_account_authed::<_, serde_json::Value>(&store, "/v1/auth/deletion/cancel", &body)
+        .await?;
     Ok(())
 }
 
@@ -968,4 +1087,114 @@ pub async fn auth_update_username(
     let tokens: AuthTokensResp =
         post_account_authed(&store, "/v1/auth/username", &body).await?;
     save_tokens(&store, tokens)
+}
+
+// === P1d:头像 + 数据导出 =====================================================
+
+#[derive(Debug, Deserialize)]
+struct AvatarResp {
+    avatar_base64: Option<String>,
+    mime: Option<String>,
+}
+
+/// 依魔法字节判断图片类型(不信任扩展名)。
+fn sniff_image_mime(bytes: &[u8]) -> Option<&'static str> {
+    match bytes {
+        [0xFF, 0xD8, 0xFF, ..] => Some("image/jpeg"),
+        [0x89, b'P', b'N', b'G', ..] => Some("image/png"),
+        _ => None,
+    }
+}
+
+/// 上传/替换头像:读取本地图片文件,魔法字节核验 + 2MB 上限,base64 POST。
+#[tauri::command]
+pub async fn auth_set_avatar(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    use base64::Engine as _;
+    let store = state.store.clone();
+    let bytes = std::fs::read(&path).map_err(|e| format!("读取图片失败: {e}"))?;
+    let Some(mime) = sniff_image_mime(&bytes) else {
+        return Err("头像仅支持 JPG/PNG".into());
+    };
+    if bytes.len() > 2 * 1024 * 1024 {
+        return Err("头像文件需在 2MB 以内".into());
+    }
+    let body = serde_json::json!({
+        "avatar_base64": base64::engine::general_purpose::STANDARD.encode(&bytes),
+        "mime": mime,
+    });
+    post_account_authed::<_, serde_json::Value>(&store, "/v1/auth/avatar", &body).await?;
+    Ok(())
+}
+
+/// 取头像:成功返回 `data:` URL(前端直接 <img src>);无头像返回 None。
+#[tauri::command]
+pub async fn auth_get_avatar(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let store = state.store.clone();
+    let (status, text) =
+        authed_fetch(&store, reqwest::Method::GET, "/v1/auth/avatar", None).await?;
+    if !status.is_success() {
+        return Err(api_error_text(status, &text));
+    }
+    let av: AvatarResp = serde_json::from_str(&text).map_err(|e| format!("响应解析失败: {e}"))?;
+    Ok(match (av.avatar_base64, av.mime) {
+        (Some(b64), Some(mime)) => Some(format!("data:{mime};base64,{b64}")),
+        _ => None,
+    })
+}
+
+/// 移除头像(幂等)。
+#[tauri::command]
+pub async fn auth_delete_avatar(state: State<'_, AppState>) -> Result<(), String> {
+    let store = state.store.clone();
+    let (status, text) =
+        authed_fetch(&store, reqwest::Method::DELETE, "/v1/auth/avatar", None).await?;
+    if !status.is_success() {
+        return Err(api_error_text(status, &text));
+    }
+    Ok(())
+}
+
+/// 导出账号全部云端数据到 JSON 文件(注销前备份;path 由前端保存对话框取得)。
+#[tauri::command]
+pub async fn auth_export_data(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let store = state.store.clone();
+    let (status, text) =
+        authed_fetch(&store, reqwest::Method::GET, "/v1/auth/export", None).await?;
+    if !status.is_success() {
+        return Err(api_error_text(status, &text));
+    }
+    let pretty = serde_json::to_string_pretty(
+        &serde_json::from_str::<serde_json::Value>(&text)
+            .map_err(|e| format!("响应解析失败: {e}"))?,
+    )
+    .map_err(|e| format!("格式化失败: {e}"))?;
+    std::fs::write(&path, pretty).map_err(|e| format!("写文件失败: {e}"))?;
+    Ok(())
+}
+
+// === 登录记录(P1d)=========================================================
+
+/// 服务端 LoginLogItem 镜像(serde snake_case)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoginLogItem {
+    pub created_ms: i64,
+    #[allow(dead_code)] // 审计字段,前端展示用 device_name
+    pub device_id: String,
+    pub device_name: String,
+    pub ip: String,
+    pub method: String,
+    pub ok: bool,
+    pub detail: String,
+}
+
+/// 本人最近 50 条登录记录(含失败)。
+#[tauri::command]
+pub async fn auth_get_login_logs(state: State<'_, AppState>) -> Result<Vec<LoginLogItem>, String> {
+    let store = state.store.clone();
+    let (status, text) =
+        authed_fetch(&store, reqwest::Method::GET, "/v1/auth/login-logs", None).await?;
+    if !status.is_success() {
+        return Err(api_error_text(status, &text));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("响应解析失败: {e}"))
 }

@@ -24,7 +24,7 @@
     type SessionInfo,
   } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
-  import { requestAccountTab } from "../../lib/ui-bus.svelte";
+  import { navigate } from "../../lib/router.svelte";
 
   const t = $derived(getDict());
 
@@ -206,7 +206,7 @@
           <span class="row-label">{t.settings.sync.loggedIn}</span>
           <div class="id-cell">
             <code class="id-text">{authUser}</code>
-            <button type="button" class="copy" onclick={requestAccountTab}>
+            <button type="button" class="copy" onclick={() => navigate("/account")}>
               {t.settings.sync.manageAccount} →
             </button>
           </div>
@@ -215,7 +215,7 @@
         <div class="form-row">
           <span class="row-label">{t.settings.sync.notLoggedIn}</span>
           <div class="actions">
-            <button type="button" class="action" onclick={requestAccountTab}>
+            <button type="button" class="action" onclick={() => navigate("/account")}>
               {t.settings.account.tabLogin} / {t.settings.account.tabRegister} →
             </button>
           </div>

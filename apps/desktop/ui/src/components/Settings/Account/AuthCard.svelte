@@ -402,15 +402,17 @@
   }
   .auth-card {
     width: 100%;
-    max-width: 420px;
+    /* 与登录后"个人资料"内容区同宽(用户指定),视觉宽度一致 */
+    max-width: 46rem;
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: 16px;
-    padding: 2rem 1.75rem;
+    padding: 2.5rem 3rem;
+    box-shadow: var(--shadow-sm);
   }
   .auth-logo {
     text-align: center;
-    margin-bottom: 1.25rem;
+    margin-bottom: 1.5rem;
   }
   .auth-logo .icon {
     width: 44px;
@@ -436,12 +438,12 @@
 
   .auth-tabs {
     display: flex;
-    margin-bottom: 1.25rem;
+    margin-bottom: 1.5rem;
     border-bottom: 1px solid var(--color-border);
   }
   .auth-tab {
     flex: 1;
-    padding: 8px 4px;
+    padding: 10px 4px;
     font-size: 13px;
     color: var(--color-text-muted);
     background: transparent;
@@ -458,7 +460,7 @@
 
   .view-tabs {
     display: flex;
-    margin-bottom: 1rem;
+    margin-bottom: 1.25rem;
     background: var(--color-neutral-50, #f5f5f5);
     border-radius: 8px;
     padding: 3px;
@@ -482,17 +484,17 @@
   }
 
   .form-group {
-    margin-bottom: 14px;
+    margin-bottom: 18px;
   }
   .form-label {
     display: block;
     font-size: 12px;
     color: var(--color-text-muted);
-    margin-bottom: 5px;
+    margin-bottom: 7px;
   }
   .form-input {
     width: 100%;
-    padding: 10px 12px;
+    padding: 11px 12px;
     font-size: 13px;
     border: 1px solid var(--color-border);
     border-radius: 8px;
@@ -548,7 +550,7 @@
     cursor: pointer;
     transition: opacity 0.2s;
     font-family: inherit;
-    margin-top: 6px;
+    margin-top: 10px;
   }
   .btn-primary:hover:not(:disabled) {
     opacity: 0.9;
@@ -578,7 +580,7 @@
     display: flex;
     justify-content: flex-end;
     align-items: center;
-    margin-bottom: 14px;
+    margin-bottom: 18px;
     font-size: 12px;
   }
   .link {
@@ -592,7 +594,7 @@
     text-align: center;
     font-size: 13px;
     color: var(--color-text-muted);
-    margin-top: 1rem;
+    margin-top: 1.5rem;
   }
   .switch-link .link {
     margin-left: 4px;

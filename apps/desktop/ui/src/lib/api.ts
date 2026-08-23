@@ -515,10 +515,6 @@ export const authRevokeOthers = () => invoke<number>("auth_revoke_others");
 
 // === 邮箱渠道(P1d:验证码/邮箱注册登录/找回/换绑/资料) ===
 
-/** 发邮箱验证码。purpose: "register" | "reset" | "bind";服务端有频控(429)。 */
-export const authSendEmailCode = (email: string, purpose: "register" | "reset" | "bind") =>
-  invoke<void>("auth_send_email_code", { email, purpose });
-
 export const authRegisterEmail = (email: string, code: string, password: string) =>
   invoke<AuthStatus>("auth_register_email", { email, code, password });
 
@@ -537,16 +533,64 @@ export interface AccountProfile {
   user_id: string;
   username: string;
   display_name: string;
+  bio: string;
   email: string | null;
   email_verified: boolean;
   created_ms: number;
   password_changed_ms: number | null;
+  deletion_requested_ms: number | null;
 }
 
 export const authGetProfile = () => invoke<AccountProfile>("auth_get_profile");
 
-export const authUpdateDisplayName = (displayName: string) =>
-  invoke<void>("auth_update_display_name", { displayName });
+/** 改资料:显示名/个性签名均可选更新(null = 保持)。 */
+export const authUpdateProfile = (displayName: string | null, bio: string | null) =>
+  invoke<void>("auth_update_profile", { displayName, bio });
+
+/** 发邮箱验证码。purpose 加 "delete"(注销确认)。 */
+export const authSendEmailCode = (
+  email: string,
+  purpose: "register" | "reset" | "bind" | "delete",
+) => invoke<void>("auth_send_email_code", { email, purpose });
+
+/** 申请注销:15 天冷静期,期间可撤销;到期云端数据级联删除。 */
+export const authRequestDeletion = (password: string, code: string | null) =>
+  invoke<void>("auth_request_deletion", { password, code });
+
+/** 撤销注销申请。 */
+export const authCancelDeletion = (password: string) =>
+  invoke<void>("auth_cancel_deletion", { password });
+
+// === 头像 + 数据导出(P1d) ===
+
+/** 上传/替换头像(本地图片路径;JPG/PNG ≤2MB,后端魔法字节核验)。 */
+export const authSetAvatar = (path: string) =>
+  invoke<void>("auth_set_avatar", { path });
+
+/** 取头像;成功返回 data: URL(直接 <img src>),无头像返回 null。 */
+export const authGetAvatar = () => invoke<string | null>("auth_get_avatar");
+
+/** 移除头像(幂等)。 */
+export const authDeleteAvatar = () => invoke<void>("auth_delete_avatar");
+
+/** 导出账号全部云端数据为 JSON(path 由保存对话框取得)。 */
+export const authExportData = (path: string) =>
+  invoke<void>("auth_export_data", { path });
+
+// === 登录记录(P1d) ===
+
+export interface LoginLogItem {
+  created_ms: number;
+  device_id: string;
+  device_name: string;
+  ip: string;
+  method: string;
+  ok: boolean;
+  detail: string;
+}
+
+/** 本人最近 50 条登录记录(含失败)。 */
+export const authGetLoginLogs = () => invoke<LoginLogItem[]>("auth_get_login_logs");
 
 /** 改用户名(验密码;其他设备下线,本机自动换新令牌)。 */
 export const authUpdateUsername = (username: string, password: string) =>

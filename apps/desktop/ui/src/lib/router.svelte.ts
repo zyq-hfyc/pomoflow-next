@@ -56,6 +56,7 @@ export const ROUTES = [
   { path: "/tasks", labelKey: "tasks" },
   { path: "/stats", labelKey: "stats" },
   { path: "/settings", labelKey: "settings" },
+  { path: "/account", labelKey: "account" },
   { path: "/help", labelKey: "help" },
 ] as const;
 
