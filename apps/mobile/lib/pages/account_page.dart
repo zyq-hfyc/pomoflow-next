@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../providers/auth_provider.dart';
 import '../services/api_client.dart';
@@ -711,11 +714,280 @@ class _DevicesBodyState extends State<_DevicesBody> {
 // 危险区 body
 // =============================================================================
 
-class _DangerBody extends StatelessWidget {
+class _DangerBody extends StatefulWidget {
+  @override
+  State<_DangerBody> createState() => _DangerBodyState();
+}
+
+class _DangerBodyState extends State<_DangerBody> {
+  Map<String, dynamic>? _profile;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final p = await ApiClient.instance.get('/v1/auth/profile');
+      if (mounted) setState(() => _profile = p);
+    } on ApiException {
+      /* 离线 / 旧后端:不显示冷静期横幅 */
+    }
+  }
+
+  /// cool-down 申请时间(毫秒);null = 未申请。
+  int? get _deletionReqMs {
+    final v = _profile?['deletion_requested_ms'];
+    if (v is int && v > 0) return v;
+    return null;
+  }
+
+  /// cool-down 实际生效时刻 = 申请 + 15 天。
+  DateTime? get _deletionEffective {
+    final ms = _deletionReqMs;
+    if (ms == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(ms + 15 * 86_400_000);
+  }
+
+  /// 数据导出:GET /v1/auth/export → tmp 文件 → share_plus 调系统分享。
+  Future<void> _exportData() async {
+    _AccountHelpers.hint(context, '正在生成备份...');
+    try {
+      final data = await ApiClient.instance.get('/v1/auth/export');
+      final tmpDir = await getTemporaryDirectory();
+      final stamp = _fmtStamp(DateTime.now());
+      final name = 'pomoflow-backup-$stamp.json';
+      final f = File('${tmpDir.path}/$name');
+      await f.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(data),
+      );
+      // ignore: deprecated_member_use
+      await Share.shareXFiles(
+        [XFile(f.path, mimeType: 'application/json')],
+        text: 'PomoFlow 数据备份 $stamp',
+      );
+      if (mounted) _AccountHelpers.hint(context, '已导出 $name');
+    } on ApiException catch (e) {
+      if (mounted) _AccountHelpers.hint(context, e.message);
+    }
+  }
+
+  /// 申请注销:三步 dialog(密码 + 验证码若绑邮箱 + 「输入『注销账号』二次确认」)
+  /// → POST /v1/auth/deletion/request → 刷新 profile(横幅出现)
+  Future<void> _requestDeletion() async {
+    final hasVerifiedEmail =
+        (_profile?['email_verified'] == true) && (_profile?['email'] != null);
+    final email = hasVerifiedEmail ? _profile!['email'] as String : null;
+    final pwCtrl = TextEditingController();
+    final codeCtrl = TextEditingController();
+    final confirmCtrl = TextEditingController();
+    bool sendCodeBusy = false;
+
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text(
+            '申请注销账号',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                '申请后 15 天内可撤销,到期将永久删除账号及全部云端数据,操作不可恢复。',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: pwCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: '当前密码'),
+              ),
+              if (hasVerifiedEmail) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: codeCtrl,
+                        keyboardType: TextInputType.number,
+                        maxLength: 6,
+                        decoration: const InputDecoration(
+                          labelText: '邮箱验证码',
+                          counterText: '',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: sendCodeBusy
+                          ? null
+                          : () async {
+                              setState(() => sendCodeBusy = true);
+                              try {
+                                await ApiClient.instance.postUnauth(
+                                  '/v1/auth/email/send-code',
+                                  {
+                                    'email': email,
+                                    'purpose': 'delete',
+                                  },
+                                );
+                                if (ctx.mounted) {
+                                  ScaffoldMessenger.of(ctx).showSnackBar(
+                                    const SnackBar(content: Text('验证码已发送')),
+                                  );
+                                }
+                              } on ApiException catch (e) {
+                                if (ctx.mounted) {
+                                  ScaffoldMessenger.of(ctx).showSnackBar(
+                                    SnackBar(content: Text(e.message)),
+                                  );
+                                }
+                              } finally {
+                                if (ctx.mounted) {
+                                  setState(() => sendCodeBusy = false);
+                                }
+                              }
+                            },
+                      child: Text(
+                        sendCodeBusy ? '已发送' : '获取验证码',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 8),
+              TextField(
+                controller: confirmCtrl,
+                decoration: const InputDecoration(
+                  labelText: '输入「注销账号」二次确认',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (pwCtrl.text.isEmpty) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('请输入当前密码')),
+                  );
+                  return;
+                }
+                if (confirmCtrl.text.trim() != '注销账号') {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('需输入「注销账号」二次确认')),
+                  );
+                  return;
+                }
+                Navigator.pop(ctx, true);
+              },
+              child: const Text('申请注销'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    // 把 confirmCtrl / codeCtrl 在 dispose 前取出字段,避免 dialog dispose 后引用问题。
+    final pwd = pwCtrl.text;
+    final code = codeCtrl.text.trim();
+    pwCtrl.dispose();
+    codeCtrl.dispose();
+    confirmCtrl.dispose();
+    if (submitted != true) return;
+
+    try {
+      await ApiClient.instance.post('/v1/auth/deletion/request', {
+        'password': pwd,
+        if (code.isNotEmpty) 'code': code,
+      });
+      if (mounted) _AccountHelpers.hint(context, '注销申请已提交,15 天冷静期');
+      _load();
+    } on ApiException catch (e) {
+      if (mounted) _AccountHelpers.hint(context, e.message);
+    }
+  }
+
+  /// 撤销注销:弹窗确认密码 → POST /v1/auth/deletion/cancel
+  Future<void> _cancelDeletion() async {
+    final pwCtrl = TextEditingController();
+    final pw = await showDialog<String?>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text(
+          '撤销注销申请',
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '撤销后账号恢复正常使用。请输入当前密码确认。',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: pwCtrl,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: '当前密码'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop<String?>(ctx, null),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (pwCtrl.text.isEmpty) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(content: Text('请输入当前密码')),
+                );
+                return;
+              }
+              Navigator.pop<String?>(ctx, pwCtrl.text);
+            },
+            child: const Text('确认撤销'),
+          ),
+        ],
+      ),
+    );
+    pwCtrl.dispose();
+    if (pw == null) return;
+
+    try {
+      await ApiClient.instance.post('/v1/auth/deletion/cancel', {
+        'password': pw,
+      });
+      if (mounted) _AccountHelpers.hint(context, '已撤销注销申请');
+      _load();
+    } on ApiException catch (e) {
+      if (mounted) _AccountHelpers.hint(context, e.message);
+    }
+  }
+
+  String _fmtStamp(DateTime d) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${d.year}-${two(d.month)}-${two(d.day)}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final error = theme.colorScheme.error;
+    final coolDownEnd = _deletionEffective;
     return ListView(
       padding: const EdgeInsets.only(bottom: 40),
       children: [
@@ -725,6 +997,51 @@ class _DangerBody extends StatelessWidget {
             text: '注销须知(15 天冷静期可撤销)、数据导出。',
           ),
         ),
+        // 冷静期黄色横幅(条件渲染):profile.deletion_requested_ms != null 时出现。
+        if (coolDownEnd != null)
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+            decoration: BoxDecoration(
+              color: theme.pfWarn.withValues(alpha: .12),
+              border: Border.all(color: theme.pfWarn.withValues(alpha: .45)),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '冷静期中',
+                        style: TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '将于 ${_fmtStamp(coolDownEnd)} 永久注销。期间仍可登录使用,也可撤销。',
+                        style: TextStyle(
+                          fontSize: 12, color: theme.pfMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                TextButton(
+                  onPressed: _cancelDeletion,
+                  child: Text(
+                    '撤销',
+                    style: TextStyle(
+                      fontSize: 13, color: theme.pfBrand700,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         Container(
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
@@ -748,13 +1065,14 @@ class _DangerBody extends StatelessWidget {
                 ),
               ),
               _AccountHelpers.kv(
-                context, '导出我的数据', 'JSON / xlsx',
-                onTap: () => _AccountHelpers.hint(context, '数据导出将在 P3d 接入'),
+                context, '导出我的数据', 'JSON 备份',
+                onTap: coolDownEnd != null ? null : _exportData,
               ),
               _AccountHelpers.kv(
-                context, '注销账号', '需验证 · 15 天冷静期',
+                context, '注销账号',
+                coolDownEnd != null ? '冷静期内 · 不可重复申请' : '需验证 · 15 天冷静期',
                 danger: true,
-                onTap: () => _AccountHelpers.hint(context, '账号注销将在 P3d 接入'),
+                onTap: coolDownEnd != null ? null : _requestDeletion,
               ),
             ],
           ),
