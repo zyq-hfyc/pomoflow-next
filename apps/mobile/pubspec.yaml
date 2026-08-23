@@ -24,6 +24,8 @@ dependencies:
   path_provider: ^2.1.5
   # SQLite 客户端(数据层 P3d-Phase-1)
   sqflite: ^2.4.0
+  # 路径拼接(用于 sqflite 数据库文件名;通常 path_provider 自带)
+  path: ^1.9.0
 
 dev_dependencies:
   flutter_test:

@@ -41,7 +41,7 @@ class _ItemCreateFormState extends State<_ItemCreateForm> {
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     final title = _titleCtrl.text.trim();
     final content = _bodyCtrl.text.trim();
     if (title.isEmpty && content.isEmpty) {
@@ -54,15 +54,18 @@ class _ItemCreateFormState extends State<_ItemCreateForm> {
         .map((t) => t.trim())
         .where((t) => t.isNotEmpty)
         .toList();
-    context.read<TaskProvider>().addJournal(
+    final provider = context.read<TaskProvider>();
+    final id = await provider.nextId();
+    await provider.addJournal(
       PfJournal(
-        id: context.read<TaskProvider>().nextId(),
+        id: id,
         kind: widget.kind,
         title: title,
         content: content,
         tags: tags,
       ),
     );
+    if (!mounted) return;
     Navigator.pop(context);
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text('${widget.kind.label}已保存')));

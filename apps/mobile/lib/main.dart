@@ -9,12 +9,27 @@ import 'pages/login_page.dart';
 import 'pages/home_page.dart';
 import 'theme/app_theme.dart';
 
-void main() {
-  runApp(const PomoFlowApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // 启动时同步预热 sqflite(失败降级内存 demo);web 平台 `open()` 内部走 `kIsWeb` 走 demo
+  final task = await _safeTaskProvider();
+  runApp(PomoFlowApp(taskProvider: task));
+}
+
+Future<TaskProvider> _safeTaskProvider() async {
+  try {
+    return await TaskProvider.open();
+  } catch (e, st) {
+    // ignore: avoid_print
+    print('TaskProvider.open failed, falling back to demo: $e\n$st');
+    return TaskProvider.demo();
+  }
 }
 
 class PomoFlowApp extends StatelessWidget {
-  const PomoFlowApp({super.key});
+  const PomoFlowApp({super.key, required this.taskProvider});
+
+  final TaskProvider taskProvider;
 
   @override
   Widget build(BuildContext context) {
@@ -23,8 +38,9 @@ class PomoFlowApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AuthProvider()..initialize()),
         ChangeNotifierProvider(create: (_) => ThemeProvider()..initialize()),
         ChangeNotifierProvider(create: (_) => NavProvider()),
-        // UI 高保真批次:内存示例数据;P3c 换 SQLite + LWW 同步
-        ChangeNotifierProvider(create: (_) => TaskProvider.demo()),
+        // SQLite-backed data layer(P3d-Phase-1)。失败时 main 已降级 demo,
+        // 这里直接 value 注入已 hydrate 的实例。
+        ChangeNotifierProvider<TaskProvider>.value(value: taskProvider),
       ],
       child: Consumer<ThemeProvider>(
         builder: (context, theme, _) => MaterialApp(

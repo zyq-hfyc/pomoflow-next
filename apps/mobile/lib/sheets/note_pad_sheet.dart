@@ -33,21 +33,24 @@ class _NotePadFormState extends State<_NotePadForm> {
     super.dispose();
   }
 
-  void _save() {
+  Future<void> _save() async {
     final text = _ctrl.text.trim();
     if (text.isEmpty) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('写点什么再保存吧')));
       return;
     }
-    context.read<TaskProvider>().addJournal(
+    final provider = context.read<TaskProvider>();
+    final id = await provider.nextId();
+    await provider.addJournal(
       PfJournal(
-        id: context.read<TaskProvider>().nextId(),
+        id: id,
         kind: JournalKind.note,
         title: '',
         content: text,
       ),
     );
+    if (!mounted) return;
     Navigator.pop(context);
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('小记已保存')));

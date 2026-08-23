@@ -40,7 +40,7 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     final title = _titleCtrl.text.trim();
     if (title.isEmpty) {
       ScaffoldMessenger.of(context)
@@ -52,9 +52,11 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
         .map((t) => t.trim())
         .where((t) => t.isNotEmpty)
         .toList();
-    context.read<TaskProvider>().addTask(
+    final provider = context.read<TaskProvider>();
+    final id = await provider.nextId();
+    await provider.addTask(
       PfTask(
-        id: context.read<TaskProvider>().nextId(),
+        id: id,
         title: title,
         priority: _priority,
         project: _project,
@@ -63,6 +65,7 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
         estimatedPomos: _pomos,
       ),
     );
+    if (!mounted) return;
     Navigator.pop(context);
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('已创建并加入清单')));
