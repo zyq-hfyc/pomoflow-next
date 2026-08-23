@@ -31,7 +31,7 @@ class AppDatabase {
 
   /// schema v1 → v2:`tasks` 加 5 列 + meta last_seq 行初始化。
   /// schema v2 → v3(下批):tasks.id INTEGER → TEXT 类型整体迁移。
-  static const _schemaVersion = 2;
+  static const _schemaVersion = 3;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -52,8 +52,10 @@ class AppDatabase {
           if (oldVersion < 2) {
             await _v1ToV2(db);
           }
-          // v2 → v3(下批):id INTEGER → TEXT 类型切换 + 关联表。
-          // 留 TODO 防遗漏。
+          // v2 → v3:tasks.id INTEGER → TEXT 类型整体迁移(id 字符串化)。
+          if (oldVersion < 3) {
+            await _v2ToV3(db);
+          }
         },
       ),
     );
@@ -68,7 +70,7 @@ class AppDatabase {
   static Future<void> _createSchema(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS tasks (
-        id INTEGER PRIMARY KEY,
+        id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
         priority TEXT NOT NULL DEFAULT 'none',
         project TEXT NOT NULL DEFAULT '',
@@ -148,6 +150,49 @@ class AppDatabase {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// v2 → v3 升级:`tasks.id INTEGER → TEXT` 类型整体迁移。
+  /// SQLite 标准做法:创建新表 + INSERT SELECT 复制(id 转 string)+ DROP 旧表 + RENAME 新表。
+  static Future<void> _v2ToV3(Database db) async {
+    await db.execute('''
+      CREATE TABLE tasks_v3 (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        priority TEXT NOT NULL DEFAULT 'none',
+        project TEXT NOT NULL DEFAULT '',
+        due_label TEXT NOT NULL DEFAULT '',
+        completed INTEGER NOT NULL DEFAULT 0,
+        estimated INTEGER NOT NULL DEFAULT 0,
+        completed_cnt INTEGER NOT NULL DEFAULT 0,
+        subtask_cnt INTEGER NOT NULL DEFAULT 0,
+        tags_csv TEXT NOT NULL DEFAULT '',
+        is_focus INTEGER NOT NULL DEFAULT 0,
+        revision INTEGER NOT NULL DEFAULT 1,
+        sync_state TEXT NOT NULL DEFAULT 'synced',
+        origin_device TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT ''
+      )
+    ''');
+    // cast(id AS TEXT) SQLite 默认就支持,字面量转字符串等价。
+    await db.execute('''
+      INSERT INTO tasks_v3
+        (id, title, priority, project, due_label, completed,
+         estimated, completed_cnt, subtask_cnt, tags_csv, is_focus,
+         revision, sync_state, origin_device, payload, user_id)
+      SELECT
+        CAST(id AS TEXT), title, priority, project, due_label, completed,
+        estimated, completed_cnt, subtask_cnt, tags_csv, is_focus,
+        revision, sync_state, origin_device, payload, user_id
+      FROM tasks
+    ''');
+    await db.execute('DROP TABLE tasks');
+    await db.execute('ALTER TABLE tasks_v3 RENAME TO tasks');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)');
+    // bump schema_version → 3
+    await db.insert('meta', {'k': 'schema_version', 'v': '3'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
   Database get raw => _db;
 
   Future<void> close() => _db.close();
@@ -200,7 +245,7 @@ class AppDatabase {
     );
   }
 
-  Future<void> setFocus(int? id) async {
+  Future<void> setFocus(String? id) async {
     await _db.transaction((txn) async {
       await txn.update('tasks', {'is_focus': 0});
       if (id != null) {
@@ -214,16 +259,10 @@ class AppDatabase {
     });
   }
 
-  /// === Phase-2 ChangeLogStore 适配(P3d-Phase-2 P0,Tasks 实体)===
+  /// === Phase-2 ChangeLogStore 适配(P3d-Phase-2 P0,Tasks 实体,id 已切 String)===
   ///
   /// 与桌面端 `crates/core/src/store/sqlite.rs` SqliteStore::ChangeLogStore
   /// 实现对齐;不在 dart 端抽 trait(单 store 无分发开销)。
-  ///
-  /// 注意:本批 schema_version=2 阶段,tasks.id 仍是 INTEGER PRIMARY KEY;
-  /// v3 commit 后切 TEXT。Signatures 用 `int id`。
-  /// P0 阶段就先把增 5 列(sync_state / revision / origin_device / payload /
-  /// user_id)写到位 + methods 接好,下批 id 切字符串只需改签 + row mapper,
-  /// 4 方法语义不动。
 
   /// 当前未推送的变更(`sync_state = 'pending'`),按 updated_at_ms 升序。
   /// 返回 `Map<id, Map<column, value>>` 形式(包含 revision / updated_at_ms
@@ -245,10 +284,8 @@ class AppDatabase {
   ///   payload / 业务字段全部以 **远端权威值** 覆盖(`sync_state = 'synced'`,
   ///   服务端做了 LWW 裁决才下发这里,我们照单全收)
   /// - 如果不存在,INSERT
-  ///
-  /// ⚠️ 本批 id 是 int;签名用 int。等 v3 commit 切 string 后调 [applyRemoteTaskString]。
   Future<void> applyRemoteTask({
-    required int id,
+    required String id,
     required int revision,
     required int updatedAtMs,
     required String originDevice,
@@ -278,7 +315,7 @@ class AppDatabase {
   }
 
   /// 推 push 后服务端接受,本地把对应行标 `sync_state='synced'`。
-  Future<void> markTasksSynced(List<int> ids) async {
+  Future<void> markTasksSynced(List<String> ids) async {
     if (ids.isEmpty) return;
     final placeholders = List.filled(ids.length, '?').join(',');
     await _db.rawUpdate(
@@ -287,9 +324,8 @@ class AppDatabase {
     );
   }
 
-  /// Pull 时与远端比 LWW 取本地候选。本批本端 i64 隐含;下批 id 切 string 后
-  /// 返回的 `id` 字段同步改 String,但语义不变。
-  Future<Map<String, Object?>?> localTaskCandidate(int id) async {
+  /// Pull 时与远端比 LWW 取本地候选(id 是 String)。
+  Future<Map<String, Object?>?> localTaskCandidate(String id) async {
     final rows = await _db.query(
       'tasks',
       columns: ['id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
@@ -303,7 +339,7 @@ class AppDatabase {
   /// 本端 mutator 写完后调用:bump revision + sync_state='pending' +
   /// updated_at_ms=now + payload=JSON。is_focus 等其他字段不变。
   Future<void> markTaskPending({
-    required int id,
+    required String id,
     required String payload,
     required String originDevice,
     required String userId,
@@ -323,6 +359,8 @@ class AppDatabase {
   }
 
   // === journals ================================================================
+  // PfJournal.id 字符串化已在 models/task.dart 完成;schema v3 不动 journals
+  // 表,等 P1 Journal 同步批一次性 ALTER(避免本批 commit 3 UI 调用点爆炸)。
 
   Future<List<PfJournal>> listJournals() async {
     final rows = await _db.query('journals', orderBy: 'id ASC');
@@ -330,7 +368,10 @@ class AppDatabase {
   }
 
   Future<int> insertJournal(PfJournal j) async {
-    return _db.insert('journals', _journalToRow(j));
+    // 接受 String id 但库列当前是 INTEGER → 转 int('1' → 1)。
+    // P1 批把 journals.id 列也切 TEXT 后撤掉这一段 cast。
+    final row = _journalToRow(j);
+    return _db.insert('journals', row);
   }
 
   // === Row mappers =============================================================
@@ -379,16 +420,16 @@ class AppDatabase {
     'subtask_cnt': t.subtaskCount,
     'tags_csv': _csv(t.tags),
     'is_focus': 0,
-    // v2 同步元信息列:默认值,v2 commit 内默认已 'synced' / revision=1
-    'revision': 1,
-    'sync_state': 'synced',
-    'origin_device': '',
-    'payload': '',
-    'user_id': '',
+    'revision': t.syncMeta.revision,
+    'sync_state': t.syncMeta.syncState,
+    'origin_device': t.syncMeta.originDevice,
+    'payload': _serializePayload(t),
+    'user_id': t.syncMeta.userId,
+    'updated_at_ms': t.syncMeta.updatedAt?.millisecondsSinceEpoch ?? 0,
   };
 
   PfTask _taskFromRow(Map<String, Object?> r) => PfTask(
-    id: r['id'] as int,
+    id: r['id'] as String,
     title: r['title'] as String,
     priority: _priorityFrom(r['priority'] as String),
     project: (r['project'] as String?) ?? '',
@@ -398,21 +439,52 @@ class AppDatabase {
     completedPomos: (r['completed_cnt'] as int?) ?? 0,
     subtaskCount: (r['subtask_cnt'] as int?) ?? 0,
     completed: ((r['completed'] as int?) ?? 0) == 1,
+    syncMeta: PfTaskSyncMeta(
+      revision: (r['revision'] as int?) ?? 1,
+      updatedAt: r['updated_at_ms'] != null && (r['updated_at_ms'] as int) > 0
+          ? DateTime.fromMillisecondsSinceEpoch(r['updated_at_ms'] as int)
+          : null,
+      originDevice: (r['origin_device'] as String?) ?? '',
+      syncState: (r['sync_state'] as String?) ?? 'synced',
+      userId: (r['user_id'] as String?) ?? '',
+    ),
   );
 
   Map<String, Object?> _journalToRow(PfJournal j) => {
-    'id': j.id,
-    'kind': _kindText(j.kind),
-    'title': j.title,
-    'content': j.content,
-    'tags_csv': _csv(j.tags),
-  };
+    // 当前 schema journals.id INTEGER,但 P3d-B-Phase-2 PfJournal.id 已切 String;
+    // 插入前手动写 `:int.parse(j.id)` 在 commit 3 UI 调用方(insertJournal 内部
+    // 已经兼容 — 暂时不支持,留 commit 3 整体修改)。本批先 throw 强制显式走 commit 3。
+    if (int.tryParse(j.id) == null) {
+      throw StateError(
+        'journals.id 尚为 INTEGER 列,P3d-B-Phase-2 批请走 commit 3 切 TEXT 列后再写',
+      );
+    }
+    return {
+      'id': int.parse(j.id),
+      'kind': _kindText(j.kind),
+      'title': j.title,
+      'content': j.content,
+      'tags_csv': _csv(j.tags),
+    };
+  }
 
   PfJournal _journalFromRow(Map<String, Object?> r) => PfJournal(
-    id: r['id'] as int,
+    // 同上,journals.id INTEGER 列,反序列化时转回 String 给 UI。
+    id: (r['id'] as int).toString(),
     kind: _kindFrom(r['kind'] as String),
     title: (r['title'] as String?) ?? '',
     content: (r['content'] as String?) ?? '',
     tags: _splitCsv((r['tags_csv'] as String?) ?? ''),
   );
+
+  /// 把 PfTask 业务字段 → 与 server `crate::core::model::Task` 对齐的 JSON 字符串,
+  /// 缓存到 `tasks.payload` 列(SyncClient push 时附 `payload` 字段)。
+  /// 注意:本批**不**包含 sync 字段(revision / updatedAt / originDevice / syncState /
+  /// userId)— 那些是 \"传输元信息\",server 端的 `core::Task` JSON 不需要它们。
+  String _serializePayload(PfTask t) {
+    // 仅在 sync_client 的 payload 映射里直接构造;此处占位返回空串,
+    // 真正的 payload 由 SyncClient.taskToChangeJson(...) 在 push 时构造(它有最新
+    // user_id / device_id 等上下文)。
+    return '';
+  }
 }

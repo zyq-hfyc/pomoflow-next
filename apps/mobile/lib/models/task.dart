@@ -21,7 +21,32 @@ extension PfPriorityX on PfPriority {
       };
 }
 
-/// 任务(本批 UI 高保真用内存模型;P3c 换 core 域模型 + 同步)。
+/// 同步元信息集合 — 在 P3d-B-Phase-2 与 sqflite `tasks` 表对齐:
+/// - `revision`:本地写每次 +1,服务端用做 LWW 裁决;
+/// - `updatedAt`:本次写时间(默认 epoch 表示「无」,provider 写入时覆盖);
+/// - `originDevice`:首次写入该行的设备(`AuthProvider.deviceId`);
+/// - `syncState`:本端 `'pending'|'synced'|'tombstone'`;
+/// - `userId`:首次写入该行的账号 id(后续 `SyncClient` 落 server 时携带)。
+@immutable
+class PfTaskSyncMeta {
+  const PfTaskSyncMeta({
+    this.revision = 1,
+    this.updatedAt,
+    this.originDevice = '',
+    this.syncState = 'synced',
+    this.userId = '',
+  });
+
+  final int revision;
+  final DateTime? updatedAt;
+  final String originDevice;
+  final String syncState;
+  final String userId;
+}
+
+/// 任务(P3d-B-Phase-2 同步版):id 已经切 String,与 server `core::Task.id`
+/// `Uuid` 对齐;5 同步字段挂在 [syncMeta] 子结构里 → 接下来每条 mutator 调用
+/// `copyWith` 后由 provider 自动 bumpRevision + 标 pending(Commit 4)。
 @immutable
 class PfTask {
   const PfTask({
@@ -35,9 +60,13 @@ class PfTask {
     this.completedPomos = 0,
     this.subtaskCount = 0,
     this.completed = false,
+    this.syncMeta = const PfTaskSyncMeta(),
   });
 
-  final int id;
+  /// UUID 14 字符短码(16 字节 Random.secure → base64Url 截前 14 位);
+  /// UI 不直接显示,只做对比 / 透传给 SyncClient。
+  final String id;
+
   final String title;
   final PfPriority priority;
   final String project;
@@ -48,8 +77,14 @@ class PfTask {
   final int subtaskCount;
   final bool completed;
 
+  /// Phase-2 同步元信息。`copyWith` 业务字段时 syncMeta 默认保留不变;
+  /// provider 在 mutator 末尾手动覆写(revision + 1 / syncState='pending' /
+  /// updatedAt=now)。
+  final PfTaskSyncMeta syncMeta;
+
   String get pomoLabel => '$completedPomos/$estimatedPomos';
 
+  /// 业务字段 copy。**id 与 syncMeta 不可变**(由 SyncClient / provider 决定)。
   PfTask copyWith({
     String? title,
     PfPriority? priority,
@@ -60,6 +95,7 @@ class PfTask {
     int? completedPomos,
     int? subtaskCount,
     bool? completed,
+    PfTaskSyncMeta? syncMeta,
   }) => PfTask(
     id: id,
     title: title ?? this.title,
@@ -71,6 +107,7 @@ class PfTask {
     completedPomos: completedPomos ?? this.completedPomos,
     subtaskCount: subtaskCount ?? this.subtaskCount,
     completed: completed ?? this.completed,
+    syncMeta: syncMeta ?? this.syncMeta,
   );
 }
 
@@ -103,7 +140,8 @@ class PfJournal {
     this.tags = const [],
   });
 
-  final int id;
+  /// P3d-B-Phase-2 顺手切 String(下批 Journal 同步时不返工)。
+  final String id;
   final JournalKind kind;
   final String title;
   final String content;
