@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 
 import '../providers/auth_provider.dart';
 import '../providers/theme_provider.dart';
+import '../services/api_client.dart';
+import '../services/sync_client.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_sheet.dart';
 import 'account_page.dart';
@@ -18,21 +20,36 @@ class MePage extends StatefulWidget {
 
 class _MePageState extends State<MePage> {
   bool _syncing = false;
-  String _syncLabel = '已同步 · 2 分钟前';
+  String _syncLabel = '点击立即同步';
 
-  /// 立即同步(演示;P3c 接 Push/Pull 真流程)。
+  /// 立即同步(P3d-B-Phase-2 真实接入 SyncClient.runOnce):
+  /// pull → push,带错误处理。
   Future<void> _syncNow() async {
     if (_syncing) return;
     setState(() {
       _syncing = true;
       _syncLabel = '同步中…';
     });
-    await Future<void>.delayed(const Duration(milliseconds: 900));
-    if (!mounted) return;
-    setState(() {
-      _syncing = false;
-      _syncLabel = '已同步 · 刚刚';
-    });
+    try {
+      final msg = await SyncClient.instance.runOnce();
+      if (!mounted) return;
+      setState(() {
+        _syncLabel = msg;
+        _syncing = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _syncLabel = '同步失败 · ${e.message}';
+        _syncing = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _syncLabel = '同步失败 · $e';
+        _syncing = false;
+      });
+    }
   }
 
   @override
