@@ -18,6 +18,12 @@ dependencies:
   provider: ^6.1.2
   # 非敏感配置(服务器地址)
   shared_preferences: ^2.3.2
+  # 真机机型自报(Android brand+model / iOS name+model)
+  device_info_plus: ^11.0.0
+  # 本地数据库路径(用于 sqflite 落盘)
+  path_provider: ^2.1.5
+  # SQLite 客户端(数据层 P3d-Phase-1)
+  sqflite: ^2.4.0
 
 dev_dependencies:
   flutter_test:
