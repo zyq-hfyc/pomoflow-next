@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -195,7 +197,23 @@ class _ProfileBodyState extends State<_ProfileBody> {
     try {
       final p = await ApiClient.instance.get('/v1/auth/profile');
       if (mounted) setState(() => _profile = p);
-      // 头像暂不接 P3d 设备机型;真实场景再补
+      // 头像 GET 单独失败不阻断:旧后端没端点时降级首字母 fallback。
+      try {
+        final av = await ApiClient.instance.get('/v1/auth/avatar');
+        final b64 = av['avatar_base64'] as String?;
+        if (mounted) {
+          setState(() {
+            if (b64 == null) {
+              _avatarDataUrl = null;
+            } else {
+              final mime = (av['mime'] as String?) ?? 'image/png';
+              _avatarDataUrl = 'data:$mime;base64,$b64';
+            }
+          });
+        }
+      } on ApiException {
+        /* 旧后端 404 或离线 → 首字母 fallback */
+      }
     } on ApiException {
       // 网络/profile 拉不到,降级
     }
@@ -299,14 +317,22 @@ class _AvatarBlock extends StatelessWidget {
               shape: BoxShape.circle,
               border: Border.all(color: theme.pfLine),
             ),
+            clipBehavior: Clip.antiAlias,
             alignment: Alignment.center,
-            child: Text(
-              initial,
-              style: TextStyle(
-                fontSize: 26, fontWeight: FontWeight.w800,
-                color: theme.pfBrand700,
-              ),
-            ),
+            child: dataUrl != null
+                ? Image.memory(
+                    base64Decode(dataUrl!.split(',').last),
+                    fit: BoxFit.cover,
+                    cacheWidth: 128,
+                    gaplessPlayback: true,
+                  )
+                : Text(
+                    initial,
+                    style: TextStyle(
+                      fontSize: 26, fontWeight: FontWeight.w800,
+                      color: theme.pfBrand700,
+                    ),
+                  ),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -318,9 +344,12 @@ class _AvatarBlock extends StatelessWidget {
                   color: theme.colorScheme.onSurface,
                 )),
                 const SizedBox(height: 2),
-                Text('点击更换(后续 P3d 接入)', style: TextStyle(
-                  fontSize: 12, color: theme.pfMuted,
-                )),
+                Text(
+                  dataUrl == null ? '点击上传' : '点击更换 · 长按移除',
+                  style: TextStyle(
+                    fontSize: 12, color: theme.pfMuted,
+                  ),
+                ),
               ],
             ),
           ),

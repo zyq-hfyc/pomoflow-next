@@ -66,6 +66,10 @@ class ApiClient {
   Future<Map<String, dynamic>> post(String path, Map<String, dynamic> body) =>
       _request('POST', path, body: body);
 
+  /// 已认证 DELETE(401 自动刷新)。P3d 账号管理三件套里的头像删除走这条。
+  Future<Map<String, dynamic>> delete(String path) async =>
+      _request('DELETE', path);
+
   /// 未认证 POST(登录/注册/验证码)。
   Future<Map<String, dynamic>> postUnauth(
     String path,
@@ -166,6 +170,8 @@ class ApiClient {
         return http.get(uri, headers: headers);
       case 'POST':
         return http.post(uri, headers: headers, body: jsonEncode(body ?? {}));
+      case 'DELETE':
+        return http.delete(uri, headers: headers);
       default:
         throw ArgumentError('Unsupported method: $method');
     }
