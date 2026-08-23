@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/auth_provider.dart';
 import '../services/api_client.dart';
+import 'forgot_password_page.dart';
 
 /// 登录/注册页(P3a 骨架):
 /// - 上方:服务器地址配置(首次使用必填);
@@ -270,7 +271,10 @@ class _LoginPageState extends State<LoginPage>
               : const Text('登录'),
         ),
         TextButton(
-          onPressed: () {/* TODO: P3b 忘记密码三步流 */},
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
+          ),
           child: const Text('忘记密码?'),
         ),
       ];

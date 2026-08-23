@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/auth_provider.dart';
+import 'account_page.dart';
 
 /// 首页骨架(P3a):BottomNavigation 四 Tab(计时/任务/统计/账号)。
 /// P3a 每个 Tab 都是占位卡片,P3b 起逐个填充功能。
@@ -97,24 +98,15 @@ class _AccountTab extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Card(
-          child: Column(
-            children: [
-              ListTile(
-                leading: const Icon(Icons.lock_outline),
-                title: const Text('修改密码'),
-                subtitle: const Text('P3b 接入'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.devices),
-                title: const Text('登录设备'),
-                subtitle: const Text('P3b 接入'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.download),
-                title: const Text('数据导出'),
-                subtitle: const Text('P3b 接入'),
-              ),
-            ],
+          child: ListTile(
+            leading: const Icon(Icons.manage_accounts),
+            title: const Text('账号管理'),
+            subtitle: const Text('资料 / 安全 / 设备 / 导出 / 注销'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AccountPage()),
+            ),
           ),
         ),
         const SizedBox(height: 16),

@@ -70,6 +70,31 @@ class ApiClient {
   Future<Map<String, dynamic>> postUnauth(String path, Map<String, dynamic> body) =>
       _request('POST', path, body: body, authenticated: false);
 
+  /// 已认证 POST,返回 JSON 数组(如 sessions 列表)。
+  Future<List<dynamic>> postList(String path, Map<String, dynamic> body) async {
+    if (_baseUrl.isEmpty) throw ApiException('未配置服务器地址');
+    final uri = Uri.parse('$_baseUrl$path');
+    final headers = {
+      'Content-Type': 'application/json',
+      if (_accessToken != null) 'Authorization': 'Bearer $_accessToken',
+    };
+    http.Response resp;
+    try {
+      resp = await http.post(uri, headers: headers, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+    } catch (e) {
+      throw ApiException('网络错误: $e');
+    }
+    if (resp.statusCode >= 400) {
+      final json = jsonDecode(resp.body);
+      if (json is Map<String, dynamic> && json['error'] is Map) {
+        throw ApiException(json['error']['message']?.toString() ?? '请求失败');
+      }
+      throw ApiException('请求失败(${resp.statusCode})');
+    }
+    return jsonDecode(resp.body) as List<dynamic>;
+  }
+
   Future<Map<String, dynamic>> _request(
     String method,
     String path, {
