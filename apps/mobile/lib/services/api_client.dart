@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -59,16 +60,17 @@ class ApiClient {
   // === 请求 ==================================================================
 
   /// 已认证 GET(401 自动刷新)。
-  Future<Map<String, dynamic>> get(String path) async =>
-      _request('GET', path);
+  Future<Map<String, dynamic>> get(String path) async => _request('GET', path);
 
   /// 已认证 POST(401 自动刷新)。
   Future<Map<String, dynamic>> post(String path, Map<String, dynamic> body) =>
       _request('POST', path, body: body);
 
   /// 未认证 POST(登录/注册/验证码)。
-  Future<Map<String, dynamic>> postUnauth(String path, Map<String, dynamic> body) =>
-      _request('POST', path, body: body, authenticated: false);
+  Future<Map<String, dynamic>> postUnauth(
+    String path,
+    Map<String, dynamic> body,
+  ) => _request('POST', path, body: body, authenticated: false);
 
   /// 已认证 POST,返回 JSON 数组(如 sessions 列表)。
   Future<List<dynamic>> postList(String path, Map<String, dynamic> body) async {
@@ -80,7 +82,8 @@ class ApiClient {
     };
     http.Response resp;
     try {
-      resp = await http.post(uri, headers: headers, body: jsonEncode(body))
+      resp = await http
+          .post(uri, headers: headers, body: jsonEncode(body))
           .timeout(const Duration(seconds: 15));
     } catch (e) {
       throw ApiException('网络错误: $e');
@@ -104,18 +107,19 @@ class ApiClient {
     if (_baseUrl.isEmpty) throw ApiException('未配置服务器地址');
 
     final uri = Uri.parse('$_baseUrl$path');
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-    };
+    final headers = <String, String>{'Content-Type': 'application/json'};
     if (authenticated && _accessToken != null) {
       headers['Authorization'] = 'Bearer $_accessToken';
     }
 
     http.Response resp;
     try {
-      resp = await _send(method, uri, headers, body).timeout(
-        const Duration(seconds: 15),
-      );
+      resp = await _send(
+        method,
+        uri,
+        headers,
+        body,
+      ).timeout(const Duration(seconds: 15));
     } catch (e) {
       throw ApiException('网络错误: $e');
     }
@@ -125,9 +129,12 @@ class ApiClient {
       final refreshed = await _tryRefresh();
       if (refreshed) {
         headers['Authorization'] = 'Bearer $_accessToken';
-        resp = await _send(method, uri, headers, body).timeout(
-          const Duration(seconds: 15),
-        );
+        resp = await _send(
+          method,
+          uri,
+          headers,
+          body,
+        ).timeout(const Duration(seconds: 15));
       } else {
         await clearTokens();
         throw ApiException('登录已过期,请重新登录');
@@ -141,7 +148,9 @@ class ApiClient {
       if (err is Map<String, dynamic>) {
         throw ApiException(err['message']?.toString() ?? '请求失败');
       }
-      throw ApiException(json['message']?.toString() ?? '请求失败(${resp.statusCode})');
+      throw ApiException(
+        json['message']?.toString() ?? '请求失败(${resp.statusCode})',
+      );
     }
     return json;
   }
@@ -167,11 +176,13 @@ class ApiClient {
     final refresh = await _storage.read(key: _keyRefresh);
     if (refresh == null || _baseUrl.isEmpty) return false;
     try {
-      final resp = await http.post(
-        Uri.parse('$_baseUrl/v1/auth/refresh'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'refresh_token': refresh}),
-      ).timeout(const Duration(seconds: 10));
+      final resp = await http
+          .post(
+            Uri.parse('$_baseUrl/v1/auth/refresh'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'refresh_token': refresh}),
+          )
+          .timeout(const Duration(seconds: 10));
       if (resp.statusCode != 200) return false;
       final json = jsonDecode(resp.body) as Map<String, dynamic>;
       await saveTokens(

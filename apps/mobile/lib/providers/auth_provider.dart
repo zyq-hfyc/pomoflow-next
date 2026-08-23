@@ -10,6 +10,17 @@ class AuthProvider extends ChangeNotifier {
 
   String? username;
   String? email;
+  String? displayName;
+
+  /// 展示名(优先昵称,回退用户名)。
+  String get shownName =>
+      displayName?.isNotEmpty == true ? displayName! : (username ?? '');
+
+  /// 账号管理页改昵称后同步全局(我的屏资料头即时刷新)。
+  void updateDisplayName(String name) {
+    displayName = name;
+    notifyListeners();
+  }
 
   /// 应用启动时恢复登录态。
   Future<void> initialize() async {
@@ -20,6 +31,7 @@ class AuthProvider extends ChangeNotifier {
         final profile = await ApiClient.instance.get('/v1/auth/profile');
         username = profile['username'] as String?;
         email = profile['email'] as String?;
+        displayName = profile['display_name'] as String?;
       } catch (_) {
         // token 过期且 refresh 失败 → 已在 ApiClient 内清空
       }
@@ -62,35 +74,39 @@ class AuthProvider extends ChangeNotifier {
   }
 
   /// 邮箱注册(验证码+密码)。
-  Future<void> registerEmail(
-    String mail,
-    String code,
-    String password,
-  ) async {
-    final resp = await ApiClient.instance.postUnauth('/v1/auth/register-email', {
-      'email': mail,
-      'code': code,
-      'password': password,
-      'device_id': _deviceId,
-      'device_name': _deviceName,
-    });
+  Future<void> registerEmail(String mail, String code, String password) async {
+    final resp = await ApiClient.instance.postUnauth(
+      '/v1/auth/register-email',
+      {
+        'email': mail,
+        'code': code,
+        'password': password,
+        'device_id': _deviceId,
+        'device_name': _deviceName,
+      },
+    );
     await _onAuthSuccess(resp);
   }
 
   /// 发送验证码(purpose: register / reset / bind / delete)。
   Future<void> sendCode(String mail, String purpose) async {
-    await ApiClient.instance
-        .postUnauth('/v1/auth/email/send-code', {'email': mail, 'purpose': purpose});
+    await ApiClient.instance.postUnauth('/v1/auth/email/send-code', {
+      'email': mail,
+      'purpose': purpose,
+    });
   }
 
   Future<void> logout() async {
     // 尽力通知服务端;本地必清
     try {
       await ApiClient.instance.post('/v1/auth/logout', {});
-    } catch (_) {/* 离线也照常登出 */}
+    } catch (_) {
+      /* 离线也照常登出 */
+    }
     await ApiClient.instance.clearTokens();
     username = null;
     email = null;
+    displayName = null;
     notifyListeners();
   }
 
@@ -100,6 +116,7 @@ class AuthProvider extends ChangeNotifier {
       resp['refresh_token'] as String,
     );
     username = resp['username'] as String?;
+    displayName = resp['display_name'] as String?;
     notifyListeners();
   }
 

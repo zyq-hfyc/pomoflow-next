@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
-import '../services/api_client.dart';
 
-/// 找回密码三步流(P3b,与桌面端同语义):
+import '../services/api_client.dart';
+import '../theme/tokens.dart';
+import '../widgets/pf_controls.dart';
+
+/// 找回密码三步流(P3b,与桌面端同语义;视觉对齐 §4.5):
 /// ① 输入绑定邮箱 + 发送验证码 → ② 输入验证码 + 新密码 → ③ 成功页(全端下线提示)。
 class ForgotPasswordPage extends StatefulWidget {
   const ForgotPasswordPage({super.key});
@@ -37,11 +40,19 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       setState(() => _error = '邮箱格式不正确');
       return;
     }
-    setState(() { _busy = true; _error = null; });
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
-      await ApiClient.instance
-          .postUnauth('/v1/auth/email/send-code', {'email': email, 'purpose': 'reset'});
-      setState(() { _step = 2; _cooldown = 60; });
+      await ApiClient.instance.postUnauth('/v1/auth/email/send-code', {
+        'email': email,
+        'purpose': 'reset',
+      });
+      setState(() {
+        _step = 2;
+        _cooldown = 60;
+      });
       _tick();
     } on ApiException catch (e) {
       setState(() => _error = e.message);
@@ -68,7 +79,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       setState(() => _error = '密码至少 8 位');
       return;
     }
-    setState(() { _busy = true; _error = null; });
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
       await ApiClient.instance.postUnauth('/v1/auth/reset-password', {
         'email': _emailCtrl.text.trim(),
@@ -85,8 +99,18 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('找回密码')),
+      backgroundColor: theme.pfBg,
+      appBar: AppBar(
+        backgroundColor: theme.pfBg,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        title: const Text(
+          '找回密码',
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+        ),
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -95,7 +119,6 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // 步骤指示器
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -110,9 +133,14 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                 ..._buildStep(),
                 if (_error != null) ...[
                   const SizedBox(height: 12),
-                  Text(_error!,
-                      style: TextStyle(color: Theme.of(context).colorScheme.error),
-                      textAlign: TextAlign.center),
+                  Text(
+                    _error!,
+                    style: TextStyle(
+                      color: theme.colorScheme.error,
+                      fontSize: 13,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
                 ],
               ],
             ),
@@ -123,50 +151,63 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   }
 
   Widget _stepDot(int n, String label) {
+    final theme = Theme.of(context);
     final active = _step == n;
     final done = _step > n;
     return Column(
       children: [
         Container(
-          width: 28, height: 28,
+          width: 28,
+          height: 28,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: done || active
-                ? Theme.of(context).colorScheme.primary
-                : Theme.of(context).colorScheme.outlineVariant,
+            color: done || active ? theme.pfBrand : theme.pfLine,
           ),
           child: Center(
             child: done
                 ? const Icon(Icons.check, size: 16, color: Colors.white)
-                : Text('$n', style: const TextStyle(color: Colors.white, fontSize: 13)),
+                : Text(
+                    '$n',
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
           ),
         ),
         const SizedBox(height: 4),
-        Text(label, style: TextStyle(fontSize: 11,
-            color: active ? Theme.of(context).colorScheme.onSurface : Theme.of(context).colorScheme.outline)),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: active ? theme.colorScheme.onSurface : theme.pfMuted,
+          ),
+        ),
       ],
     );
   }
 
-  Widget _stepLine() => Container(
-    width: 40, height: 2,
-    margin: const EdgeInsets.only(bottom: 16, left: 4, right: 4),
-    color: _step > 1 ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outlineVariant,
-  );
+  Widget _stepLine() {
+    final theme = Theme.of(context);
+    return Container(
+      width: 40,
+      height: 2,
+      margin: const EdgeInsets.only(bottom: 16, left: 4, right: 4),
+      color: _step > 1 ? theme.pfBrand : theme.pfLine,
+    );
+  }
 
   List<Widget> _buildStep() {
+    final theme = Theme.of(context);
     switch (_step) {
       case 1:
         return [
-          TextField(
+          PfSheetTextField(
             controller: _emailCtrl,
+            hint: '绑定邮箱',
             keyboardType: TextInputType.emailAddress,
-            decoration: const InputDecoration(labelText: '绑定邮箱'),
           ),
           const SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: _busy || _cooldown > 0 ? null : _sendCode,
-            child: Text(_cooldown > 0 ? '重新发送(${_cooldown}s)' : '发送验证码'),
+          PfPrimaryButton(
+            label: _cooldown > 0 ? '重新发送(${_cooldown}s)' : '发送验证码',
+            onTap: _busy || _cooldown > 0 ? null : _sendCode,
           ),
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -175,42 +216,39 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         ];
       case 2:
         return [
-          TextField(
+          PfSheetTextField(
             controller: _codeCtrl,
+            hint: '验证码',
             keyboardType: TextInputType.number,
-            maxLength: 6,
-            decoration: const InputDecoration(labelText: '验证码', counterText: ''),
           ),
           const SizedBox(height: 12),
-          TextField(
+          PfSheetTextField(
             controller: _passCtrl,
-            obscureText: _obscure,
-            decoration: InputDecoration(
-              labelText: '新密码',
-              suffixIcon: IconButton(
-                icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility),
-                onPressed: () => setState(() => _obscure = !_obscure),
+            hint: '新密码(至少 8 位)',
+            obscure: _obscure,
+            suffix: IconButton(
+              icon: Icon(
+                _obscure ? Icons.visibility_off : Icons.visibility,
+                size: 18,
               ),
+              onPressed: () => setState(() => _obscure = !_obscure),
             ),
           ),
           const SizedBox(height: 12),
-          TextField(
+          PfSheetTextField(
             controller: _pass2Ctrl,
-            obscureText: _obscure,
-            decoration: const InputDecoration(labelText: '确认新密码'),
+            hint: '确认新密码',
+            obscure: _obscure,
           ),
           const SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: _busy ? null : _reset,
-            child: _busy
-                ? const SizedBox(height: 20, width: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text('确认重置'),
-          ),
+          PfPrimaryButton(label: '确认重置', onTap: _busy ? null : _reset),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              TextButton(onPressed: () => setState(() => _step = 1), child: const Text('上一步')),
+              TextButton(
+                onPressed: () => setState(() => _step = 1),
+                child: const Text('上一步'),
+              ),
               TextButton(
                 onPressed: _cooldown > 0 ? null : _sendCode,
                 child: Text(_cooldown > 0 ? '${_cooldown}s后重发' : '重新发送'),
@@ -220,20 +258,21 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         ];
       case 3:
         return [
-          Icon(Icons.check_circle, size: 64,
-              color: Theme.of(context).colorScheme.primary),
+          Icon(Icons.check_circle, size: 64, color: theme.pfBrand),
           const SizedBox(height: 12),
-          const Text('密码重置成功', textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
-          const SizedBox(height: 4),
-          const Text('所有设备已强制下线,请用新密码重新登录',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Colors.grey)),
-          const SizedBox(height: 24),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('返回登录'),
+          const Text(
+            '密码重置成功',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
           ),
+          const SizedBox(height: 4),
+          Text(
+            '所有设备已强制下线,请用新密码重新登录',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: theme.pfMuted),
+          ),
+          const SizedBox(height: 24),
+          PfPrimaryButton(label: '返回登录', onTap: () => Navigator.pop(context)),
         ];
       default:
         return [];

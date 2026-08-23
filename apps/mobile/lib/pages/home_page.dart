@@ -1,124 +1,47 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../providers/auth_provider.dart';
-import 'account_page.dart';
+import '../providers/nav_provider.dart';
+import '../sheets/quick_create_sheet.dart';
+import '../widgets/dock_nav.dart';
+import 'focus_page.dart';
+import 'me_page.dart';
+import 'stats_page.dart';
+import 'tasks_page.dart';
 
-/// 首页骨架(P3a):BottomNavigation 四 Tab(计时/任务/统计/账号)。
-/// P3a 每个 Tab 都是占位卡片,P3b 起逐个填充功能。
-class HomePage extends StatefulWidget {
+/// 主区骨架(§2/§3):悬浮胶囊 Dock 4 Tab(专注/任务/统计/我的)+ 中间凸起「新建」。
+///
+/// - IndexedStack 保持各屏状态,切 Tab 不重建(§3.3);
+/// - Tab 状态在 [NavProvider],跨屏动作(任务卡 ▶ 快捷专注)也能切;
+/// - 中间按钮唤起快速新建菜单(不切屏)。
+class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
   @override
-  State<HomePage> createState() => _HomePageState();
-}
-
-class _HomePageState extends State<HomePage> {
-  int _index = 0;
-
-  @override
   Widget build(BuildContext context) {
-    final auth = context.read<AuthProvider>();
+    final safeBottom = MediaQuery.paddingOf(context).bottom;
+    final index = context.watch<NavProvider>().index;
     return Scaffold(
-      body: IndexedStack(
-        index: _index,
+      body: Stack(
         children: [
-          _PlaceholderTab(
-            icon: Icons.timer_outlined,
-            title: '番茄钟',
-            subtitle: 'P3b:计时器 + 任务选择 + 通知',
-          ),
-          _PlaceholderTab(
-            icon: Icons.checklist,
-            title: '任务清单',
-            subtitle: 'P3b/c:任务 CRUD + 本地 SQLite + 同步',
-          ),
-          _PlaceholderTab(
-            icon: Icons.bar_chart,
-            title: '统计',
-            subtitle: 'P3c:趋势图 + 项目分布',
-          ),
-          _AccountTab(auth: auth),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.timer_outlined), label: '计时'),
-          NavigationDestination(icon: Icon(Icons.checklist), label: '任务'),
-          NavigationDestination(icon: Icon(Icons.bar_chart), label: '统计'),
-          NavigationDestination(icon: Icon(Icons.person_outline), label: '账号'),
-        ],
-      ),
-    );
-  }
-}
-
-class _PlaceholderTab extends StatelessWidget {
-  const _PlaceholderTab({required this.icon, required this.title, required this.subtitle});
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 64, color: Theme.of(context).colorScheme.outline),
-          const SizedBox(height: 12),
-          Text(title, style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 4),
-          Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-        ],
-      ),
-    );
-  }
-}
-
-class _AccountTab extends StatelessWidget {
-  const _AccountTab({required this.auth});
-  final AuthProvider auth;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Card(
-          child: ListTile(
-            leading: CircleAvatar(
-              child: Text((auth.username ?? '?')[0].toUpperCase()),
-            ),
-            title: Text(auth.username ?? '未知用户'),
-            subtitle: Text(auth.email ?? ''),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.manage_accounts),
-            title: const Text('账号管理'),
-            subtitle: const Text('资料 / 安全 / 设备 / 导出 / 注销'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AccountPage()),
+          // 各屏自滚,底部预留 Dock 高度(§1.5 nav-h 74 + 余量)
+          Padding(
+            padding: EdgeInsets.only(bottom: 100 + safeBottom),
+            child: IndexedStack(
+              index: index,
+              children: const [FocusPage(), TasksPage(), StatsPage(), MePage()],
             ),
           ),
-        ),
-        const SizedBox(height: 16),
-        OutlinedButton.icon(
-          onPressed: () => auth.logout(),
-          icon: const Icon(Icons.logout),
-          label: const Text('退出登录'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: Theme.of(context).colorScheme.error,
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: FloatingDock(
+              selectedIndex: index,
+              onSelect: (i) => context.read<NavProvider>().select(i),
+              onCreate: () => showQuickCreateSheet(context),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
