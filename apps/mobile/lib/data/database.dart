@@ -31,7 +31,7 @@ class AppDatabase {
 
   /// schema v1 → v2:`tasks` 加 5 列 + meta last_seq 行初始化。
   /// schema v2 → v3(下批):tasks.id INTEGER → TEXT 类型整体迁移。
-  static const _schemaVersion = 3;
+  static const _schemaVersion = 4;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -55,6 +55,10 @@ class AppDatabase {
           // v2 → v3:tasks.id INTEGER → TEXT 类型整体迁移(id 字符串化)。
           if (oldVersion < 3) {
             await _v2ToV3(db);
+          }
+          // v3 → v4:journals.id INTEGER → TEXT(P1 batch 同步前一次性补)。
+          if (oldVersion < 4) {
+            await _v3ToV4(db);
           }
         },
       ),
@@ -91,7 +95,7 @@ class AppDatabase {
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)');
     await db.execute('''
       CREATE TABLE IF NOT EXISTS journals (
-        id INTEGER PRIMARY KEY,
+        id TEXT PRIMARY KEY,
         kind TEXT NOT NULL,
         title TEXT NOT NULL DEFAULT '',
         content TEXT NOT NULL DEFAULT '',
@@ -190,6 +194,28 @@ class AppDatabase {
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)');
     // bump schema_version → 3
     await db.insert('meta', {'k': 'schema_version', 'v': '3'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// v3 → v4 升级:`journals.id INTEGER → TEXT` 同结构迁移。
+  static Future<void> _v3ToV4(Database db) async {
+    await db.execute('''
+      CREATE TABLE journals_v4 (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        tags_csv TEXT NOT NULL DEFAULT ''
+      )
+    ''');
+    await db.execute('''
+      INSERT INTO journals_v4 (id, kind, title, content, tags_csv)
+      SELECT CAST(id AS TEXT), kind, title, content, tags_csv
+      FROM journals
+    ''');
+    await db.execute('DROP TABLE journals');
+    await db.execute('ALTER TABLE journals_v4 RENAME TO journals');
+    await db.insert('meta', {'k': 'schema_version', 'v': '4'},
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -368,8 +394,6 @@ class AppDatabase {
   }
 
   Future<int> insertJournal(PfJournal j) async {
-    // 接受 String id 但库列当前是 INTEGER → 转 int('1' → 1)。
-    // P1 批把 journals.id 列也切 TEXT 后撤掉这一段 cast。
     final row = _journalToRow(j);
     return _db.insert('journals', row);
   }
@@ -451,26 +475,15 @@ class AppDatabase {
   );
 
   Map<String, Object?> _journalToRow(PfJournal j) => {
-    // 当前 schema journals.id INTEGER,但 P3d-B-Phase-2 PfJournal.id 已切 String;
-    // 插入前手动写 `:int.parse(j.id)` 在 commit 3 UI 调用方(insertJournal 内部
-    // 已经兼容 — 暂时不支持,留 commit 3 整体修改)。本批先 throw 强制显式走 commit 3。
-    if (int.tryParse(j.id) == null) {
-      throw StateError(
-        'journals.id 尚为 INTEGER 列,P3d-B-Phase-2 批请走 commit 3 切 TEXT 列后再写',
-      );
-    }
-    return {
-      'id': int.parse(j.id),
-      'kind': _kindText(j.kind),
-      'title': j.title,
-      'content': j.content,
-      'tags_csv': _csv(j.tags),
-    };
-  }
+    'id': j.id,
+    'kind': _kindText(j.kind),
+    'title': j.title,
+    'content': j.content,
+    'tags_csv': _csv(j.tags),
+  };
 
   PfJournal _journalFromRow(Map<String, Object?> r) => PfJournal(
-    // 同上,journals.id INTEGER 列,反序列化时转回 String 给 UI。
-    id: (r['id'] as int).toString(),
+    id: r['id'] as String,
     kind: _kindFrom(r['kind'] as String),
     title: (r['title'] as String?) ?? '',
     content: (r['content'] as String?) ?? '',

@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 
 import '../data/database.dart';
@@ -12,21 +15,21 @@ import '../models/task.dart';
 ///   - web 平台 → 直接 `TaskProvider.demo()` 内存(P3d-Phase-2 才接 web SQLite);
 ///   - 否则 → `await AppDatabase.open()` → 反序列化 → seed 首次(若 `seed_done` 缺失)。
 ///
-/// 后续 P3d-Phase-2 (`SyncClient`):
-///   - 在本 Provider 上加 `ChangeLogStore` 4 方法(`list_pending / apply_remote /
-///     mark_synced / local_candidate`),cursor `last_seq` 推 `meta.last_seq`;
-///   - model 替换 `PfTask{int id, bool completed}` → core `Task{String Id, TaskStatus,
-///     revision, updated_at, deleted_at}`,届时统一一次性迁移;
-///   - 本轮 schema 命名已对齐(`sync_state` 列在 Phase 2 加,`task_tag_sync` 关联表
-///     在 Phase 2 加)。
+/// P3d-B-Phase-2 模型迁移:`PfTask.id: int → String`(UUID 14 字符);
+///
+/// 下批 P3d-B-Phase-2 v4 计划:`Commit 4` 在此基础上:
+///   - 4 个 mutator(addTask / toggleDone / completePomodoro / setFocusTask)
+///     末尾调 `db.markTaskPending(...)` → bump revision + 标 pending + 写 payload
 class TaskProvider extends ChangeNotifier {
   /// 仅内存工厂(web 兜底 + 测试用)。
+  /// demo() 任务 id 用固定字符串 UUID 短码(16 字节 Random.secure).
   factory TaskProvider.demo() {
     final p = TaskProvider._mem();
+    final demo = _seedIds();
     return p
-      .._tasks.addAll(const [
+      .._tasks.addAll([
         PfTask(
-          id: 1,
+          id: demo.$1.id1,
           title: '撰写产品需求文档',
           priority: PfPriority.high,
           project: '产品设计',
@@ -36,7 +39,7 @@ class TaskProvider extends ChangeNotifier {
           subtaskCount: 2,
         ),
         PfTask(
-          id: 2,
+          id: demo.$1.id2,
           title: '修复登录页会话失效',
           priority: PfPriority.high,
           project: '研发',
@@ -44,7 +47,7 @@ class TaskProvider extends ChangeNotifier {
           estimatedPomos: 2,
         ),
         PfTask(
-          id: 3,
+          id: demo.$1.id3,
           title: '周会材料准备',
           priority: PfPriority.medium,
           project: '运营',
@@ -52,7 +55,7 @@ class TaskProvider extends ChangeNotifier {
           estimatedPomos: 1,
         ),
         PfTask(
-          id: 4,
+          id: demo.$1.id4,
           title: '阅读《置身钉内》第3章',
           priority: PfPriority.low,
           project: '学习',
@@ -62,7 +65,7 @@ class TaskProvider extends ChangeNotifier {
           subtaskCount: 1,
         ),
         PfTask(
-          id: 5,
+          id: demo.$1.id5,
           title: '健身打卡',
           priority: PfPriority.none,
           project: '日常',
@@ -70,18 +73,23 @@ class TaskProvider extends ChangeNotifier {
           estimatedPomos: 1,
         ),
       ])
-      .._journals.addAll(const [
-        PfJournal(id: 1, kind: JournalKind.todo, title: '给妈妈买生日礼物', tags: ['生活']),
+      .._journals.addAll([
         PfJournal(
-          id: 2,
+          id: demo.$2.id1,
+          kind: JournalKind.todo,
+          title: '给妈妈买生日礼物',
+          tags: const ['生活'],
+        ),
+        PfJournal(
+          id: demo.$2.id2,
           kind: JournalKind.note,
           title: '',
-          content: '移动端 Dock 交互参考记账 App 的悬浮胶囊,中间凸起按钮承载最高频动作「新建」。',
+          content:
+              '移动端 Dock 交互参考记账 App 的悬浮胶囊,中间凸起按钮承载最高频动作「新建」。',
         ),
       ])
       ..todayPomos = 6
-      ..todayReview = '上午两个番茄写完了需求初稿,下午会议偏多。'
-      .._nextId = 100;
+      ..todayReview = '上午两个番茄写完了需求初稿,下午会议偏多。';
   }
 
   /// 工厂入口:web 走 demo() 内存,否则走 sqflite + seed_v1。
@@ -99,12 +107,10 @@ class TaskProvider extends ChangeNotifier {
     final seeded = await db.getMeta('seed_done');
     int todayPomos = int.tryParse((await db.getMeta('today_pomos')) ?? '0') ?? 0;
     String todayReview = (await db.getMeta('today_review')) ?? '';
-    int nextIdDb = int.tryParse((await db.getMeta('next_id')) ?? '100') ?? 100;
 
     final p = TaskProvider._mem();
     p._tasks.addAll(tasks);
     p._journals.addAll(journals);
-    p._nextId = nextIdDb;
     p.todayPomos = todayPomos;
     p.todayReview = todayReview;
 
@@ -117,10 +123,8 @@ class TaskProvider extends ChangeNotifier {
         await db.insertJournal(j);
       }
       await db.setMeta('seed_done', '1');
-      await db.setMeta('next_id', '100');
       await db.setMeta('today_pomos', '${demo.todayPomos}');
       await db.setMeta('today_review', demo.todayReview);
-      // 重新拉一次(包含 seed 后的全量数据)
       final all = await db.listTasks();
       final allJ = await db.listJournals();
       p._tasks
@@ -140,14 +144,13 @@ class TaskProvider extends ChangeNotifier {
 
   final List<PfTask> _tasks = [];
   final List<PfJournal> _journals = [];
-  int _nextId = 100;
 
   List<PfTask> get tasks => List.unmodifiable(_tasks);
   List<PfJournal> get journals => List.unmodifiable(_journals);
 
   // === 专注屏共享状态 ==========================================================
 
-  int? _focusTaskId;
+  String? _focusTaskId;
   PfTask? get focusTask {
     for (final t in _tasks) {
       if (t.id == _focusTaskId) return t;
@@ -172,11 +175,14 @@ class TaskProvider extends ChangeNotifier {
       };
 
   // === 写操作(本地 + DB) =====================================================
+  // ⚠️ P3d-B-Phase-2 commit 4 计划在 4 个 mutator 末尾接 `db.markTaskPending()`
+  // 触发 sync_state='pending'。本批只做 ID 类型迁移不接 sync 钩子。
 
   Future<void> addTask(PfTask task) async {
-    final id = task.id == 0 ? await _allocateId() : task.id;
-    final t = task.id == 0
-        ? PfTask(
+    final id = task.id.isEmpty ? await _allocateId() : task.id;
+    final t = id == task.id
+        ? task
+        : PfTask(
             id: id,
             title: task.title,
             priority: task.priority,
@@ -187,8 +193,8 @@ class TaskProvider extends ChangeNotifier {
             completedPomos: task.completedPomos,
             subtaskCount: task.subtaskCount,
             completed: task.completed,
-          )
-        : task;
+            syncMeta: task.syncMeta,
+          );
     _tasks.insert(0, t);
     final db = _db;
     if (db != null) {
@@ -198,16 +204,16 @@ class TaskProvider extends ChangeNotifier {
   }
 
   Future<void> addJournal(PfJournal entry) async {
-    final id = entry.id == 0 ? await _allocateId() : entry.id;
-    final j = entry.id == 0
-        ? PfJournal(
+    final id = entry.id.isEmpty ? await _allocateId() : entry.id;
+    final j = id == entry.id
+        ? entry
+        : PfJournal(
             id: id,
             kind: entry.kind,
             title: entry.title,
             content: entry.content,
             tags: entry.tags,
-          )
-        : entry;
+          );
     _journals.insert(0, j);
     final db = _db;
     if (db != null) {
@@ -216,7 +222,7 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> toggleDone(int id) async {
+  Future<void> toggleDone(String id) async {
     final i = _tasks.indexWhere((t) => t.id == id);
     if (i < 0) return;
     final updated = _tasks[i].completed
@@ -230,7 +236,7 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setFocusTask(int? id) async {
+  Future<void> setFocusTask(String? id) async {
     _focusTaskId = id;
     final db = _db;
     if (db != null) {
@@ -251,7 +257,7 @@ class TaskProvider extends ChangeNotifier {
         );
         _tasks[i] = updated;
         final db = _db;
-    if (db != null) {
+        if (db != null) {
           await db.updateTask(updated);
         }
       }
@@ -272,15 +278,19 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<int> nextId() async => await _allocateId();
+  Future<String> nextId() async => await _allocateId();
 
-  Future<int> _allocateId() async {
-    final db = _db;
-    if (db == null) {
-      _nextId += 1;
-      return _nextId;
-    }
-    return db.nextId();
+  Future<String> _allocateId() async {
+    return _uuid14();
+  }
+
+  /// 14 字符 UUID 短码:用 Random.secure 生成 12 字节 → base64Url(16 字符)截前 14 位。
+  /// 12 字节 = 96 位随机,生日前缀碰撞概率 ≈ 2⁻⁹⁶(可忽略)。
+  static String _uuid14() {
+    final rnd = math.Random.secure();
+    final bytes = List<int>.generate(12, (_) => rnd.nextInt(256));
+    final b64 = base64Url.encode(bytes).replaceAll('=', '');
+    return b64.substring(0, 14);
   }
 
   // === 映射(把 PfTask / PfJournal 转 sqflite row) ==============================
@@ -322,4 +332,29 @@ class TaskProvider extends ChangeNotifier {
       'tags_csv': j.tags.join(','),
     };
   }
+}
+
+/// 14 字符串 uuid 给 demo() 取稳定 seed id(固定字符串常量,跨重启不变)。
+class _DemoIds {
+  const _DemoIds(this.id1, this.id2, this.id3, this.id4, this.id5);
+  final String id1, id2, id3, id4, id5;
+}
+
+class _DemoJIds {
+  const _DemoJIds(this.id1, this.id2);
+  final String id1, id2;
+}
+
+/// 固定字符串(避免 demo() 每次启动换 id 引发 schema_version 缓存过期)。
+(_DemoIds, _DemoJIds) _seedIds() {
+  return (
+    const _DemoIds(
+      't01aaaa0000zzzz',
+      't02bbbb0000zzzz',
+      't03cccc0000zzzz',
+      't04dddd0000zzzz',
+      't05eeee0000zzzz',
+    ),
+    const _DemoJIds('j01xxxx0000zzzz', 'j02yyyy0000zzzz'),
+  );
 }

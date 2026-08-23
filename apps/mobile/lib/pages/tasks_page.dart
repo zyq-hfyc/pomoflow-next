@@ -527,7 +527,7 @@ class _ExtendedFab extends StatelessWidget {
 
 /// 任务选择器 Sheet(专注屏「切换 ▾」唤起):活动任务单选列表。
 class TaskPickerSheet {
-  static Future<PfTask?> show(BuildContext context, {int? currentId}) {
+  static Future<PfTask?> show(BuildContext context, {String? currentId}) {
     final tasks = context.read<TaskProvider>();
     final list = tasks.tasks.where((t) => !t.completed).toList();
     final theme = Theme.of(context);
