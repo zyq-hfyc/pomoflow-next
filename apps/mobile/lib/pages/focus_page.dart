@@ -182,17 +182,20 @@ class _FocusPageState extends State<FocusPage> {
     final tasks = context.watch<TaskProvider>();
     final focusTask = tasks.focusTask;
     final progress = 1 - _left / _total;
-    // 自适应尺寸:原型 268px 是 393×852 基准;矮窗口(如桌面 Chrome 预览)
-    // 按屏高再收一档,避免圆环挤压上下控件。
+    // 自适应尺寸:不能盲目套 268。哪怕再调 padding,大圆 + 多 sliver
+    // 也会让圆环 visual 撑到 600px+,把任务 chip/模式分段压扁。策略:
+    //   1) 上限收到 232(原型 268 留足 14% 余量)
+    //   2) 宽度系数 .58(避免 393+ 宽屏撑满)
+    //   3) 高度系数 .30(留 70% 给下方 sliver 链)
     final media = MediaQuery.of(context);
     final ringSize = math.min(
-      math.min(268.0, media.size.width * .68),
-      media.size.height * .34,
+      math.min(232.0, media.size.width * .58),
+      media.size.height * .30,
     );
     return Padding(
-      // 原型 .ring-wrap margin 26px auto 6px:辉光(blur 6)渗出圆环 box,
-      // 上下留白不够时会视觉压到模式分段与任务 chip。
-      padding: const EdgeInsets.only(top: 26, bottom: 6),
+      // padding 30/14:辉光 blur=4 仍会渗 ~10px,原 26/6 顶部还行、底部
+      // 直接被任务 chip 吃,补足底距后从视觉上彻底隔离上下控件。
+      padding: const EdgeInsets.only(top: 30, bottom: 14),
       child: SizedBox(
         width: ringSize,
         height: ringSize,
@@ -537,7 +540,7 @@ class _RingPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeWidth = stroke
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
     final start = -math.pi / 2;
     final sweep = 2 * math.pi * progress;
     canvas.drawArc(arcRect, start, sweep, false, glow);
