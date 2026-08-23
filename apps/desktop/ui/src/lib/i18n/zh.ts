@@ -279,6 +279,8 @@ export const zh = {
       intervalOption: '每 {n} 分钟',
       autoHint:
         '开启后:启动 3 秒自动同步一次,之后按间隔后台同步(改开关/间隔保存后 ≤30 秒生效,无需重启)。需先保存服务器地址与令牌;手动「立即同步」随时可用。',
+      indicatorSyncing: '同步中…',
+      indicatorIdle: '尚未同步(点击配置)',
       autoLastOk: '最近自动同步 {time}:推送 {pushed} 条,拉取 {pulled} 条',
       autoLastErr: '最近自动同步失败 {time}:{error}',
     },
@@ -341,6 +343,9 @@ export const zh = {
       exportDataDesc: '导出账号全部云端数据备份(注销前建议先导出)',
       exportBtn: '导出',
       exportDone: '数据已导出为 JSON 备份',
+      exportTasks: '导出任务报表',
+      exportTasksDesc: '本机任务清单导出为 Excel(与 JSON 云备份互补)',
+      exportTasksDone: '任务报表已导出',
       bioLabel: '个性签名',
       bioDesc: '一句话介绍自己(最多 50 字)',
       bioPh: '保持热爱,奔赴山海',
@@ -622,7 +627,23 @@ export const zh = {
           { text: '趋势柱状图（按日/周/月自动切换粒度）+ 圆环图（项目时间分布），全部跟随当前主题主色（accent）统一配色，告别五颜六色。' },
         ],
       },
-      settings: {
+      account: {
+      title: '账号管理',
+      desc: '登录 / 注册 / 找回密码 / 资料与安全设置 / 设备管理',
+      items: [
+        { text: '支持账号密码、邮箱+密码两种登录方式;微信扫码待企业资质' },
+        { text: '首次注册的账号会自动并入本机存量数据(零迁移)' },
+        { text: '找回密码:邮箱验证码重置,所有设备强制下线' },
+        { text: '个人资料:头像上传(JPG/PNG ≤2MB)、昵称、用户名、邮箱、个性签名' },
+        { text: '安全设置:修改密码后其他设备全部下线,本机不掉线' },
+        { text: '登录设备:查看所有在线设备(含机型),可单台下线或一键退出其他' },
+        { text: '最近登录记录:时间/设备/IP/方式/成败' },
+        { text: '账号注销:15 天冷静期,期间可撤销;到期云端数据级联删除' },
+        { text: '数据导出:导出全部云端数据为 JSON 备份(注销前建议先导出)' },
+        { text: '顶栏头像即账号入口,点击直达' },
+      ],
+    },
+    settings: {
         title: '⚙️ 配置',
         items: [
           { text: '「番茄钟」：专注/休息时长、长时休息间隔（2~6 个番茄）、自动开始选项。' },

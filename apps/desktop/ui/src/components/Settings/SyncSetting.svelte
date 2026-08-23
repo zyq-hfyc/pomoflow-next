@@ -24,6 +24,7 @@
     type SessionInfo,
   } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
+  import { markSyncing } from "../../lib/syncState.svelte";
   import { navigate } from "../../lib/router.svelte";
 
   const t = $derived(getDict());
@@ -176,6 +177,7 @@
       return;
     }
     syncing = true;
+    markSyncing();
     error = null;
     resultText = "";
     try {

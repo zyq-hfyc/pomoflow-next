@@ -274,6 +274,8 @@ export const en: Dict = {
       intervalOption: 'Every {n} min',
       autoHint:
         'When on: syncs 3s after launch, then in the background on the interval (toggling or changing the interval applies within 30s of saving — no restart needed). Save the server URL and token first; manual "Sync now" always works.',
+      indicatorSyncing: 'Syncing…',
+      indicatorIdle: 'Not synced yet (click to configure)',
       autoLastOk: 'Last auto sync {time}: pushed {pushed}, pulled {pulled}',
       autoLastErr: 'Last auto sync failed {time}: {error}',
     },
@@ -342,6 +344,9 @@ export const en: Dict = {
       exportDataDesc: 'Export all cloud data as a backup (recommended before deletion)',
       exportBtn: 'Export',
       exportDone: 'Data exported as JSON backup',
+      exportTasks: 'Export task report',
+      exportTasksDesc: 'Export local task list as Excel (complements JSON cloud backup)',
+      exportTasksDone: 'Task report exported',
       bioLabel: 'Bio',
       bioDesc: 'A short introduction (up to 50 chars)',
       bioPh: 'Stay passionate...',
@@ -623,7 +628,23 @@ export const en: Dict = {
           { text: 'Trend bar chart (auto day/week/month granularity) + donut chart (project time distribution), all colored by the current theme accent — no more rainbow.' },
         ],
       },
-      settings: {
+      account: {
+      title: 'Account Management',
+      desc: 'Sign in / Register / Password recovery / Profile & security / Devices',
+      items: [
+        { text: 'Two sign-in methods: username+password, email+password; WeChat QR pending business verification' },
+        { text: 'First registered account automatically adopts existing local data (zero migration)' },
+        { text: 'Password recovery: email code reset, all devices signed out' },
+        { text: 'Profile: avatar upload (JPG/PNG ≤2MB), nickname, username, email, bio' },
+        { text: 'Security: changing password signs out all other devices; this one stays signed in' },
+        { text: 'Devices: view all online devices (with model), kick individually or sign out all others' },
+        { text: 'Recent sign-ins: time / device / IP / method / success or failure' },
+        { text: 'Account deletion: 15-day cooling-off period, cancellable; cloud data cascade-deleted after expiry' },
+        { text: 'Data export: export all cloud data as JSON backup (recommended before deletion)' },
+        { text: 'The top-bar avatar is the account entrance; click to open' },
+      ],
+    },
+    settings: {
         title: '⚙️ Settings',
         items: [
           { text: '“Pomodoro”: focus/break durations, long-break interval (2–6 pomodoros), and auto-start options.' },

@@ -24,6 +24,7 @@
     "repeat",
     "journal",
     "stats",
+    "account",
     "settings",
   ] as const;
 </script>

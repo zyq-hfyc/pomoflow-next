@@ -15,6 +15,11 @@
     authSetAvatar,
     authDeleteAvatar,
     authExportData,
+    listTasks,
+    listProjects,
+    exportTasksXlsx,
+    type TaskView,
+    type Project,
     authGetLoginLogs,
     type LoginLogItem,
     authBindEmail,
@@ -366,6 +371,55 @@
       busy = false;
     }
   }
+  // 任务报表导出(xlsx,复用任务页同款 9 列格式;本地数据,与 JSON 云备份互补)
+  async function exportTasks() {
+    if (busy) return;
+    exportNote = "";
+    let path: string | null = null;
+    try {
+      path = await saveDialog({
+        defaultPath: `pomoflow-tasks-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        filters: [{ name: "xlsx", extensions: ["xlsx"] }],
+      });
+    } catch (e) {
+      exportOk = false;
+      exportNote = String(e);
+      return;
+    }
+    if (!path) return;
+    busy = true;
+    error = null;
+    try {
+      const [tasks, projects] = await Promise.all([
+        listTasks({}),
+        listProjects(),
+      ]);
+      const headers = [
+        t.export.index, t.export.title, t.export.project, t.export.priority,
+        t.export.dueDate, t.export.estimated, t.export.tags, t.export.subtasks,
+        t.export.status,
+      ];
+      const rows = (tasks as TaskView[]).map((task) => ({
+        title: task.title,
+        project: (projects as Project[]).find((p) => p.id === task.project_id)?.name ?? "",
+        priority: t.priority[task.priority ?? "none"] ?? "",
+        dueDate: task.due_date ? new Date(task.due_date).toLocaleDateString() : "",
+        estimated: task.estimated_pomodoros ?? 0,
+        tags: (task.tags ?? []).map((x) => x.name).join(", "),
+        subtasks: (task.subtasks ?? []).map((x) => x.title).join("\n"),
+        status: task.status === "completed" ? t.export.statusCompleted : t.export.statusActive,
+      }));
+      await exportTasksXlsx(path, t.nav.tasks, headers, rows);
+      exportOk = true;
+      exportNote = `${t.settings.account.exportTasksDone} → ${path}`;
+    } catch (e) {
+      exportOk = false;
+      exportNote = String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
   $effect(() => {
     if (section === "devices" && sessions === null) void loadSessions();
   });
@@ -608,7 +662,16 @@
             <div class="ac-field-desc">{t.settings.account.exportDataDesc}</div>
           </div>
           <button type="button" class="ac-btn-sm" disabled={busy} onclick={() => void exportData()}>
-            {t.settings.account.exportBtn}
+            {t.settings.account.exportBtn} JSON
+          </button>
+        </div>
+        <div class="ac-field">
+          <div>
+            <div class="ac-field-label">{t.settings.account.exportTasks}</div>
+            <div class="ac-field-desc">{t.settings.account.exportTasksDesc}</div>
+          </div>
+          <button type="button" class="ac-btn-sm" disabled={busy} onclick={() => void exportTasks()}>
+            {t.settings.account.exportBtn} xlsx
           </button>
         </div>
         {#if exportNote}

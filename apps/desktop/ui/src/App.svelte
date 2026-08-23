@@ -22,6 +22,8 @@
   } from "lucide-svelte";
   import { currentRoute, navigate, ROUTES } from "./lib/router.svelte";
   import { accountState, loadAccountState } from "./lib/accountState.svelte";
+  import { initSyncListener } from "./lib/syncState.svelte";
+  import SyncIndicator from "./components/ui/SyncIndicator.svelte";
   import { getDict } from "./lib/i18n.svelte";
   import {
     getTimerState,
@@ -56,8 +58,9 @@
   });
 
   onMount(() => {
-    // 顶部导航登录态(登录后品牌位换头像)
+    // 顶部导航登录态(登录后品牌位换头像)+ 同步状态指示器
     void loadAccountState();
+    initSyncListener();
     // 回前台立即校准剩余时间(v1 visibilitychange;后台/睡眠不漂移)
     void refreshNotificationTemplate();
     document.addEventListener("visibilitychange", () => {
@@ -136,6 +139,9 @@
         </button>
       {/each}
     </nav>
+    <div class="topbar-right">
+      <SyncIndicator />
+    </div>
   </header>
 
   <div class="outlet">
@@ -170,6 +176,14 @@
   }
 
   /* v1 Navbar:19 —— h-16 / bg-white/85 + blur + 底边框,无阴影 */
+  .topbar-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding-right: 0.5rem;
+  }
+
   .topbar {
     display: flex;
     align-items: center;
