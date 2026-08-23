@@ -1,0 +1,28 @@
+name: pomoflow_mobile
+description: "PomoFlow 移动端 —— Flutter + 本地优先 + 云端同步"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  # REST 客户端
+  http: ^1.2.0
+  # JWT 安全存储(iOS Keychain / Android EncryptedSharedPreferences)
+  flutter_secure_storage: ^9.2.2
+  # 状态管理(轻量,项目复杂后再评估 Riverpod)
+  provider: ^6.1.2
+  # 非敏感配置(服务器地址)
+  shared_preferences: ^2.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
