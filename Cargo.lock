@@ -3261,6 +3261,7 @@ dependencies = [
 name = "pomoflow-desktop"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "env_logger",
  "log",
@@ -4523,6 +4524,7 @@ version = "0.1.0"
 dependencies = [
  "argon2",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "env_logger",
  "hmac",

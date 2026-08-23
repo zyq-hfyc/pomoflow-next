@@ -13,7 +13,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::auth;
-use crate::auth_handlers::{authenticate, issue_tokens, AuthTokens};
+use crate::auth_handlers::{authenticate, issue_tokens, log_login, AuthTokens};
 use crate::email_codes as ec;
 use crate::errors::ApiErr;
 use crate::state::AppState;
@@ -87,8 +87,39 @@ pub struct BindEmailRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateDisplayNameRequest {
-    pub display_name: String,
+pub struct UpdateProfileRequest {
+    /// 可选更新:传了才改(None = 保持)
+    pub display_name: Option<String>,
+    /// 个性签名(0..=50 字;原型规格)
+    pub bio: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeletionRequest {
+    pub password: String,
+    /// 已绑定并验证邮箱的账号必填(purpose=delete 的验证码)
+    #[serde(default)]
+    pub code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeletionCancelRequest {
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetAvatarRequest {
+    /// 图片原始字节的 base64(JSON 传输,免 multipart)
+    pub avatar_base64: String,
+    /// "image/jpeg" | "image/png"
+    pub mime: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct AvatarResponse {
+    /// 无头像时为 None
+    pub avatar_base64: Option<String>,
+    pub mime: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,10 +133,13 @@ pub struct ProfileResponse {
     pub user_id: String,
     pub username: String,
     pub display_name: String,
+    pub bio: String,
     pub email: Option<String>,
     pub email_verified: bool,
     pub created_ms: i64,
     pub password_changed_ms: Option<i64>,
+    /// 非空 = 注销申请中(冷静期截止前的申请时间)
+    pub deletion_requested_ms: Option<i64>,
 }
 
 // === 验证码核对(共用内核)==================================================
@@ -230,7 +264,7 @@ pub async fn send_code(
         return Err(ApiErr::bad_request("INVALID_EMAIL", "邮箱格式不正确"));
     }
     let purpose = match req.purpose.as_str() {
-        "register" | "reset" | "bind" => req.purpose.as_str(),
+        "register" | "reset" | "bind" | "delete" => req.purpose.as_str(),
         _ => return Err(ApiErr::bad_request("INVALID_PURPOSE", "purpose 非法")),
     };
     let ip = addr.ip().to_string();
@@ -294,6 +328,7 @@ pub async fn send_code(
     let subject = match purpose {
         "register" => "PomoFlow 注册验证码",
         "reset" => "PomoFlow 密码重置验证码",
+        "delete" => "PomoFlow 账号注销验证码",
         _ => "PomoFlow 邮箱换绑验证码",
     };
     let body = format!(
@@ -313,6 +348,7 @@ pub async fn send_code(
 pub async fn register_email(
     State(app): State<AppState>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     Json(req): Json<RegisterEmailRequest>,
 ) -> Result<(StatusCode, Json<AuthTokens>), ApiErr> {
     let email = ec::normalize_email(&req.email);
@@ -374,6 +410,17 @@ pub async fn register_email(
         Err(e) => return Err(ApiErr::db(e)),
     }
 
+    log_login(
+        &app,
+        &user_id,
+        req.device_id.as_deref().unwrap_or(""),
+        req.device_name.as_deref().unwrap_or(""),
+        &addr.ip().to_string(),
+        "register_email",
+        true,
+        "",
+    )
+    .await;
     let tokens = issue_tokens(
         &app,
         &user_id,
@@ -394,6 +441,7 @@ pub async fn register_email(
 /// POST /v1/auth/login-email —— 邮箱+密码登录(拍板形态;验证码不参与登录)。
 pub async fn login_email(
     State(app): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     Json(req): Json<LoginEmailRequest>,
 ) -> Result<Json<AuthTokens>, ApiErr> {
     let email = ec::normalize_email(&req.email);
@@ -406,13 +454,19 @@ pub async fn login_email(
     .await
     .map_err(ApiErr::db)?;
 
+    let ip = addr.ip().to_string();
+    let dev_id = req.device_id.as_deref().unwrap_or("");
+    let dev_name = req.device_name.as_deref().unwrap_or("");
     // 统一错误文案,不给"邮箱是否存在"的探测口子
     let Some((user_id, display, password_hash)) = row else {
+        log_login(&app, "", dev_id, dev_name, &ip, "email", false, "账号不存在").await;
         return Err(ApiErr::unauthorized("邮箱或密码错误"));
     };
     if !auth::verify_password(&req.password, &password_hash) {
+        log_login(&app, &user_id, dev_id, dev_name, &ip, "email", false, "密码错误").await;
         return Err(ApiErr::unauthorized("邮箱或密码错误"));
     }
+    log_login(&app, &user_id, dev_id, dev_name, &ip, "email", true, "").await;
     let tokens = issue_tokens(
         &app,
         &user_id,
@@ -524,20 +578,33 @@ pub async fn get_profile(
     State(app): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ProfileResponse>, ApiErr> {
-    /// (id, username, display_name, email, email_verified_ms, created_ms, password_changed_ms)
-    type ProfileRow = (String, String, String, Option<String>, Option<i64>, i64, Option<i64>);
+    /// (id, username, display_name, bio, email, email_verified_ms, created_ms,
+    ///  password_changed_ms, deletion_requested_ms)
+    type ProfileRow = (
+        String, String, String, String, Option<String>, Option<i64>, i64, Option<i64>, Option<i64>,
+    );
     let user = auth_user(&app, &headers)?;
     let row: Option<ProfileRow> =
         sqlx::query_as(
-            "SELECT id, username, display_name, email, email_verified_ms, created_ms,
-                    password_changed_ms
+            "SELECT id, username, display_name, bio, email, email_verified_ms, created_ms,
+                    password_changed_ms, deletion_requested_ms
              FROM users WHERE id = $1",
         )
         .bind(user.as_str())
         .fetch_optional(&app.pool)
         .await
         .map_err(ApiErr::db)?;
-    let Some((user_id, username, display_name, email, verified, created, pw_changed)) = row
+    let Some((
+        user_id,
+        username,
+        display_name,
+        bio,
+        email,
+        verified,
+        created,
+        pw_changed,
+        deletion,
+    )) = row
     else {
         return Err(ApiErr::not_found("账号不存在"));
     };
@@ -545,30 +612,152 @@ pub async fn get_profile(
         user_id,
         username,
         display_name,
+        bio,
         email,
         email_verified: verified.is_some(),
         created_ms: created,
         password_changed_ms: pw_changed,
+        deletion_requested_ms: deletion,
     }))
 }
 
-/// POST /v1/auth/profile(JWT)—— 改显示名(0..=32,空 = 回退 username)。
-pub async fn update_display_name(
+/// POST /v1/auth/profile(JWT)—— 改资料:显示名(0..=32,空 = 回退 username)
+/// 与个性签名(0..=50);字段可选,传了才改。
+pub async fn update_profile(
     State(app): State<AppState>,
     headers: HeaderMap,
-    Json(req): Json<UpdateDisplayNameRequest>,
+    Json(req): Json<UpdateProfileRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     let user = auth_user(&app, &headers)?;
-    let name = req.display_name.trim();
-    if name.chars().count() > 32 {
-        return Err(ApiErr::bad_request("INVALID_NAME", "显示名最多 32 字"));
+    if let Some(name) = req.display_name.as_deref() {
+        let name = name.trim();
+        if name.chars().count() > 32 {
+            return Err(ApiErr::bad_request("INVALID_NAME", "显示名最多 32 字"));
+        }
+        sqlx::query("UPDATE users SET display_name = $1 WHERE id = $2")
+            .bind(name)
+            .bind(user.as_str())
+            .execute(&app.pool)
+            .await
+            .map_err(ApiErr::db)?;
     }
-    sqlx::query("UPDATE users SET display_name = $1 WHERE id = $2")
-        .bind(name)
+    if let Some(bio) = req.bio.as_deref() {
+        let bio = bio.trim();
+        if bio.chars().count() > 50 {
+            return Err(ApiErr::bad_request("INVALID_BIO", "个性签名最多 50 字"));
+        }
+        sqlx::query("UPDATE users SET bio = $1 WHERE id = $2")
+            .bind(bio)
+            .bind(user.as_str())
+            .execute(&app.pool)
+            .await
+            .map_err(ApiErr::db)?;
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// 冷静期时长(毫秒):15 天。
+pub const DELETION_COOLDOWN_MS: i64 = 15 * 86_400_000;
+
+/// 校验当前密码(注销类操作的公共前置)。
+async fn verify_user_password(app: &AppState, user: &str, password: &str) -> Result<(), ApiErr> {
+    let hash: Option<String> =
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+            .bind(user)
+            .fetch_optional(&app.pool)
+            .await
+            .map_err(ApiErr::db)?;
+    let Some(hash) = hash else {
+        return Err(ApiErr::not_found("账号不存在"));
+    };
+    if !auth::verify_password(password, &hash) {
+        return Err(ApiErr::unauthorized("当前密码不正确"));
+    }
+    Ok(())
+}
+
+/// POST /v1/auth/deletion/request(JWT)—— 申请注销:
+/// 验当前密码;已绑并验证邮箱的账号还必须带 purpose=delete 的验证码。
+/// 生效语义:标记 deletion_requested_ms + 其他设备全部下线(保留本机最新会话
+/// 以便冷静期内登录撤销);到期由每日清理任务级联删除全部云端数据。
+pub async fn deletion_request(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<DeletionRequest>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    let user = auth_user(&app, &headers)?;
+    verify_user_password(&app, user.as_str(), &req.password).await?;
+
+    let row: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
+        "SELECT email, email_verified_ms FROM users WHERE id = $1",
+    )
+    .bind(user.as_str())
+    .fetch_optional(&app.pool)
+    .await
+    .map_err(ApiErr::db)?;
+    let Some((email, verified)) = row else {
+        return Err(ApiErr::not_found("账号不存在"));
+    };
+    if let (Some(email), Some(_)) = (&email, verified) {
+        let code = req.code.as_deref().unwrap_or("");
+        verify_code(&app, email, "delete", code).await?;
+    }
+
+    let now = now_ms();
+    sqlx::query("UPDATE users SET deletion_requested_ms = $1 WHERE id = $2")
+        .bind(now)
         .bind(user.as_str())
         .execute(&app.pool)
         .await
         .map_err(ApiErr::db)?;
+    // 其他设备下线:保留该用户最新创建的一条会话(本机撤销通道),其余吊销
+    sqlx::query(
+        "UPDATE refresh_tokens SET revoked_ms = $1
+         WHERE user_id = $2 AND revoked_ms IS NULL
+           AND id <> (
+             SELECT id FROM refresh_tokens WHERE user_id = $2
+             ORDER BY created_ms DESC LIMIT 1
+           )",
+    )
+    .bind(now)
+    .bind(user.as_str())
+    .execute(&app.pool)
+    .await
+    .map_err(ApiErr::db)?;
+
+    let effective = now + DELETION_COOLDOWN_MS;
+    log::warn!(
+        "deletion requested: user={} effective_at={effective}",
+        user.as_str()
+    );
+    Ok(Json(json!({
+        "ok": true,
+        "deletion_requested_ms": now,
+        "effective_ms": effective,
+    })))
+}
+
+/// POST /v1/auth/deletion/cancel(JWT)—— 冷静期内撤销注销申请。
+pub async fn deletion_cancel(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<DeletionCancelRequest>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    let user = auth_user(&app, &headers)?;
+    verify_user_password(&app, user.as_str(), &req.password).await?;
+    let n = sqlx::query(
+        "UPDATE users SET deletion_requested_ms = NULL
+         WHERE id = $1 AND deletion_requested_ms IS NOT NULL",
+    )
+    .bind(user.as_str())
+    .execute(&app.pool)
+    .await
+    .map_err(ApiErr::db)?
+    .rows_affected();
+    if n == 0 {
+        return Err(ApiErr::bad_request("NO_PENDING_DELETION", "没有待生效的注销申请"));
+    }
+    log::info!("deletion cancelled: user={}", user.as_str());
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -626,4 +815,203 @@ pub async fn update_username(
         })?;
     log::info!("username changed: user={} -> {username}", user.as_str());
     Ok(Json(tokens))
+}
+
+// === 头像(P1d,原型规格:JPG/PNG ≤2MB)=====================================
+
+/// 头像大小上限(字节)。
+const AVATAR_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+/// POST /v1/auth/avatar(JWT)—— 上传/替换头像(base64 JSON)。
+pub async fn set_avatar(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<SetAvatarRequest>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    use base64::Engine as _;
+    let user = auth_user(&app, &headers)?;
+    if !matches!(req.mime.as_str(), "image/jpeg" | "image/png") {
+        return Err(ApiErr::bad_request("INVALID_AVATAR", "头像仅支持 JPG/PNG"));
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(req.avatar_base64.as_bytes())
+        .map_err(|e| ApiErr::bad_request("INVALID_AVATAR", format!("base64 解码失败: {e}")))?;
+    if bytes.is_empty() || bytes.len() > AVATAR_MAX_BYTES {
+        return Err(ApiErr::bad_request("INVALID_AVATAR", "头像需在 2MB 以内"));
+    }
+    // 魔法字节核验(不信任客户端声称的 mime)
+    let ok = match bytes.as_slice() {
+        [0xFF, 0xD8, 0xFF, ..] => req.mime == "image/jpeg",
+        [0x89, b'P', b'N', b'G', ..] => req.mime == "image/png",
+        _ => false,
+    };
+    if !ok {
+        return Err(ApiErr::bad_request("INVALID_AVATAR", "文件内容与格式不符(仅 JPG/PNG)"));
+    }
+    sqlx::query("UPDATE users SET avatar = $1, avatar_mime = $2 WHERE id = $3")
+        .bind(&bytes)
+        .bind(&req.mime)
+        .bind(user.as_str())
+        .execute(&app.pool)
+        .await
+        .map_err(ApiErr::db)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// GET /v1/auth/avatar(JWT)—— 取头像(无头像 avatar_base64 = null)。
+pub async fn get_avatar(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<AvatarResponse>, ApiErr> {
+    use base64::Engine as _;
+    let user = auth_user(&app, &headers)?;
+    let row: Option<(Option<Vec<u8>>, Option<String>)> = sqlx::query_as(
+        "SELECT avatar, avatar_mime FROM users WHERE id = $1",
+    )
+    .bind(user.as_str())
+    .fetch_optional(&app.pool)
+    .await
+    .map_err(ApiErr::db)?;
+    let Some((avatar, mime)) = row else {
+        return Err(ApiErr::not_found("账号不存在"));
+    };
+    Ok(Json(AvatarResponse {
+        avatar_base64: avatar
+            .map(|b| base64::engine::general_purpose::STANDARD.encode(b)),
+        mime,
+    }))
+}
+
+/// DELETE /v1/auth/avatar(JWT)—— 移除头像(幂等)。
+pub async fn delete_avatar(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    let user = auth_user(&app, &headers)?;
+    sqlx::query("UPDATE users SET avatar = NULL, avatar_mime = NULL WHERE id = $1")
+        .bind(user.as_str())
+        .execute(&app.pool)
+        .await
+        .map_err(ApiErr::db)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// GET /v1/auth/export(JWT)—— 导出该账号全部云端数据(注销前备份,ADR-012)。
+/// 内容:profile 概要 + 全部实体快照(snapshots 行原样)。JSON 一次拉全,
+/// 个人规模数据量(几百条)足够;P6 规模化再改分页/文件流。
+pub async fn export_data(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    let user = auth_user(&app, &headers)?;
+    let profile = get_profile_inner(&app, &headers).await?;
+    let rows: Vec<(String, String, i64, i64, serde_json::Value)> = sqlx::query_as(
+        "SELECT entity, entity_id, revision, updated_ms, payload
+         FROM snapshots WHERE user_id = $1 ORDER BY entity, entity_id",
+    )
+    .bind(user.as_str())
+    .fetch_all(&app.pool)
+    .await
+    .map_err(ApiErr::db)?;
+    let snapshots: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|(entity, entity_id, revision, updated_ms, payload)| {
+            json!({
+                "entity": entity,
+                "entity_id": entity_id,
+                "revision": revision,
+                "updated_ms": updated_ms,
+                "payload": payload,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "exported_ms": now_ms(),
+        "user_id": user.as_str(),
+        "profile": {
+            "username": profile.username,
+            "display_name": profile.display_name,
+            "bio": profile.bio,
+            "email": profile.email,
+        },
+        "snapshots": snapshots,
+    })))
+}
+
+/// get_profile 的内部复用形(export 需要同一份数据)。
+async fn get_profile_inner(
+    app: &AppState,
+    headers: &HeaderMap,
+) -> Result<ProfileResponse, ApiErr> {
+    let user = auth_user(app, headers)?;
+    type ProfileRow = (
+        String, String, String, String, Option<String>, Option<i64>, i64, Option<i64>, Option<i64>,
+    );
+    let row: Option<ProfileRow> = sqlx::query_as(
+        "SELECT id, username, display_name, bio, email, email_verified_ms, created_ms,
+                password_changed_ms, deletion_requested_ms
+         FROM users WHERE id = $1",
+    )
+    .bind(user.as_str())
+    .fetch_optional(&app.pool)
+    .await
+    .map_err(ApiErr::db)?;
+    let Some((user_id, username, display_name, bio, email, verified, created, pw_changed, deletion)) =
+        row
+    else {
+        return Err(ApiErr::not_found("账号不存在"));
+    };
+    Ok(ProfileResponse {
+        user_id,
+        username,
+        display_name,
+        bio,
+        email,
+        email_verified: verified.is_some(),
+        created_ms: created,
+        password_changed_ms: pw_changed,
+        deletion_requested_ms: deletion,
+    })
+}
+
+/// 单条登录记录(序列化形态)。
+#[derive(Debug, serde::Serialize)]
+pub struct LoginLogItem {
+    pub created_ms: i64,
+    pub device_id: String,
+    pub device_name: String,
+    pub ip: String,
+    pub method: String,
+    pub ok: bool,
+    pub detail: String,
+}
+
+/// GET /v1/auth/login-logs(JWT)—— 本人最近 50 条登录记录(含失败)。
+pub async fn login_logs(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<LoginLogItem>>, ApiErr> {
+    let user = auth_user(&app, &headers)?;
+    let rows: Vec<(i64, String, String, String, String, bool, String)> = sqlx::query_as(
+        "SELECT created_ms, device_id, device_name, ip, method, ok, detail
+         FROM login_logs WHERE user_id = $1
+         ORDER BY created_ms DESC LIMIT 50",
+    )
+    .bind(user.as_str())
+    .fetch_all(&app.pool)
+    .await
+    .map_err(ApiErr::db)?;
+    let out = rows
+        .into_iter()
+        .map(|(created_ms, device_id, device_name, ip, method, ok, detail)| LoginLogItem {
+            created_ms,
+            device_id,
+            device_name,
+            ip,
+            method,
+            ok,
+            detail,
+        })
+        .collect();
+    Ok(Json(out))
 }

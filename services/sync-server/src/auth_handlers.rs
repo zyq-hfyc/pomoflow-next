@@ -29,6 +29,38 @@ fn internal(e: sqlx::Error) -> ApiError {
     (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {e}"))
 }
 
+/// 登录记录(login_logs):登录/注册的成败各一行。写失败只告警不影响主流程。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn log_login(
+    app: &AppState,
+    user_id: &str,
+    device_id: &str,
+    device_name: &str,
+    ip: &str,
+    method: &str,
+    ok: bool,
+    detail: &str,
+) {
+    let r = sqlx::query(
+        "INSERT INTO login_logs
+            (user_id, device_id, device_name, ip, method, ok, detail, created_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+    )
+    .bind(user_id)
+    .bind(device_id)
+    .bind(device_name)
+    .bind(ip)
+    .bind(method)
+    .bind(ok)
+    .bind(detail)
+    .bind(chrono::Utc::now().timestamp_millis())
+    .execute(&app.pool)
+    .await;
+    if let Err(e) = r {
+        log::warn!("login log write failed: {e}");
+    }
+}
+
 fn bearer(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(axum::http::header::AUTHORIZATION)
@@ -142,6 +174,7 @@ pub(crate) async fn issue_tokens(
 pub async fn register(
     State(app): State<AppState>,
     headers: HeaderMap,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     Json(req): Json<Credentials>,
 ) -> Result<(StatusCode, Json<AuthTokens>), ApiError> {
     require_jwt(&app)?;
@@ -189,6 +222,17 @@ pub async fn register(
         Err(e) => return Err(internal(e)),
     }
 
+    log_login(
+        &app,
+        &user_id,
+        req.device_id.as_deref().unwrap_or(""),
+        req.device_name.as_deref().unwrap_or(""),
+        &addr.ip().to_string(),
+        "register_username",
+        true,
+        "",
+    )
+    .await;
     let tokens = issue_tokens(
         &app,
         &user_id,
@@ -203,6 +247,7 @@ pub async fn register(
 /// POST /v1/auth/login —— 校验密码,签发新对。
 pub async fn login(
     State(app): State<AppState>,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     Json(req): Json<Credentials>,
 ) -> Result<Json<AuthTokens>, ApiError> {
     require_jwt(&app)?;
@@ -215,13 +260,20 @@ pub async fn login(
     .await
     .map_err(internal)?;
 
+    let ip = addr.ip().to_string();
+    let dev_id = req.device_id.as_deref().unwrap_or("");
+    let dev_name = req.device_name.as_deref().unwrap_or("");
     // 统一返回"用户名或密码错误",不给探测口子
     let Some((user_id, username, password_hash)) = row else {
+        log_login(&app, "", dev_id, dev_name, &ip, "username", false, "账号不存在")
+            .await;
         return Err((StatusCode::UNAUTHORIZED, "用户名或密码错误".into()));
     };
     if !auth::verify_password(&req.password, &password_hash) {
+        log_login(&app, &user_id, dev_id, dev_name, &ip, "username", false, "密码错误").await;
         return Err((StatusCode::UNAUTHORIZED, "用户名或密码错误".into()));
     }
+    log_login(&app, &user_id, dev_id, dev_name, &ip, "username", true, "").await;
     let tokens = issue_tokens(
         &app,
         &user_id,

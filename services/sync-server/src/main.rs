@@ -95,8 +95,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/auth/login-email", post(email_handlers::login_email))
         .route("/v1/auth/reset-password", post(email_handlers::reset_password))
         .route("/v1/auth/email/bind", post(email_handlers::bind_email))
-        .route("/v1/auth/profile", get(email_handlers::get_profile).post(email_handlers::update_display_name))
+        .route("/v1/auth/profile", get(email_handlers::get_profile).post(email_handlers::update_profile))
         .route("/v1/auth/username", post(email_handlers::update_username))
+        .route("/v1/auth/deletion/request", post(email_handlers::deletion_request))
+        .route("/v1/auth/deletion/cancel", post(email_handlers::deletion_cancel))
+        .route(
+            "/v1/auth/avatar",
+            get(email_handlers::get_avatar)
+                .post(email_handlers::set_avatar)
+                .delete(email_handlers::delete_avatar),
+        )
+        .route("/v1/auth/export", get(email_handlers::export_data))
+        .route("/v1/auth/login-logs", get(email_handlers::login_logs))
         .route("/healthz", get(handlers::healthz))
         .with_state(AppState {
             pool: pool.clone(),
@@ -107,8 +117,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mailer,
         });
 
-    // 过期验证码清理:启动一次 + 每 24h 一次(防频控表被写爆)
-    tokio::spawn(cleanup_email_codes(pool));
+    // 周期维护:启动一次 + 每 24h —— 过期验证码清理 + 到期注销账号级联删除
+    tokio::spawn(cleanup_task(pool));
     // 注意:ConnectInfo 需要 into_make_service_with_connect_info,
     // send_code 依赖它取请求方 IP 做频控
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -122,10 +132,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// 清理过期超 24h 的验证码行(已消费/作废的历史)。
-async fn cleanup_email_codes(pool: sqlx::PgPool) {
+/// 周期维护(启动 + 每 24h):
+/// ① 清理过期超 24h 的验证码行;② 冷静期(15 天)已过的注销账号级联删除。
+async fn cleanup_task(pool: sqlx::PgPool) {
     loop {
-        let cutoff = chrono::Utc::now().timestamp_millis() - 86_400_000;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let cutoff = now - 86_400_000;
         match sqlx::query("DELETE FROM email_codes WHERE expires_ms < $1")
             .bind(cutoff)
             .execute(&pool)
@@ -137,6 +150,57 @@ async fn cleanup_email_codes(pool: sqlx::PgPool) {
             Ok(_) => {}
             Err(e) => log::warn!("email code cleanup failed: {e}"),
         }
+
+        // 登录记录保留 180 天
+        let _ = sqlx::query("DELETE FROM login_logs WHERE created_ms < $1")
+            .bind(now - 180 * 86_400_000)
+            .execute(&pool)
+            .await;
+
+        // 到期注销:先删关联数据,最后删用户行(顺序避免用户行没了查不到 id)
+        let expired_cutoff = now - email_handlers::DELETION_COOLDOWN_MS;
+        let due: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM users WHERE deletion_requested_ms IS NOT NULL
+             AND deletion_requested_ms < $1",
+        )
+        .bind(expired_cutoff)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+        if !due.is_empty() {
+            for table in [
+                "refresh_tokens",
+                "auth_identities",
+                "snapshots",
+                "changelog",
+            ] {
+                let n = sqlx::query(&format!(
+                    "DELETE FROM {table} WHERE user_id = ANY($1)"
+                ))
+                .bind(&due)
+                .execute(&pool)
+                .await
+                .map(|r| r.rows_affected())
+                .unwrap_or(0);
+                log::info!("deletion sweep: {table} removed {n} rows");
+            }
+            // 该批账号邮箱的历史验证码一并清掉
+            let _ = sqlx::query(
+                "DELETE FROM email_codes WHERE email IN (
+                     SELECT email FROM users WHERE id = ANY($1) AND email IS NOT NULL)",
+            )
+            .bind(&due)
+            .execute(&pool)
+            .await;
+            let n = sqlx::query("DELETE FROM users WHERE id = ANY($1)")
+                .bind(&due)
+                .execute(&pool)
+                .await
+                .map(|r| r.rows_affected())
+                .unwrap_or(0);
+            log::warn!("deletion sweep: {} accounts permanently deleted", n);
+        }
+
         tokio::time::sleep(std::time::Duration::from_secs(24 * 3600)).await;
     }
 }

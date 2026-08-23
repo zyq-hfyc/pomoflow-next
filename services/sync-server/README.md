@@ -24,13 +24,18 @@
 | POST | `/v1/auth/login-email` | 邮箱+密码登录 |
 | POST | `/v1/auth/reset-password` | 找回密码:验码 → 改哈希 → 全端踢出(含本机) |
 | POST | `/v1/auth/email/bind` | 绑定/换绑邮箱(JWT;验当前密码+新邮箱验证码) |
-| GET / POST | `/v1/auth/profile` | 资料:用户名/显示名/邮箱/验证状态;POST 改显示名 |
+| GET / POST | `/v1/auth/profile` | 资料:用户名/显示名/签名/邮箱/验证状态;POST 改显示名与签名 |
 | POST | `/v1/auth/username` | 改用户名(验密码;其他设备下线,本机换新令牌) |
+| GET / POST / DELETE | `/v1/auth/avatar` | 头像:取(JWT)/ 上传替换(JPG/PNG ≤2MB)/ 移除 |
+| GET | `/v1/auth/export` | 导出账号全部云端数据(profile + 快照,注销前备份) |
+| GET | `/v1/auth/login-logs` | 本人最近 50 条登录记录(含失败) |
+| POST | `/v1/auth/deletion/request` | 申请注销(密码+邮箱验证码;15 天冷静期,其他设备下线) |
+| POST | `/v1/auth/deletion/cancel` | 撤销注销申请(密码) |
+| GET | `/healthz` | 存活探针(含 DB 连通) |
 
 P1d 新端点错误为结构化 JSON:`{"error":{"code":"RATE_LIMITED","message":"…","retry_after_secs":58}}`
 (机器码:INVALID_EMAIL / INVALID_PASSWORD / USERNAME_TAKEN / EMAIL_TAKEN /
 CODE_INVALID / CODE_EXHAUSTED / RATE_LIMITED / UNAUTHORIZED);旧端点维持纯文本。
-| GET | `/healthz` | 存活探针(含 DB 连通) |
 
 认证:HTTP `Authorization: Bearer <token>`,两种 token 都认(ADR-007):
 - **JWT**(账号模式,设置 `JWT_SECRET` 启用):token 由 login 签发,负载即用户身份;
@@ -205,10 +210,9 @@ bash services/sync-server/pack-deploy.sh
 **方式 A:scp(在 Windows 的 Git Bash / PowerShell 里执行)**
 
 ```bash
-# scp = 跨机器安全拷贝。把部署包传到 VM 的 /opt 目录
-# 把 用户名 换成 VM 的登录用户(如 ubuntu/root),<VM的IP> 换成步骤 0 查到的 IP,
-# <日期> 换成步骤 2b 打包输出里的实际日期
-scp artifacts/pomoflow-sync-deploy-<日期>.tar.gz 用户名@<VM的IP>:/opt/
+# scp = 跨机器安全拷贝。把部署包传到 VM 的固定部署位置 /home/yongchao
+# <VM的IP> 换成步骤 0 查到的 IP,<日期> 换成步骤 2b 打包输出里的实际日期
+scp artifacts/pomoflow-sync-deploy-<日期>.tar.gz yongchao@<VM的IP>:/home/yongchao/
 ```
 
 **方式 B:WinSCP / FileZilla**(图形界面拖拽,主机填 VM 的 IP、端口 22、SFTP 协议)
@@ -219,7 +223,7 @@ scp artifacts/pomoflow-sync-deploy-<日期>.tar.gz 用户名@<VM的IP>:/opt/
 
 ```bash
 # 进入上传目录
-cd /opt
+cd /home/yongchao
 
 # 解压:会生成 pomoflow-next/ 目录(源码 + 预编译二进制 + docker 物料)
 # 二进制位置:pomoflow-next/services/sync-server/bin/sync-server,compose 会自动 COPY 它
@@ -395,12 +399,12 @@ docker compose up -d --build
 openssl rand -hex 32
 
 # ② 把输出粘贴进 .env 末尾(JWT_SECRET=后面),编辑器中操作
-nano /opt/pomoflow-next/services/sync-server/.env
+nano /home/yongchao/pomoflow-next/services/sync-server/.env
 ```
 
 ```bash
 # ③ 重启服务让配置生效(改 .env 必须重启;预编译路径秒级)
-cd /opt/pomoflow-next/services/sync-server && docker compose up -d
+cd /home/yongchao/pomoflow-next/services/sync-server && docker compose up -d
 ```
 
 ```bash
@@ -444,10 +448,10 @@ curl -s -o /dev/null -w "%{http_code}\n" \
 openssl rand -hex 32
 
 # ② 编辑 .env,按需取消注释 SMTP_* 段并填入授权码
-nano /opt/pomoflow-next/services/sync-server/.env
+nano /home/yongchao/pomoflow-next/services/sync-server/.env
 
 # ③ 重启生效;启动日志确认 mail=smtp 或 mail=log
-cd /opt/pomoflow-next/services/sync-server && docker compose up -d
+cd /home/yongchao/pomoflow-next/services/sync-server && docker compose up -d
 docker compose logs sync-server | grep mail=
 ```
 

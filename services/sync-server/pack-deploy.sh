@@ -9,7 +9,7 @@
 #   bash services/sync-server/build-local.sh    # ① 先在本地交叉编译出二进制(改代码后需重跑)
 #   bash services/sync-server/pack-deploy.sh    # ② 再打部署包
 # 上传(三选一):
-#   scp artifacts/pomoflow-sync-deploy-*.tar.gz user@<vm-ip>:/opt/
+#   scp artifacts/pomoflow-sync-deploy-*.tar.gz yongchao@<vm-ip>:/home/yongchao/
 #   或 WinSCP 拖拽 / VMware 共享文件夹
 # 服务器解压部署:
 #   tar -xzf pomoflow-sync-deploy-*.tar.gz
@@ -47,4 +47,4 @@ tar -czf "$OUT" \
 
 SIZE="$(du -h "$OUT" | cut -f1)"
 echo "✔ $OUT($SIZE)"
-echo "  上传: scp $OUT user@<vm-ip>:/opt/"
+echo "  上传: scp $OUT yongchao@<vm-ip>:/home/yongchao/"
