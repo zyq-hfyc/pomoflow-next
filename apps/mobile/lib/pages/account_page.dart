@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/auth_provider.dart';
@@ -255,6 +256,92 @@ class _ProfileBodyState extends State<_ProfileBody> {
     _load();
   }
 
+  /// 头像上传:image_picker → 客户端 2MB 预检 → 头字节判 mime →
+  /// POST /v1/auth/avatar → 立即用本地编码刷 _avatarDataUrl(乐观更新)。
+  Future<void> _pickAndUploadAvatar() async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1024,
+      imageQuality: 92,
+    );
+    if (picked == null) return;
+    if (!mounted) return;
+
+    final bytes = await picked.readAsBytes();
+    if (bytes.length > 2 * 1024 * 1024) {
+      if (!mounted) return;
+      _AccountHelpers.hint(context, '头像需在 2MB 以内');
+      return;
+    }
+    final mime = _detectMime(bytes);
+    if (mime == null) {
+      if (!mounted) return;
+      _AccountHelpers.hint(context, '仅支持 JPG / PNG');
+      return;
+    }
+    final b64 = base64Encode(bytes);
+    try {
+      await ApiClient.instance.post('/v1/auth/avatar', {
+        'avatar_base64': b64,
+        'mime': mime,
+      });
+      if (!mounted) return;
+      setState(() => _avatarDataUrl = 'data:$mime;base64,$b64');
+      _AccountHelpers.hint(context, '头像已更新');
+    } on ApiException catch (e) {
+      if (mounted) _AccountHelpers.hint(context, e.message);
+    }
+  }
+
+  /// 头像删除(DELETE /v1/auth/avatar)→ 本地 dataUrl 清空。
+  Future<void> _deleteAvatar() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('移除头像'),
+        content: const Text('确定要移除当前头像?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('移除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await ApiClient.instance.delete('/v1/auth/avatar');
+      if (!mounted) return;
+      setState(() => _avatarDataUrl = null);
+      _AccountHelpers.hint(context, '头像已移除');
+    } on ApiException catch (e) {
+      if (mounted) _AccountHelpers.hint(context, e.message);
+    }
+  }
+
+  /// 头字节判 mime:JPG = FF D8 FF;PNG = 89 50 4E 47。
+  String? _detectMime(List<int> bytes) {
+    if (bytes.length >= 3 &&
+        bytes[0] == 0xFF &&
+        bytes[1] == 0xD8 &&
+        bytes[2] == 0xFF) {
+      return 'image/jpeg';
+    }
+    if (bytes.length >= 4 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47) {
+      return 'image/png';
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -267,6 +354,8 @@ class _ProfileBodyState extends State<_ProfileBody> {
         _AvatarBlock(
           dataUrl: _avatarDataUrl,
           initial: (_s('display_name') ?? _s('username') ?? '?').characters.first,
+          onTapUpload: _pickAndUploadAvatar,
+          onTapRemove: _deleteAvatar,
         ),
         _AccountHelpers.sectionNote(
           theme,
@@ -299,9 +388,13 @@ class _ProfileBodyState extends State<_ProfileBody> {
 
 /// 头像块(对齐原型 .profile-head 内的圆形头像)。
 class _AvatarBlock extends StatelessWidget {
-  const _AvatarBlock({this.dataUrl, required this.initial});
+  const _AvatarBlock({this.dataUrl, required this.initial, this.onTapUpload, this.onTapRemove});
   final String? dataUrl;
   final String initial;
+  /// 点击头像 / 「上传」按钮。外部协调:image_picker → POST。
+  final VoidCallback? onTapUpload;
+  /// 长按头像或「移除」入口。null 时入口隐藏。
+  final VoidCallback? onTapRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -310,29 +403,33 @@ class _AvatarBlock extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       child: Row(
         children: [
-          Container(
-            width: 64, height: 64,
-            decoration: BoxDecoration(
-              color: theme.pfBrand50,
-              shape: BoxShape.circle,
-              border: Border.all(color: theme.pfLine),
-            ),
-            clipBehavior: Clip.antiAlias,
-            alignment: Alignment.center,
-            child: dataUrl != null
-                ? Image.memory(
-                    base64Decode(dataUrl!.split(',').last),
-                    fit: BoxFit.cover,
-                    cacheWidth: 128,
-                    gaplessPlayback: true,
-                  )
-                : Text(
-                    initial,
-                    style: TextStyle(
-                      fontSize: 26, fontWeight: FontWeight.w800,
-                      color: theme.pfBrand700,
+          GestureDetector(
+            onTap: onTapUpload,
+            onLongPress: onTapRemove,
+            child: Container(
+              width: 64, height: 64,
+              decoration: BoxDecoration(
+                color: theme.pfBrand50,
+                shape: BoxShape.circle,
+                border: Border.all(color: theme.pfLine),
+              ),
+              clipBehavior: Clip.antiAlias,
+              alignment: Alignment.center,
+              child: dataUrl != null
+                  ? Image.memory(
+                      base64Decode(dataUrl!.split(',').last),
+                      fit: BoxFit.cover,
+                      cacheWidth: 128,
+                      gaplessPlayback: true,
+                    )
+                  : Text(
+                      initial,
+                      style: TextStyle(
+                        fontSize: 26, fontWeight: FontWeight.w800,
+                        color: theme.pfBrand700,
+                      ),
                     ),
-                  ),
+            ),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -354,12 +451,14 @@ class _AvatarBlock extends StatelessWidget {
             ),
           ),
           TextButton(
-            onPressed: () =>
-                _AccountHelpers.hint(context, '头像上传将在 P3d 接入'),
-            child: Text('上传', style: TextStyle(
-              fontSize: 13, color: theme.pfBrand700,
-              fontWeight: FontWeight.w700,
-            )),
+            onPressed: onTapUpload,
+            child: Text(
+              dataUrl == null ? '上传' : '更换',
+              style: TextStyle(
+                fontSize: 13, color: theme.pfBrand700,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ],
       ),
