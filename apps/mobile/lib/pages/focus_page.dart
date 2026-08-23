@@ -174,47 +174,59 @@ class _FocusPageState extends State<FocusPage> {
     final tasks = context.watch<TaskProvider>();
     final focusTask = tasks.focusTask;
     final progress = 1 - _left / _total;
-    return SizedBox(
-      width: 268,
-      height: 268,
-      child: CustomPaint(
-        painter: _RingPainter(
-          track: theme.pfBrand100,
-          progressColor: theme.pfBrand,
-          progress: progress,
-        ),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _timeLabel,
-                style: TextStyle(
-                  fontSize: 62,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -1.8,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                  color: theme.colorScheme.onSurface,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                cfg.label,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: theme.pfMuted,
-                ),
-              ),
-              if (cfg.showPomo && focusTask != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    '${focusTask.completedPomos} / ${focusTask.estimatedPomos} 番茄',
-                    style: TextStyle(fontSize: 13, color: theme.pfMuted),
+    // 自适应尺寸:原型 268px 是 393×852 基准;矮窗口(如桌面 Chrome 预览)
+    // 按屏高再收一档,避免圆环挤压上下控件。
+    final media = MediaQuery.of(context);
+    final ringSize = math.min(
+      math.min(268.0, media.size.width * .68),
+      media.size.height * .34,
+    );
+    return Padding(
+      // 原型 .ring-wrap margin 26px auto 6px:辉光(blur 6)渗出圆环 box,
+      // 上下留白不够时会视觉压到模式分段与任务 chip。
+      padding: const EdgeInsets.only(top: 26, bottom: 6),
+      child: SizedBox(
+        width: ringSize,
+        height: ringSize,
+        child: CustomPaint(
+          painter: _RingPainter(
+            track: theme.pfBrand100,
+            progressColor: theme.pfBrand,
+            progress: progress,
+          ),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _timeLabel,
+                  style: TextStyle(
+                    fontSize: ringSize * .23,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -1.8,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                    color: theme.colorScheme.onSurface,
                   ),
                 ),
-            ],
+                const SizedBox(height: 8),
+                Text(
+                  cfg.label,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: theme.pfMuted,
+                  ),
+                ),
+                if (cfg.showPomo && focusTask != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      '${focusTask.completedPomos} / ${focusTask.estimatedPomos} 番茄',
+                      style: TextStyle(fontSize: 13, color: theme.pfMuted),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
