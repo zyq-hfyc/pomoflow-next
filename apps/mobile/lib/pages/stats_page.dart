@@ -275,6 +275,9 @@ class _TrendCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // 缓存 max:7 根柱共用,避免每根再 reduce 一次。
+    final maxMin = mins.fold<int>(0, math.max);
+    final unit = maxMin == 0 ? 1.0 : maxMin.toDouble();
     return PfCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -295,11 +298,7 @@ class _TrendCard extends StatelessWidget {
                   if (i > 0) const SizedBox(width: 8),
                   Expanded(
                     child: _TrendBar(
-                      ratio:
-                          mins[i] /
-                          (mins.reduce(math.max) == 0
-                              ? 1
-                              : mins.reduce(math.max)),
+                      ratio: mins[i] / unit,
                       label: _dayLabels[i % _dayLabels.length],
                       top: theme.pfBrand,
                       bottom: theme.pfBrand600,
@@ -331,14 +330,17 @@ class _TrendBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        FractionallySizedBox(
-          widthFactor: 1,
-          child: AspectRatio(
-            aspectRatio: .34, // 柱宽高比(原型 max-width 26)
-            child: Container(
+    return LayoutBuilder(
+      builder: (ctx, c) {
+        // 留 18 给日标签(12 + 6 间距),实际柱高按 ratio 占剩余空间。
+        const labelH = 18.0;
+        final maxBar = (c.maxHeight - labelH).clamp(0.0, double.infinity);
+        final h = (maxBar * ratio.clamp(0.0, 1.0));
+        return Column(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            Container(
+              height: h,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
@@ -351,11 +353,11 @@ class _TrendBar extends StatelessWidget {
                 ),
               ),
             ),
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(label, style: TextStyle(fontSize: 10, color: theme.pfMuted)),
-      ],
+            const SizedBox(height: 6),
+            Text(label, style: TextStyle(fontSize: 10, color: theme.pfMuted)),
+          ],
+        );
+      },
     );
   }
 }

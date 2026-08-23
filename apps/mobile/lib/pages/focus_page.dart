@@ -51,6 +51,11 @@ class _FocusPageState extends State<FocusPage> {
   }
 
   void _switchMode(_TimerMode m) {
+    // 计时进行中拒绝切换(防误触归零丢进度),引导先暂停/跳过。
+    if (_running) {
+      _hint('计时进行中,先暂停或跳过再切换模式');
+      return;
+    }
     _timer?.cancel();
     setState(() {
       _mode = m;
@@ -75,7 +80,10 @@ class _FocusPageState extends State<FocusPage> {
           setState(() => _left--);
         } else {
           _timer?.cancel();
-          setState(() => _running = false);
+          setState(() {
+            _running = false;
+            _started = false; // 归零后按钮回到「开始」,而非误导性的「继续」
+          });
           context.read<TaskProvider>().completePomodoro();
         }
       });

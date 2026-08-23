@@ -36,6 +36,8 @@ class _TasksPageState extends State<TasksPage> {
     final tasks = context.watch<TaskProvider>();
     final stat = _viewStats[_view] ?? (0, 0, 0, 0);
     final isJournal = _view == '手账';
+    // 缓存视图任务:避免在 isEmpty / length / itemBuilder 三处重复调用。
+    final viewList = isJournal ? const <PfTask>[] : tasks.viewTasks(_view);
 
     return Container(
       color: theme.pfBg,
@@ -111,7 +113,7 @@ class _TasksPageState extends State<TasksPage> {
                     },
                   ),
                 )
-              else if (tasks.viewTasks(_view).isEmpty)
+              else if (viewList.isEmpty)
                 SliverFillRemaining(
                   hasScrollBody: false,
                   child: _EmptyView(view: _view),
@@ -120,11 +122,10 @@ class _TasksPageState extends State<TasksPage> {
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
                   sliver: SliverList.separated(
-                    itemCount: tasks.viewTasks(_view).length,
+                    itemCount: viewList.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 10),
                     itemBuilder: (context, i) {
-                      final t = tasks.viewTasks(_view)[i];
-                      return _TaskCard(task: t);
+                      return _TaskCard(task: viewList[i]);
                     },
                   ),
                 ),
