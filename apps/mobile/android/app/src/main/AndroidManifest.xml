@@ -1,7 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- release 构建不走 debug manifest 合并,INTERNET 必须在 main 显式声明
+         (B-Phase-3:真机连 sync-server 的硬前置)。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="pomoflow_mobile"
         android:name="${applicationName}"
+        android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

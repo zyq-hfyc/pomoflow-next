@@ -80,3 +80,7 @@ services/sync-server/bin/
 
 # 本地保留的发布产物(安装包/部署包),不入库
 artifacts/
+
+# Android 机器本地配置(SDK/flutter 路径,各机器 owner 自配)
+apps/mobile/android/local.properties
+apps/mobile/android/.gradle/
