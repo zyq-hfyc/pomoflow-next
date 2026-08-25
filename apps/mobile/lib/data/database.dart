@@ -41,7 +41,8 @@ class AppDatabase {
   /// schema v2 → v3:tasks.id INTEGER → TEXT(id 字符串化)。
   /// schema v3 → v4:journals.id INTEGER → TEXT。
   /// schema v4 → v5:tasks 补 updated_at_ms 列 + 新建 pomodoro_sessions 表。
-  static const _schemaVersion = 5;
+  /// schema v5 → v6:tasks 补 deleted_at_ms 列(软删除,对齐桌面 store 同名列)。
+  static const _schemaVersion = 6;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -74,6 +75,10 @@ class AppDatabase {
           if (oldVersion < 5) {
             await _v4ToV5(db);
           }
+          // v5 → v6:tasks 补 deleted_at_ms 列(软删除)。
+          if (oldVersion < 6) {
+            await _v5ToV6(db);
+          }
         },
       ),
     );
@@ -104,7 +109,8 @@ class AppDatabase {
         origin_device TEXT NOT NULL DEFAULT '',
         payload TEXT NOT NULL DEFAULT '',
         user_id TEXT NOT NULL DEFAULT '',
-        updated_at_ms INTEGER NOT NULL DEFAULT 0
+        updated_at_ms INTEGER NOT NULL DEFAULT 0,
+        deleted_at_ms INTEGER NOT NULL DEFAULT 0
       )
     ''');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)');
@@ -219,6 +225,14 @@ class AppDatabase {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// v5 → v6 升级:tasks 补 `deleted_at_ms` 软删除列(0 = 未删,对齐桌面 store)。
+  static Future<void> _v5ToV6(Database db) async {
+    await _addColumnIfMissing(
+      db, 'tasks', 'ALTER TABLE tasks ADD COLUMN deleted_at_ms INTEGER NOT NULL DEFAULT 0');
+    await db.insert('meta', {'k': 'schema_version', 'v': '6'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
   /// pomodoro_sessions(P1 多实体同步):core::PomodoroSession 对齐。
   /// `task_id`/`project_id` 用 `''` 表示 core 的 `None`;时间列 epoch 毫秒。
   static Future<void> _createSessionsTable(Database db) async {
@@ -301,8 +315,13 @@ class AppDatabase {
 
   // === tasks ===================================================================
 
+  /// 展示用全量任务(软删除墓碑行不出现;行本身保留供 LWW 同步)。
   Future<List<PfTask>> listTasks() async {
-    final rows = await _db.query('tasks', orderBy: 'id ASC');
+    final rows = await _db.query(
+      'tasks',
+      where: 'deleted_at_ms = 0',
+      orderBy: 'id ASC',
+    );
     return rows.map(_taskFromRow).toList();
   }
 
@@ -345,7 +364,8 @@ class AppDatabase {
     final rows = await _db.rawQuery(
       '''SELECT id, title, priority, project, due_label, completed,
                 estimated, completed_cnt, subtask_cnt, tags_csv,
-                revision, updated_at_ms, origin_device, user_id, payload
+                revision, updated_at_ms, deleted_at_ms,
+                origin_device, user_id, payload
          FROM tasks
          WHERE sync_state = 'pending'
          ORDER BY updated_at_ms ASC
@@ -430,6 +450,28 @@ class AppDatabase {
              user_id = ?
          WHERE id = ?''',
       [nowMs, originDevice, userId, id],
+    );
+  }
+
+  /// 软删除:盖 deleted_at_ms 墓碑 + bump revision + 标 pending —— 删除和编辑
+  /// 走**同一条 LWW 通道**(core ADR:删除只是实体状态,不是特殊操作)。
+  /// 行保留,否则其他端/服务端的旧快照会在 pull 时让任务"复活"。
+  Future<void> softDeleteTask({
+    required String id,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    await _db.rawUpdate(
+      '''UPDATE tasks
+         SET deleted_at_ms = ?,
+             revision = revision + 1,
+             sync_state = 'pending',
+             updated_at_ms = ?,
+             origin_device = ?,
+             user_id = ?
+         WHERE id = ? AND deleted_at_ms = 0''',
+      [nowMs, nowMs, originDevice, userId, id],
     );
   }
 
@@ -606,6 +648,7 @@ class AppDatabase {
     'payload': '', // 远端缓存语义,见文件尾注释
     'user_id': t.syncMeta.userId,
     'updated_at_ms': t.syncMeta.updatedAt?.millisecondsSinceEpoch ?? 0,
+    'deleted_at_ms': t.deletedAt?.millisecondsSinceEpoch ?? 0,
   };
 
   PfTask _taskFromRow(Map<String, Object?> r) => PfTask(
@@ -619,6 +662,9 @@ class AppDatabase {
     completedPomos: (r['completed_cnt'] as int?) ?? 0,
     subtaskCount: (r['subtask_cnt'] as int?) ?? 0,
     completed: ((r['completed'] as int?) ?? 0) == 1,
+    deletedAt: r['deleted_at_ms'] != null && (r['deleted_at_ms'] as int) > 0
+        ? DateTime.fromMillisecondsSinceEpoch(r['deleted_at_ms'] as int)
+        : null,
     syncMeta: PfSyncMeta(
       revision: (r['revision'] as int?) ?? 1,
       updatedAt: r['updated_at_ms'] != null && (r['updated_at_ms'] as int) > 0

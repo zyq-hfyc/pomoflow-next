@@ -62,6 +62,7 @@ class PfTask {
     this.completedPomos = 0,
     this.subtaskCount = 0,
     this.completed = false,
+    this.deletedAt,
     this.syncMeta = const PfSyncMeta(),
   });
 
@@ -78,6 +79,12 @@ class PfTask {
   final int completedPomos;
   final int subtaskCount;
   final bool completed;
+
+  /// 软删除时刻(null = 活任务;对齐 core `deleted_at`)。UI 永不渲染墓碑
+  /// (DB listTasks 已滤),此字段只随同步流转。
+  final DateTime? deletedAt;
+
+  bool get isDeleted => deletedAt != null;
 
   /// Phase-2 同步元信息。`copyWith` 业务字段时 syncMeta 默认保留不变;
   /// provider 在 mutator 末尾手动覆写(revision + 1 / syncState='pending' /
@@ -97,6 +104,7 @@ class PfTask {
     int? completedPomos,
     int? subtaskCount,
     bool? completed,
+    DateTime? deletedAt,
     PfSyncMeta? syncMeta,
   }) => PfTask(
     id: id,
@@ -109,6 +117,7 @@ class PfTask {
     completedPomos: completedPomos ?? this.completedPomos,
     subtaskCount: subtaskCount ?? this.subtaskCount,
     completed: completed ?? this.completed,
+    deletedAt: deletedAt ?? this.deletedAt,
     syncMeta: syncMeta ?? this.syncMeta,
   );
 }
