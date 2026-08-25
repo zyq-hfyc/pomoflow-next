@@ -8,13 +8,21 @@ import '../theme/tokens.dart';
 import '../widgets/pf_controls.dart';
 import '../widgets/pf_sheet.dart';
 
-/// 新建任务 Sheet(§5.5 任务类全字段):标题/项目/优先级/截止/预计番茄/单番茄时长/重复/标签。
-void showTaskCreateSheet(BuildContext context) {
-  pfSheet(context, title: '新建任务', body: (ctx) => const _TaskCreateForm());
+/// 新建/编辑任务 Sheet(§5.5 任务类全字段):标题/项目/优先级/截止/预计番茄/
+/// 单番茄时长/重复/标签。传 [editTask] 即编辑模式(预填 + 保存修改)。
+void showTaskCreateSheet(BuildContext context, {PfTask? editTask}) {
+  pfSheet(
+    context,
+    title: editTask == null ? '新建任务' : '编辑任务',
+    body: (ctx) => _TaskCreateForm(initial: editTask),
+  );
 }
 
 class _TaskCreateForm extends StatefulWidget {
-  const _TaskCreateForm();
+  const _TaskCreateForm({this.initial});
+
+  /// 编辑模式的原任务(null = 新建)。
+  final PfTask? initial;
 
   @override
   State<_TaskCreateForm> createState() => _TaskCreateFormState();
@@ -24,12 +32,25 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
   static const _projects = ['产品设计', '研发', '运营', '学习', '日常'];
   static const _repeatOptions = ['不重复', '每天', '每周一', '工作日'];
 
-  final _titleCtrl = TextEditingController();
-  final _tagsCtrl = TextEditingController();
-  String _project = _projects.first;
-  PfPriority _priority = PfPriority.medium;
-  String _due = '今天';
-  int _pomos = 2;
+  late final TextEditingController _titleCtrl = TextEditingController(
+    text: widget.initial?.title ?? '',
+  );
+  late final TextEditingController _tagsCtrl = TextEditingController(
+    text: widget.initial?.tags.join(',') ?? '',
+  );
+  late String _project =
+      _projects.contains(widget.initial?.project) && widget.initial != null
+          ? widget.initial!.project
+          : _projects.first;
+  late PfPriority _priority = widget.initial?.priority ?? PfPriority.medium;
+  late String _due =
+      widget.initial != null && widget.initial!.dueLabel.isNotEmpty
+          ? widget.initial!.dueLabel
+          : '今天';
+  late int _pomos =
+      widget.initial != null && widget.initial!.estimatedPomos > 0
+          ? widget.initial!.estimatedPomos
+          : 2;
   int _duration = 25;
   String _repeat = '不重复';
 
@@ -52,23 +73,40 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
         .map((t) => t.trim())
         .where((t) => t.isNotEmpty)
         .toList();
+    final dueLabel = _repeat != '不重复' ? '每天' : _due;
     final provider = context.read<TaskProvider>();
-    final id = await provider.nextId();
-    await provider.addTask(
-      PfTask(
-        id: id,
-        title: title,
-        priority: _priority,
-        project: _project,
-        dueLabel: _repeat != '不重复' ? '每天' : _due,
-        tags: tags,
-        estimatedPomos: _pomos,
-      ),
-    );
+    final initial = widget.initial;
+    if (initial == null) {
+      final id = await provider.nextId();
+      await provider.addTask(
+        PfTask(
+          id: id,
+          title: title,
+          priority: _priority,
+          project: _project,
+          dueLabel: dueLabel,
+          tags: tags,
+          estimatedPomos: _pomos,
+        ),
+      );
+    } else {
+      // copyWith 保留 id/syncMeta/completed/completedPomos(编辑不改完成态)。
+      await provider.editTask(
+        initial.copyWith(
+          title: title,
+          priority: _priority,
+          project: _project,
+          dueLabel: dueLabel,
+          tags: tags,
+          estimatedPomos: _pomos,
+        ),
+      );
+    }
     if (!mounted) return;
     Navigator.pop(context);
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('已创建并加入清单')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(initial == null ? '已创建并加入清单' : '已保存修改')),
+    );
   }
 
   @override
@@ -155,13 +193,16 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
           child: PfSheetTextField(controller: _tagsCtrl, hint: '可添加多个标签，逗号分隔'),
         ),
         const SizedBox(height: 6),
-        PfPrimaryButton(label: '创建并加入清单', onTap: _submit),
+        PfPrimaryButton(
+          label: widget.initial == null ? '创建并加入清单' : '保存修改',
+          onTap: _submit,
+        ),
       ],
     );
   }
 }
 
-/// 任务详情 Sheet(§5.3):kv 行 + 开始专注/编辑。
+/// 任务详情 Sheet(§5.3):kv 行 + 开始专注/编辑 + 删除(软删除,二次确认)。
 void showTaskDetailSheet(BuildContext context, PfTask task) {
   final theme = Theme.of(context);
   pfSheet(
@@ -189,7 +230,7 @@ void showTaskDetailSheet(BuildContext context, PfTask task) {
         _kv('提醒', '无', theme),
         _kv('重复', '不重复', theme),
         const SizedBox(height: 14),
-        const PfNote(text: '描述、标签、子任务清单勾选将在 P3c 任务编辑器中补齐。'),
+        const PfNote(text: '描述、子任务清单勾选将在任务编辑器后续批次补齐。'),
         const SizedBox(height: 14),
         Row(
           children: [
@@ -211,15 +252,85 @@ void showTaskDetailSheet(BuildContext context, PfTask task) {
                 height: 50,
                 onTap: () {
                   Navigator.pop(ctx);
-                  showTaskCreateSheet(ctx);
+                  showTaskCreateSheet(ctx, editTask: task);
                 },
               ),
             ),
           ],
         ),
+        const SizedBox(height: 10),
+        _DeleteTaskButton(task: task),
       ],
     ),
   );
+}
+
+/// 通栏 danger 删除按钮 + 二次确认(软删除,多端同步收敛)。
+class _DeleteTaskButton extends StatelessWidget {
+  const _DeleteTaskButton({required this.task});
+
+  final PfTask task;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return GestureDetector(
+      onTap: () => _confirm(context),
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        height: 50,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: theme.colorScheme.error.withValues(alpha: .08),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: theme.colorScheme.error.withValues(alpha: .35),
+          ),
+        ),
+        child: Text(
+          '删除任务',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: theme.colorScheme.error,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirm(BuildContext sheetContext) async {
+    final theme = Theme.of(sheetContext);
+    final ok = await showDialog<bool>(
+      context: sheetContext,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除任务'),
+        content: Text('「${task.title}」将被删除,并同步到所有设备。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('取消', style: TextStyle(color: theme.pfMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(
+              '删除',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: theme.colorScheme.error,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if (!sheetContext.mounted) return;
+    // 先取 provider 再关 sheet(pop 后 sheet 的 context 即失效,不能再 read)。
+    final provider = sheetContext.read<TaskProvider>();
+    Navigator.pop(sheetContext);
+    await provider.deleteTask(task.id);
+  }
 }
 
 Widget _kv(String k, String v, ThemeData theme, {Color? color}) {

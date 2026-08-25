@@ -269,6 +269,40 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 编辑任务(业务字段):内存替换 + DB 更新 + 标 pending(LWW 常规通道)。
+  /// id / syncMeta / completed / completedPomos 由 copyWith 语义保留。
+  Future<void> editTask(PfTask task) async {
+    final i = _tasks.indexWhere((t) => t.id == task.id);
+    if (i < 0) return;
+    _tasks[i] = task;
+    final db = _db;
+    if (db != null) {
+      await db.updateTask(task);
+      await _markPending(db, task.id);
+    }
+    notifyListeners();
+  }
+
+  /// 软删除任务:内存移除 + DB 盖墓碑标 pending(行保留,否则对端/服务端
+  /// 旧快照会在 pull 时复活)。若删的是当前专注任务,一并解除专注。
+  Future<void> deleteTask(String id) async {
+    _tasks.removeWhere((t) => t.id == id);
+    if (_focusTaskId == id) _focusTaskId = null;
+    final db = _db;
+    if (db != null) {
+      try {
+        await db.softDeleteTask(
+          id: id,
+          originDevice: _deviceIdProvider?.call() ?? '',
+          userId: _userIdProvider?.call() ?? '',
+        );
+      } on Exception catch (e) {
+        debugPrint('softDeleteTask failed for $id: $e');
+      }
+    }
+    notifyListeners();
+  }
+
   Future<void> setFocusTask(String? id) async {
     _focusTaskId = id;
     final db = _db;
