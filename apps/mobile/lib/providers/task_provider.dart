@@ -27,6 +27,7 @@ class TaskProvider extends ChangeNotifier {
   factory TaskProvider.demo() {
     final p = TaskProvider._mem();
     final demo = _seedIds();
+    final demoSessions = _demoSessions(DateTime.now());
     return p
       .._tasks.addAll([
         PfTask(
@@ -89,8 +90,38 @@ class TaskProvider extends ChangeNotifier {
               '移动端 Dock 交互参考记账 App 的悬浮胶囊,中间凸起按钮承载最高频动作「新建」。',
         ),
       ])
-      ..todayPomos = 6
+      .._sessions.addAll(demoSessions)
+      ..todayPomos = demoSessions
+          .where((s) => _localDay(s.startedAt) == _localDay(DateTime.now()))
+          .length
       ..todayReview = '上午两个番茄写完了需求初稿,下午会议偏多。';
+  }
+
+  /// web demo 的演示会话:今天 3 条 + 近几天若干(统计页有图可看),
+  /// 任务归属对应上面 5 个 demo 任务(id 固定字符串)。
+  static List<PfSession> _demoSessions(DateTime now) {
+    PfSession at(int daysAgo, int hour, int minutes,
+            {String taskId = ''}) =>
+        PfSession(
+          id: 'ds${daysAgo}_$hour${taskId.isEmpty ? '' : taskId.hashCode % 97}',
+          taskId: taskId,
+          durationMinutes: minutes,
+          startedAt: DateTime(
+              now.year, now.month, now.day - daysAgo, hour),
+          endedAt: DateTime(now.year, now.month, now.day - daysAgo, hour)
+              .add(Duration(minutes: minutes)),
+        );
+
+    return [
+      at(0, 9, 25, taskId: 't01aaaa0000zzzz'),
+      at(0, 11, 50, taskId: 't02bbbb0000zzzz'),
+      at(0, 15, 25),
+      at(1, 10, 50, taskId: 't01aaaa0000zzzz'),
+      at(2, 9, 25),
+      at(3, 14, 75, taskId: 't03cccc0000zzzz'),
+      at(4, 10, 50),
+      at(6, 16, 25),
+    ];
   }
 
   /// 工厂入口:web 走 demo() 内存,否则走 sqflite + seed_v1。
@@ -342,7 +373,17 @@ class TaskProvider extends ChangeNotifier {
       await _markSessionPending(db, id);
       todayPomos = (await db.sessionsOnDay(_localDay(end))).length;
     } else {
-      // web demo 内存路径:无表可落,维持旧行为。
+      // web demo 内存路径:同样落内存 session(统计页与 todayPomos 同源)。
+      _sessions.insert(
+        0,
+        PfSession(
+          id: _uuid14(),
+          taskId: focusTask?.id ?? '',
+          durationMinutes: durationMinutes,
+          startedAt: start,
+          endedAt: end,
+        ),
+      );
       todayPomos += 1;
     }
 
