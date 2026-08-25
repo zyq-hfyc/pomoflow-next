@@ -25,13 +25,22 @@ import '../models/task.dart';
 /// 也把 `tags_csv TEXT → task_tags / journal_tags` 关联表对齐 core。本批不动。
 ///
 /// tags_csv 仍是逗号分隔(原型阶段)。
+///
+/// Schema v5(P1 多实体同步批):
+///   - **修复**:`tasks.updated_at_ms` 缺列 —— v2 起的 ChangeLogStore 代码全面
+///     引用该列但从未在任何 DDL 里创建,native 路径 `markTaskPending` 必抛且被
+///     上层 `catch (_)` 吞掉(同步静默失效)。v5 补列根治。
+///   - 新表 `pomodoro_sessions`(core::PomodoroSession 对齐,含 5 同步列 +
+///     `updated_at_ms`)。
 class AppDatabase {
   AppDatabase._(this._db);
   final Database _db;
 
-  /// schema v1 → v2:`tasks` 加 5 列 + meta last_seq 行初始化。
-  /// schema v2 → v3(下批):tasks.id INTEGER → TEXT 类型整体迁移。
-  static const _schemaVersion = 4;
+  /// schema v1 → v2:tasks 加 5 同步列 + meta last_seq 行。
+  /// schema v2 → v3:tasks.id INTEGER → TEXT(id 字符串化)。
+  /// schema v3 → v4:journals.id INTEGER → TEXT。
+  /// schema v4 → v5:tasks 补 updated_at_ms 列 + 新建 pomodoro_sessions 表。
+  static const _schemaVersion = 5;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -59,6 +68,10 @@ class AppDatabase {
           // v3 → v4:journals.id INTEGER → TEXT(P1 batch 同步前一次性补)。
           if (oldVersion < 4) {
             await _v3ToV4(db);
+          }
+          // v4 → v5:tasks 补 updated_at_ms 缺列 + 新建 pomodoro_sessions 表。
+          if (oldVersion < 5) {
+            await _v4ToV5(db);
           }
         },
       ),
@@ -89,10 +102,12 @@ class AppDatabase {
         sync_state TEXT NOT NULL DEFAULT 'synced',
         origin_device TEXT NOT NULL DEFAULT '',
         payload TEXT NOT NULL DEFAULT '',
-        user_id TEXT NOT NULL DEFAULT ''
+        user_id TEXT NOT NULL DEFAULT '',
+        updated_at_ms INTEGER NOT NULL DEFAULT 0
       )
     ''');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)');
+    await _createSessionsTable(db);
     await db.execute('''
       CREATE TABLE IF NOT EXISTS journals (
         id TEXT PRIMARY KEY,
@@ -114,34 +129,16 @@ class AppDatabase {
 
   /// v1 → v2 升级:为已存在的 tasks 表补 5 列(meta v1 没 last_seq 行也补一下)。
   static Future<void> _v1ToV2(Database db) async {
-    Future<void> addColumnIfMissing(String sql) async {
-      // sqflite 的 ALTER ADD COLUMN 没原生 IF NOT EXISTS,所以先探测列存不存在。
-      final cols = await db.rawQuery('PRAGMA table_info(tasks)');
-      // PRAGMA table_info 返回 cid / name / type / notnull / dflt_value / pk
-      // 这里仅取 name 列。
-      final names = cols.map((r) => r['name'] as String).toSet();
-      final match = RegExp(r'ADD COLUMN\s+(\w+)').firstMatch(sql);
-      final colName = match?.group(1);
-      if (colName != null && !names.contains(colName)) {
-        await db.execute(sql);
-      }
-    }
-
-    await addColumnIfMissing(
-      'ALTER TABLE tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 1',
-    );
-    await addColumnIfMissing(
-      "ALTER TABLE tasks ADD COLUMN sync_state TEXT NOT NULL DEFAULT 'synced'",
-    );
-    await addColumnIfMissing(
-      "ALTER TABLE tasks ADD COLUMN origin_device TEXT NOT NULL DEFAULT ''",
-    );
-    await addColumnIfMissing(
-      "ALTER TABLE tasks ADD COLUMN payload TEXT NOT NULL DEFAULT ''",
-    );
-    await addColumnIfMissing(
-      "ALTER TABLE tasks ADD COLUMN user_id TEXT NOT NULL DEFAULT ''",
-    );
+    await _addColumnIfMissing(
+      db, 'tasks', 'ALTER TABLE tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 1');
+    await _addColumnIfMissing(
+      db, 'tasks', "ALTER TABLE tasks ADD COLUMN sync_state TEXT NOT NULL DEFAULT 'synced'");
+    await _addColumnIfMissing(
+      db, 'tasks', "ALTER TABLE tasks ADD COLUMN origin_device TEXT NOT NULL DEFAULT ''");
+    await _addColumnIfMissing(
+      db, 'tasks', "ALTER TABLE tasks ADD COLUMN payload TEXT NOT NULL DEFAULT ''");
+    await _addColumnIfMissing(
+      db, 'tasks', "ALTER TABLE tasks ADD COLUMN user_id TEXT NOT NULL DEFAULT ''");
 
     // meta.last_seq 兜底插入(只是 INSERT OR IGNORE 语义,冲突算法用 replace 保证幂等)。
     await db.insert(
@@ -195,6 +192,56 @@ class AppDatabase {
     // bump schema_version → 3
     await db.insert('meta', {'k': 'schema_version', 'v': '3'},
         conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// sqflite 的 ALTER ADD COLUMN 没原生 IF NOT EXISTS,先探测列再补(幂等)。
+  /// PRAGMA table_info 返回 cid / name / type / notnull / dflt_value / pk,
+  /// 这里仅取 name 列。
+  static Future<void> _addColumnIfMissing(
+      Database db, String table, String sql) async {
+    final cols = await db.rawQuery('PRAGMA table_info($table)');
+    final names = cols.map((r) => r['name'] as String).toSet();
+    final match = RegExp(r'ADD COLUMN\s+(\w+)').firstMatch(sql);
+    final colName = match?.group(1);
+    if (colName != null && !names.contains(colName)) {
+      await db.execute(sql);
+    }
+  }
+
+  /// v4 → v5 升级:tasks 补 `updated_at_ms` 缺列(修复 ChangeLogStore 引用不存在的列)
+  /// + 新建 pomodoro_sessions 表。
+  static Future<void> _v4ToV5(Database db) async {
+    await _addColumnIfMissing(
+      db, 'tasks', 'ALTER TABLE tasks ADD COLUMN updated_at_ms INTEGER NOT NULL DEFAULT 0');
+    await _createSessionsTable(db);
+    await db.insert('meta', {'k': 'schema_version', 'v': '5'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// pomodoro_sessions(P1 多实体同步):core::PomodoroSession 对齐。
+  /// `task_id`/`project_id` 用 `''` 表示 core 的 `None`;时间列 epoch 毫秒。
+  static Future<void> _createSessionsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS pomodoro_sessions (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL DEFAULT '',
+        project_id TEXT NOT NULL DEFAULT '',
+        duration INTEGER NOT NULL DEFAULT 25,
+        started_at_ms INTEGER NOT NULL DEFAULT 0,
+        ended_at_ms INTEGER NOT NULL DEFAULT 0,
+        is_completed INTEGER NOT NULL DEFAULT 1,
+        created_at_ms INTEGER NOT NULL DEFAULT 0,
+        revision INTEGER NOT NULL DEFAULT 1,
+        sync_state TEXT NOT NULL DEFAULT 'synced',
+        updated_at_ms INTEGER NOT NULL DEFAULT 0,
+        origin_device TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT ''
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sessions_started ON pomodoro_sessions(started_at_ms)',
+    );
   }
 
   /// v3 → v4 升级:`journals.id INTEGER → TEXT` 同结构迁移。
