@@ -111,6 +111,18 @@ void main() {
       expect(p['status'], 'active');
       expect(p['due_date'], isNull);
     });
+
+    test('tombstone row emits non-null deleted_at; live row emits null', () {
+      final deleted = coreTaskPayload(<String, Object?>{
+        'id': 'd1', 'title': '已删', 'deleted_at_ms': 1746149400123,
+        'updated_at_ms': 1746149400123,
+      }, 'u');
+      expect(deleted['deleted_at'], msToIso(1746149400123));
+      final live = coreTaskPayload(<String, Object?>{
+        'id': 'd0', 'title': '活任务', 'deleted_at_ms': 0,
+      }, 'u');
+      expect(live['deleted_at'], isNull);
+    });
   });
 
   group('coreSessionPayload', () {
@@ -165,6 +177,22 @@ void main() {
 
     test('null payload → empty map', () {
       expect(taskFieldsFromCore(null), const {});
+    });
+
+    test('remote tombstone converges to deleted_at_ms; null stays 0', () {
+      final deleted = taskFieldsFromCore(<String, dynamic>{
+        'title': '远端删除的任务',
+        'deleted_at': msToIso(1746149400123),
+      });
+      expect(deleted['deleted_at_ms'], 1746149400123);
+      final live = taskFieldsFromCore(<String, dynamic>{
+        'title': '远端活任务',
+        'deleted_at': null,
+      });
+      expect(live['deleted_at_ms'], 0);
+      // 字段缺失(旧对端 payload)同样落 0,不会误杀。
+      final missing = taskFieldsFromCore(<String, dynamic>{'title': '旧版'});
+      expect(missing['deleted_at_ms'], 0);
     });
   });
 

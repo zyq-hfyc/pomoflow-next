@@ -83,6 +83,7 @@ String dueDateToLabel(String? iso, {DateTime? now}) {
 /// [row] 来自 `AppDatabase.listPendingTasks`(业务列 + 同步元信息列)。
 Map<String, Object?> coreTaskPayload(Map<String, Object?> row, String userId) {
   final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
+  final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
   return {
     'id': row['id'],
     'user_id': userId,
@@ -106,7 +107,8 @@ Map<String, Object?> coreTaskPayload(Map<String, Object?> row, String userId) {
     // tasks 表无 created 列,created_at 用 updated_at 近似(排序用途,可接受)。
     'created_at': msToIso(updatedAtMs),
     'revision': (row['revision'] as int?) ?? 1,
-    'deleted_at': null,
+    // 软删除墓碑(0 → null = 活任务;对端按 deleted_at 非空收敛隐藏)。
+    'deleted_at': deletedAtMs > 0 ? msToIso(deletedAtMs) : null,
     'updated_at': msToIso(updatedAtMs),
   };
 }
@@ -149,6 +151,10 @@ Map<String, Object?> taskFieldsFromCore(Map? p) {
   }
   if (p['due_date'] is String?) {
     out['due_label'] = dueDateToLabel(p['due_date'] as String?);
+  }
+  // 软删除收敛:远端墓碑(iso 串)→ 本地 deleted_at_ms;活任务 null → 0。
+  if (p['deleted_at'] is String?) {
+    out['deleted_at_ms'] = isoToMs((p['deleted_at'] as String?) ?? '');
   }
   return out;
 }

@@ -65,6 +65,24 @@ fn mobile_task_payload_deserializes() {
 }
 
 #[test]
+fn mobile_tombstone_task_payload_deserializes() {
+    // mobile 软删除后的 push 变体:deleted_at 非空(墓碑),desktop 端
+    // apply_remote 必须能照常反序列化并收敛隐藏。
+    let mut obj = serde_json::from_str::<serde_json::Value>(TASK_JSON)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+    obj.insert(
+        "deleted_at".into(),
+        serde_json::json!("2026-08-25T12:00:00.000Z"),
+    );
+    let t: Task = serde_json::from_value(serde_json::Value::Object(obj))
+        .expect("墓碑 payload 必须能反序列化");
+    assert!(t.deleted_at.is_some());
+}
+
+#[test]
 fn mobile_session_payload_deserializes() {
     let v: serde_json::Value = serde_json::from_str(SESSION_JSON).unwrap();
     let s: PomodoroSession =
