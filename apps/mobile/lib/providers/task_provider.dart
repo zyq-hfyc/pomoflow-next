@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import '../data/database.dart';
+import '../models/session.dart';
 import '../models/task.dart';
 
 /// 任务/手账数据仓库 —— P3d-Phase-1 落 sqflite 持久化(支持 web 内存兜底)。
@@ -102,16 +103,24 @@ class TaskProvider extends ChangeNotifier {
   static Future<TaskProvider> _hydrate(AppDatabase db) async {
     final tasks = await db.listTasks();
     final journals = await db.listJournals();
+    final sessions = await db.listSessions();
 
     // 首次启动 seed:meta.seed_done 缺失时插入 demo 5 task + 2 journal。
     final seeded = await db.getMeta('seed_done');
-    int todayPomos = int.tryParse((await db.getMeta('today_pomos')) ?? '0') ?? 0;
     String todayReview = (await db.getMeta('today_review')) ?? '';
 
     final p = TaskProvider._mem();
     p._tasks.addAll(tasks);
     p._journals.addAll(journals);
-    p.todayPomos = todayPomos;
+    p._sessions.addAll(sessions);
+    // todayPomos 权威 = sessions 表按本地日派生(P1);sessions 为空的老库回退
+    // v4 时代的 meta.today_pomos 计数。
+    final todayCount = sessions
+        .where((s) => _localDay(s.startedAt) == _localDay(DateTime.now()))
+        .length;
+    p.todayPomos = todayCount > 0
+        ? todayCount
+        : int.tryParse((await db.getMeta('today_pomos')) ?? '0') ?? 0;
     p.todayReview = todayReview;
 
     if (seeded == null) {
@@ -145,11 +154,30 @@ class TaskProvider extends ChangeNotifier {
   /// P3d-B-Phase-2:SyncClient 单例访问 db 的入口。`null` 走内存 demo 路径。
   AppDatabase? get db => _db;
 
+  // === 同步上下文(main.dart Builder 里与 SyncClient.configure 一起注入)===
+  // mutator 末尾 markPending 需要 origin_device / user_id;之前传空串导致
+  // push 无身份。Provider 树在此之后才建,故用 setter 而非构造参数。
+  String Function()? _deviceIdProvider;
+  String? Function()? _userIdProvider;
+
+  /// main() 里 TaskProvider 先于 Provider 树 open(),之后在 Builder 里补注身份。
+  void setSyncContext({
+    String Function()? deviceId,
+    String? Function()? userId,
+  }) {
+    _deviceIdProvider = deviceId;
+    _userIdProvider = userId;
+  }
+
   final List<PfTask> _tasks = [];
   final List<PfJournal> _journals = [];
+  final List<PfSession> _sessions = [];
 
   List<PfTask> get tasks => List.unmodifiable(_tasks);
   List<PfJournal> get journals => List.unmodifiable(_journals);
+
+  /// 全量番茄会话(P1 起为统计权威源;append-only)。
+  List<PfSession> get sessions => List.unmodifiable(_sessions);
 
   // === 专注屏共享状态 ==========================================================
 
@@ -251,9 +279,39 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 一个番茄完成(计时器走完调用)。
-  Future<void> completePomodoro() async {
-    todayPomos += 1;
+  /// 一个番茄自然走完(focus_page 计时器归零时调用;休息结束不落 session)。
+  ///
+  /// P1 起双写:
+  /// - `pomodoro_sessions` 落一条 append-only 会话行 + 标 pending(跨设备同步);
+  /// - 任务行 `completed_pomodoros` +1(原有语义,照旧 LWW)。
+  /// `todayPomos` 改由 sessions 按本地日派生,不再写 meta。
+  Future<void> completePomodoro({
+    int durationMinutes = 25,
+    DateTime? startedAt,
+  }) async {
+    final db = _db;
+    final end = DateTime.now();
+    final start =
+        startedAt ?? end.subtract(Duration(minutes: durationMinutes));
+
+    if (db != null) {
+      final id = await _allocateId();
+      final s = PfSession(
+        id: id,
+        taskId: focusTask?.id ?? '',
+        durationMinutes: durationMinutes,
+        startedAt: start,
+        endedAt: end,
+      );
+      _sessions.insert(0, s);
+      await db.insertSession(s);
+      await _markSessionPending(db, id);
+      todayPomos = (await db.sessionsOnDay(_localDay(end))).length;
+    } else {
+      // web demo 内存路径:无表可落,维持旧行为。
+      todayPomos += 1;
+    }
+
     final t = focusTask;
     if (t != null) {
       final i = _tasks.indexWhere((x) => x.id == t.id);
@@ -262,16 +320,11 @@ class TaskProvider extends ChangeNotifier {
           completedPomos: _tasks[i].completedPomos + 1,
         );
         _tasks[i] = updated;
-        final db = _db;
         if (db != null) {
           await db.updateTask(updated);
           await _markPending(db, updated.id);
         }
       }
-    }
-    final db = _db;
-    if (db != null) {
-      await db.setMeta('today_pomos', '$todayPomos');
     }
     notifyListeners();
   }
@@ -298,22 +351,42 @@ class TaskProvider extends ChangeNotifier {
     return b64.substring(0, 14);
   }
 
-  /// mutator 末尾调用:bump revision + sync_state='pending' +
-  /// updated_at_ms=now + payload=空 + originDevice/user_id 暂 ''(commit 5
-  /// 接 AuthProvider 实参)。
-  /// web 平台不调(demo() 内存)。
+  /// mutator 末尾调用:bump revision + sync_state='pending' + updated_at_ms=now
+  /// + origin_device/user_id 盖章(setSyncContext 注入的身份)。
+  /// payload 不在此写 —— push 时由 SyncClient 从行内业务列现构造(见
+  /// sync_client.dart 注释)。web 平台不调(demo() 内存)。
   Future<void> _markPending(AppDatabase db, String id) async {
     try {
       await db.markTaskPending(
         id: id,
-        payload: '',
-        originDevice: '',
-        userId: '',
+        originDevice: _deviceIdProvider?.call() ?? '',
+        userId: _userIdProvider?.call() ?? '',
       );
-    } catch (_) {
-      // 列结构 / 任意同步异常 → 跳过,不阻塞 UI(commit 5/6 兜底)。
+    } on Exception catch (e) {
+      // 不再静默吞 —— schema 级错误会以静默失效告终(v5 缺列事故教训),
+      // 打日志让回归可见,但也不阻塞 UI 主流程。
+      debugPrint('markTaskPending failed for $id: $e');
     }
   }
+
+  /// session 行标 pending(append-only,不 bump revision)。
+  Future<void> _markSessionPending(AppDatabase db, String id) async {
+    try {
+      await db.markSessionPending(
+        id: id,
+        originDevice: _deviceIdProvider?.call() ?? '',
+        userId: _userIdProvider?.call() ?? '',
+      );
+    } on Exception catch (e) {
+      debugPrint('markSessionPending failed for $id: $e');
+    }
+  }
+
+  /// 本地日 yyyy-mm-dd(与 DB sessionsOnDay 的 localtime 口径一致)。
+  static String _localDay(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
 
   // === 映射(把 PfTask / PfJournal 转 sqflite row) ==============================
 

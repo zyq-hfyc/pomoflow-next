@@ -411,10 +411,10 @@ class AppDatabase {
   }
 
   /// 本端 mutator 写完后调用:bump revision + sync_state='pending' +
-  /// updated_at_ms=now + payload=JSON。is_focus 等其他字段不变。
+  /// updated_at_ms=now + 身份盖章。is_focus 等其他字段不变;payload 不在此写
+  /// —— push 时由 SyncClient 从行内业务列现构造(core wire 映射在那一层)。
   Future<void> markTaskPending({
     required String id,
-    required String payload,
     required String originDevice,
     required String userId,
   }) async {
@@ -424,11 +424,10 @@ class AppDatabase {
          SET revision = revision + 1,
              sync_state = 'pending',
              updated_at_ms = ?,
-             payload = ?,
              origin_device = ?,
              user_id = ?
          WHERE id = ?''',
-      [nowMs, payload, originDevice, userId, id],
+      [nowMs, originDevice, userId, id],
     );
   }
 

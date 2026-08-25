@@ -84,7 +84,14 @@ class _FocusPageState extends State<FocusPage> {
             _running = false;
             _started = false; // 归零后按钮回到「开始」,而非误导性的「继续」
           });
-          context.read<TaskProvider>().completePomodoro();
+          if (_mode == _TimerMode.focus) {
+            // 只有专注时段落 session + 计数;短/长休息归零不产出番茄(P1 行为修正)。
+            context.read<TaskProvider>().completePomodoro(
+                  durationMinutes: (_total ~/ 60).clamp(1, 1000),
+                  startedAt:
+                      DateTime.now().subtract(Duration(seconds: _total)),
+                );
+          }
         }
       });
     }

@@ -48,6 +48,11 @@ class PomoFlowApp extends StatelessWidget {
           // P3d-B-Phase-2:Provider 树就绪后,注入 SyncClient 依赖。
           // AuthProvider 必须先 .initialize() → 走 Builder 让其 rebuild 后再装。
           final auth = context.read<AuthProvider>();
+          // P1:mutator markPending 需要设备/账号身份,与 SyncClient 同源注入。
+          taskProvider.setSyncContext(
+            deviceId: () => auth.deviceId,
+            userId: () => auth.userId,
+          );
           SyncClient.configure(
             db: () =>
                 taskProvider.db ??
