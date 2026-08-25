@@ -7,9 +7,11 @@
 // - [taskFieldsFromCore] / [sessionFieldsFromCore]:pull 方向(core JSON → 行列)
 //
 // core 字段权威来源:
-// - Task:`crates/core/src/model/task.rs`(必填 project_id/due_date/completed_at
-//   无 serde default —— 必须**显式**出现,哪怕是 null)
+// - Task:`crates/core/src/model/task.rs`
 // - PomodoroSession:`crates/core/src/model/pomodoro.rs`
+// Option 字段 serde 缺失时隐式 None,可省略 —— 这里仍**全字段显式**(含 null):
+// 桌面端 round-trip 对拍噪音小,serde 兼容锁见
+// `crates/core/tests/mobile_wire_compat.rs`。
 
 /// epoch 毫秒 → RFC3339 UTC(毫秒 3 位 + Z;不依赖 toIso8601String,
 /// 它会输出 +02:00 偏移形,server chrono 解析虽兼容但对拍噪音大)。
