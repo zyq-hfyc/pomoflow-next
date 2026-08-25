@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
+import '../models/session.dart';
 import '../models/task.dart';
 
 /// 本轮 P3d-B-Phase-1 sqflite 落盘层 + P3d-B-Phase-2 同步位元数据。
@@ -431,6 +432,113 @@ class AppDatabase {
     );
   }
 
+  // === pomodoro_sessions(P1 多实体同步)======================================
+
+  Future<List<PfSession>> listSessions() async {
+    final rows = await _db.query('pomodoro_sessions', orderBy: 'started_at_ms ASC');
+    return rows.map(_sessionFromRow).toList();
+  }
+
+  /// 本地日(yyyy-mm-dd,provider 传本地时区)内的会话数 —— todayPomos 派生。
+  Future<List<PfSession>> sessionsOnDay(String localDay) async {
+    final rows = await _db.query(
+      'pomodoro_sessions',
+      where: "strftime('%Y-%m-%d', started_at_ms / 1000, 'unixepoch', 'localtime') = ?",
+      whereArgs: [localDay],
+      orderBy: 'started_at_ms ASC',
+    );
+    return rows.map(_sessionFromRow).toList();
+  }
+
+  Future<void> insertSession(PfSession s) async {
+    await _db.insert('pomodoro_sessions', _sessionToRow(s));
+  }
+
+  /// === ChangeLogStore:session 实体(与 tasks 四方法同形,LWW 复用)===
+
+  Future<List<Map<String, Object?>>> listPendingSessions({int limit = 200}) async {
+    final rows = await _db.rawQuery(
+      '''SELECT id, task_id, project_id, duration, started_at_ms, ended_at_ms,
+                is_completed, created_at_ms, revision, updated_at_ms,
+                origin_device, user_id, payload
+         FROM pomodoro_sessions
+         WHERE sync_state = 'pending'
+         ORDER BY updated_at_ms ASC
+         LIMIT ?''',
+      [limit],
+    );
+    return rows;
+  }
+
+  Future<void> applyRemoteSession({
+    required String id,
+    required int revision,
+    required int updatedAtMs,
+    required String originDevice,
+    required String userId,
+    required String payload,
+    required Map<String, Object?> fields,
+  }) async {
+    await _db.transaction((txn) async {
+      final exists = (await txn.query('pomodoro_sessions',
+              where: 'id = ?', whereArgs: [id], limit: 1))
+          .isNotEmpty;
+      final row = <String, Object?>{
+        ...fields,
+        'revision': revision,
+        'updated_at_ms': updatedAtMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+        'payload': payload,
+        'sync_state': 'synced',
+      };
+      if (exists) {
+        await txn.update('pomodoro_sessions', row, where: 'id = ?', whereArgs: [id]);
+      } else {
+        row['id'] = id;
+        await txn.insert('pomodoro_sessions', row);
+      }
+    });
+  }
+
+  Future<void> markSessionsSynced(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await _db.rawUpdate(
+      "UPDATE pomodoro_sessions SET sync_state = 'synced' WHERE id IN ($placeholders)",
+      ids,
+    );
+  }
+
+  Future<Map<String, Object?>?> localSessionCandidate(String id) async {
+    final rows = await _db.query(
+      'pomodoro_sessions',
+      columns: ['id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  /// session 写入后标 pending(append-only 实体,通常只在插入时调一次)。
+  Future<void> markSessionPending({
+    required String id,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    await _db.rawUpdate(
+      '''UPDATE pomodoro_sessions
+         SET sync_state = 'pending',
+             updated_at_ms = ?,
+             origin_device = ?,
+             user_id = ?
+         WHERE id = ?''',
+      [nowMs, originDevice, userId, id],
+    );
+  }
+
   // === journals ================================================================
   // PfJournal.id 字符串化已在 models/task.dart 完成;schema v3 不动 journals
   // 表,等 P1 Journal 同步批一次性 ALTER(避免本批 commit 3 UI 调用点爆炸)。
@@ -510,7 +618,7 @@ class AppDatabase {
     completedPomos: (r['completed_cnt'] as int?) ?? 0,
     subtaskCount: (r['subtask_cnt'] as int?) ?? 0,
     completed: ((r['completed'] as int?) ?? 0) == 1,
-    syncMeta: PfTaskSyncMeta(
+    syncMeta: PfSyncMeta(
       revision: (r['revision'] as int?) ?? 1,
       updatedAt: r['updated_at_ms'] != null && (r['updated_at_ms'] as int) > 0
           ? DateTime.fromMillisecondsSinceEpoch(r['updated_at_ms'] as int)
@@ -528,6 +636,42 @@ class AppDatabase {
     'content': j.content,
     'tags_csv': _csv(j.tags),
   };
+
+  Map<String, Object?> _sessionToRow(PfSession s) => {
+    'id': s.id,
+    'task_id': s.taskId,
+    'project_id': s.projectId,
+    'duration': s.durationMinutes,
+    'started_at_ms': s.startedAt.millisecondsSinceEpoch,
+    'ended_at_ms': s.endedAt.millisecondsSinceEpoch,
+    'is_completed': s.isCompleted ? 1 : 0,
+    'created_at_ms': s.startedAt.millisecondsSinceEpoch,
+    'revision': s.syncMeta.revision,
+    'sync_state': s.syncMeta.syncState,
+    'updated_at_ms': s.syncMeta.updatedAt?.millisecondsSinceEpoch ?? 0,
+    'origin_device': s.syncMeta.originDevice,
+    'payload': '',
+    'user_id': s.syncMeta.userId,
+  };
+
+  PfSession _sessionFromRow(Map<String, Object?> r) => PfSession(
+    id: r['id'] as String,
+    taskId: (r['task_id'] as String?) ?? '',
+    projectId: (r['project_id'] as String?) ?? '',
+    durationMinutes: (r['duration'] as int?) ?? 25,
+    startedAt: DateTime.fromMillisecondsSinceEpoch((r['started_at_ms'] as int?) ?? 0),
+    endedAt: DateTime.fromMillisecondsSinceEpoch((r['ended_at_ms'] as int?) ?? 0),
+    isCompleted: ((r['is_completed'] as int?) ?? 1) == 1,
+    syncMeta: PfSyncMeta(
+      revision: (r['revision'] as int?) ?? 1,
+      updatedAt: r['updated_at_ms'] != null && (r['updated_at_ms'] as int) > 0
+          ? DateTime.fromMillisecondsSinceEpoch(r['updated_at_ms'] as int)
+          : null,
+      originDevice: (r['origin_device'] as String?) ?? '',
+      syncState: (r['sync_state'] as String?) ?? 'synced',
+      userId: (r['user_id'] as String?) ?? '',
+    ),
+  );
 
   PfJournal _journalFromRow(Map<String, Object?> r) => PfJournal(
     id: r['id'] as String,

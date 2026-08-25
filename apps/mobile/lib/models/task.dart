@@ -27,9 +27,11 @@ extension PfPriorityX on PfPriority {
 /// - `originDevice`:首次写入该行的设备(`AuthProvider.deviceId`);
 /// - `syncState`:本端 `'pending'|'synced'|'tombstone'`;
 /// - `userId`:首次写入该行的账号 id(后续 `SyncClient` 落 server 时携带)。
+///
+/// P1 多实体同步起由 Task / PomodoroSession 共用(原名 PfTaskSyncMeta)。
 @immutable
-class PfTaskSyncMeta {
-  const PfTaskSyncMeta({
+class PfSyncMeta {
+  const PfSyncMeta({
     this.revision = 1,
     this.updatedAt,
     this.originDevice = '',
@@ -60,7 +62,7 @@ class PfTask {
     this.completedPomos = 0,
     this.subtaskCount = 0,
     this.completed = false,
-    this.syncMeta = const PfTaskSyncMeta(),
+    this.syncMeta = const PfSyncMeta(),
   });
 
   /// UUID 14 字符短码(16 字节 Random.secure → base64Url 截前 14 位);
@@ -80,7 +82,7 @@ class PfTask {
   /// Phase-2 同步元信息。`copyWith` 业务字段时 syncMeta 默认保留不变;
   /// provider 在 mutator 末尾手动覆写(revision + 1 / syncState='pending' /
   /// updatedAt=now)。
-  final PfTaskSyncMeta syncMeta;
+  final PfSyncMeta syncMeta;
 
   String get pomoLabel => '$completedPomos/$estimatedPomos';
 
@@ -95,7 +97,7 @@ class PfTask {
     int? completedPomos,
     int? subtaskCount,
     bool? completed,
-    PfTaskSyncMeta? syncMeta,
+    PfSyncMeta? syncMeta,
   }) => PfTask(
     id: id,
     title: title ?? this.title,
