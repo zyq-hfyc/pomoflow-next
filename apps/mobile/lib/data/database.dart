@@ -482,11 +482,14 @@ class AppDatabase {
     return rows.map(_sessionFromRow).toList();
   }
 
-  /// 本地日(yyyy-mm-dd,provider 传本地时区)内的会话数 —— todayPomos 派生。
+  /// 本地日(yyyy-mm-dd)内**计数口径**的会话 —— todayPomos 派生。
+  /// 口径对齐桌面 core::stats counts_session:自然完成 && 关联任务
+  /// (不选任务的专注 / 放弃会话两端都不计,数字才一致)。
   Future<List<PfSession>> sessionsOnDay(String localDay) async {
     final rows = await _db.query(
       'pomodoro_sessions',
-      where: "strftime('%Y-%m-%d', started_at_ms / 1000, 'unixepoch', 'localtime') = ?",
+      where: "strftime('%Y-%m-%d', started_at_ms / 1000, 'unixepoch', 'localtime') = ?"
+          " AND is_completed = 1 AND task_id != ''",
       whereArgs: [localDay],
       orderBy: 'started_at_ms ASC',
     );

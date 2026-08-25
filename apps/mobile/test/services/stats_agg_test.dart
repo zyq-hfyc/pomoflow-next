@@ -8,11 +8,12 @@ void main() {
   // 锚点:2026-08-25(周二)15:00 本地。
   final now = DateTime(2026, 8, 25, 15);
 
+  // helper 默认关联 t0(计数口径要求 task_id 非空;"无任务不计"有专测)。
   PfSession session(
     String id,
     DateTime start,
     int minutes, {
-    String taskId = '',
+    String taskId = 't0',
   }) =>
       PfSession(
         id: id,
@@ -115,6 +116,28 @@ void main() {
     final r = aggregateStats(
         sessions: const [], tasks: tasks, dim: '本月', now: now);
     expect(r.doneTasks, 2);
+  });
+
+  test('计数口径:放弃会话与无任务会话不计(对齐桌面 counts_session)', () {
+    final s = [
+      session('a', DateTime(2026, 8, 25, 9), 25, taskId: 't1'),
+      // 放弃会话(is_completed=false)
+      PfSession(
+        id: 'b',
+        taskId: 't1',
+        durationMinutes: 30,
+        startedAt: DateTime(2026, 8, 25, 10),
+        endedAt: DateTime(2026, 8, 25, 10, 30),
+        isCompleted: false,
+      ),
+      // 无任务专注(显式空 taskId,helper 默认已改为 t0)
+      session('c', DateTime(2026, 8, 25, 11), 50, taskId: ''),
+    ];
+    final r = aggregateStats(sessions: s, tasks: const [], dim: '今天', now: now);
+    expect(r.totalMinutes, 25); // 只计 a
+    expect(r.pomos, 1);
+    expect(r.trendMins.last, 25); // 趋势同口径
+    expect(r.activeDays, 1);
   });
 
   test('空数据:全 0、streak 0、项目分布空、环比 —', () {

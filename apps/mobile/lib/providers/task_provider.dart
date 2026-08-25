@@ -112,15 +112,16 @@ class TaskProvider extends ChangeNotifier {
               .add(Duration(minutes: minutes)),
         );
 
+    // 全部关联 demo 任务(计数口径要求 task_id 非空,无任务的会话不计)。
     return [
       at(0, 9, 25, taskId: 't01aaaa0000zzzz'),
       at(0, 11, 50, taskId: 't02bbbb0000zzzz'),
-      at(0, 15, 25),
+      at(0, 15, 25, taskId: 't05eeee0000zzzz'),
       at(1, 10, 50, taskId: 't01aaaa0000zzzz'),
-      at(2, 9, 25),
+      at(2, 9, 25, taskId: 't04dddd0000zzzz'),
       at(3, 14, 75, taskId: 't03cccc0000zzzz'),
-      at(4, 10, 50),
-      at(6, 16, 25),
+      at(4, 10, 50, taskId: 't02bbbb0000zzzz'),
+      at(6, 16, 25, taskId: 't01aaaa0000zzzz'),
     ];
   }
 
@@ -462,6 +463,36 @@ class TaskProvider extends ChangeNotifier {
       '${d.year.toString().padLeft(4, '0')}-'
       '${d.month.toString().padLeft(2, '0')}-'
       '${d.day.toString().padLeft(2, '0')}';
+
+  /// 计数口径(对齐桌面 core::stats counts_session):自然完成 && 关联任务。
+  /// 不选任务的专注 / 中途放弃的会话不进「今日番茄」与统计 —— 两端同数。
+  static bool _countsSession(PfSession s) => s.isCompleted && s.taskId.isNotEmpty;
+
+  /// 同步 pull 落库后刷新内存(同步入口在 runOnce 成功后调用)。
+  ///
+  /// 根因修复:pullOnce 只写 DB 不动 provider —— 同步下来的任务/会话要
+  /// 重启才可见,且 focus 页今日番茄(DB 派生)与统计页(内存派生)分叉。
+  /// 重新水合 + todayPomos 与 DB 同源重算;_focusTaskId 保留(对端删了
+  /// 专注任务时 focusTask getter 自然返回 null 兜底)。
+  Future<void> reloadFromDb() async {
+    final db = _db;
+    if (db == null) return;
+    final tasks = await db.listTasks();
+    final sessions = await db.listSessions();
+    _tasks
+      ..clear()
+      ..addAll(tasks);
+    _sessions
+      ..clear()
+      ..addAll(sessions);
+    final today = _localDay(DateTime.now());
+    todayPomos = sessions
+        .where((s) =>
+            _localDay(s.startedAt) == today &&
+            _countsSession(s))
+        .length;
+    notifyListeners();
+  }
 
   // === 映射(把 PfTask / PfJournal 转 sqflite row) ==============================
 

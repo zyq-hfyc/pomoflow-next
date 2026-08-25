@@ -75,12 +75,20 @@ PfStatsSummary aggregateStats({
   final (start, end) = _dimRange(dim, base);
   final (prevStart, _) = _dimRange(dim, _shiftBack(dim, base));
 
+  // 计数口径(对齐桌面 core::stats counts_session):自然完成 && 关联任务。
+  // 放弃会话(is_completed=false)与无任务专注(taskId 空)不计 —— 否则
+  // 同一账号桌面/移动端同日统计数字永久性对不上(桌面同步过来也会被剔除)。
+  bool counts(PfSession s) => s.isCompleted && s.taskId.isNotEmpty;
+
   final inRange = sessions
-      .where((s) => !s.startedAt.isBefore(start) && s.startedAt.isBefore(end))
+      .where((s) =>
+          counts(s) && !s.startedAt.isBefore(start) && s.startedAt.isBefore(end))
       .toList();
   final prevRange = sessions
       .where((s) =>
-          !s.startedAt.isBefore(prevStart) && s.startedAt.isBefore(start))
+          counts(s) &&
+          !s.startedAt.isBefore(prevStart) &&
+          s.startedAt.isBefore(start))
       .toList();
 
   final totalMinutes =
@@ -88,11 +96,11 @@ PfStatsSummary aggregateStats({
   final prevMinutes =
       prevRange.fold<int>(0, (a, s) => a + s.durationMinutes);
 
-  // 趋势:最近 7 天每日分钟(含今天)。
+  // 趋势:最近 7 天每日分钟(含今天;同 counts 口径,与总数一致)。
   final trendMins = List<int>.filled(7, 0);
   final trendLabels = List<String>.filled(7, '');
   final byDay = <String, int>{};
-  for (final s in sessions) {
+  for (final s in sessions.where(counts)) {
     final key = _dayKey(s.startedAt);
     byDay[key] = (byDay[key] ?? 0) + s.durationMinutes;
   }
@@ -116,7 +124,7 @@ PfStatsSummary aggregateStats({
         ? totalMinutes
         : (totalMinutes / dayCount).round(),
     activeDays: activeDays,
-    streak: _longestStreak(sessions, base),
+    streak: _longestStreak(sessions.where(counts).toList(), base),
     trendPct: _pct(totalMinutes, prevMinutes),
     projectShares: _projectShares(inRange, tasks),
   );

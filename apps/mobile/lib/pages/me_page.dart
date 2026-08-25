@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/auth_provider.dart';
+import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/api_client.dart';
 import '../services/sync_client.dart';
@@ -32,7 +33,10 @@ class _MePageState extends State<MePage> {
     });
     try {
       final msg = await SyncClient.instance.runOnce();
+      // pull 落库后刷新 provider 内存 —— 否则同步下来的任务/会话要重启
+      // 才进统计页与今日番茄(审查发现的根因修复)。
       if (!mounted) return;
+      await context.read<TaskProvider>().reloadFromDb();
       setState(() {
         _syncLabel = msg;
         _syncing = false;
