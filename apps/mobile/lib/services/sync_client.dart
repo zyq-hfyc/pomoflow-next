@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -6,16 +5,22 @@ import 'package:flutter/foundation.dart';
 
 import '../data/database.dart';
 import 'api_client.dart';
+import 'sync_wire.dart';
 
-/// P3d-B-Phase-2 sync 客户端 —— 单例。
+/// P1 多实体 sync 客户端 —— 单例(task + pomodoro_session)。
 ///
 /// 直连 `services/sync-server/` 的 `/v1/sync/{push,pull}` 端点(server 已实现
 /// 整条 LWW + 幂等 + 防回环,见 `crates/core/src/sync/{mod,engine,lww}.rs` 与
-/// `services/sync-server/src/handlers.rs:70-225`)。
+/// `services/sync-server/src/handlers.rs`)。server 快照表**实体无关**
+/// (payload JSONB 原样存),所以加实体 = 纯客户端工作量。
 ///
-/// Dart 端**不**直接复用 core crate(桌面端才 in-process 调);本批在
-/// `LwwWinner resolveConflict(...)` 函数级重写三条规则——
-/// revision → updatedAt → deviceId,与 server `crates/core/src/sync/lww.rs:33-54` 1:1 对齐。
+/// Dart 端**不**直接复用 core crate(桌面端才 in-process 调);LWW 三规则
+/// (revision → updatedAt → deviceId)在本文件 `_localWinsLww` 函数级重写,
+/// 与 server `crates/core/src/sync/lww.rs:33-54` 1:1 对齐。
+///
+/// payload 规约(P1 修正):**嵌套 JSON 对象**,不是字符串 —— server
+/// `Change.payload: serde_json::Value` 收字符串会存成 `Value::String`,
+/// 对端拿不到字段。core wire 构造/解析全部走 `sync_wire.dart` 纯函数。
 ///
 /// 三方法:
 /// - `pushOnce()` → `({pushed, accepted, conflicted})`
@@ -52,7 +57,8 @@ class SyncClient {
     return fn();
   }
 
-  /// 推本地 `sync_state='pending'` 行到服务端。返回 (pushed / accepted / conflicted)。
+  /// 推本地 pending 行到服务端(task + pomodoro_session 混一包,
+  /// 与桌面端 `build_push_request` 全实体混包同构)。返回 (pushed/accepted/conflicted)。
   Future<({int pushed, int accepted, int conflicted})> pushOnce() async {
     if (kIsWeb) return (pushed: 0, accepted: 0, conflicted: 0);
     final db = _db;
@@ -62,25 +68,35 @@ class SyncClient {
       return (pushed: 0, accepted: 0, conflicted: 0);
     }
 
-    final pending = await db.listPendingTasks();
-    if (pending.isEmpty) {
-      return (pushed: 0, accepted: 0, conflicted: 0);
-    }
-
     final changes = <Map<String, dynamic>>[];
-    for (final row in pending) {
+    // task 实体:业务列 + 元信息列都在 listPendingTasks 结果里,
+    // payload 由 wire 层从业务列现构造(markTaskPending 不再预写 payload)。
+    for (final row in await db.listPendingTasks()) {
       changes.add({
         'id': _uuidChangeId(),
         'device_id': deviceId,
         'entity': 'task',
         'entity_id': row['id'] as String,
-        'revision': row['revision'] as int? ?? 1,
-        'updated_at': _formatServerIso(
-          DateTime.fromMillisecondsSinceEpoch(row['updated_at_ms'] as int? ?? 0),
-        ),
-        'payload': row['payload'] as String? ?? '',
+        'revision': (row['revision'] as int?) ?? 1,
+        'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
+        'payload': coreTaskPayload(row, uid),
       });
     }
+    for (final row in await db.listPendingSessions()) {
+      changes.add({
+        'id': _uuidChangeId(),
+        'device_id': deviceId,
+        'entity': 'pomodoro_session',
+        'entity_id': row['id'] as String,
+        'revision': (row['revision'] as int?) ?? 1,
+        'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
+        'payload': coreSessionPayload(row, uid),
+      });
+    }
+    if (changes.isEmpty) {
+      return (pushed: 0, accepted: 0, conflicted: 0);
+    }
+
     final body = {
       'user_id': uid,
       'device_id': deviceId,
@@ -91,41 +107,77 @@ class SyncClient {
         const <Map<String, dynamic>>[];
     int accepted = 0;
     int conflicted = 0;
-    final idsToMark = <String>[];
+    final taskIdsToMark = <String>[];
+    final sessionIdsToMark = <String>[];
     for (final r in results) {
       final outcome = _parseApplyOutcome(r);
       switch (outcome) {
         case _OutcomeKind.accepted:
           accepted += 1;
           final entityId = _nestedStr(r, ['Accepted', 'entity_id']);
-          if (entityId != null && entityId.isNotEmpty) idsToMark.add(entityId);
+          final entity = _nestedStr(r, ['Accepted', 'entity']);
+          if (entityId == null || entityId.isEmpty) break;
+          (entity == 'pomodoro_session' ? sessionIdsToMark : taskIdsToMark)
+              .add(entityId);
         case _OutcomeKind.conflicted:
           conflicted += 1;
           final winner = _nestedMap(r, ['Conflicted', 'winner']);
           if (winner != null) {
-            await db.applyRemoteTask(
-              id: winner['entity_id'] as String,
-              revision: winner['revision'] as int? ?? 1,
-              updatedAtMs: _isoToMs(winner['updated_at'] as String? ?? ''),
-              originDevice: winner['device_id'] as String? ?? '',
-              userId: uid,
-              payload: jsonEncode(winner['payload']),
-              fields: _pickTaskFields(winner['payload'] as Map?),
-            );
-            idsToMark.add(winner['entity_id'] as String);
+            final entityId = winner['entity_id'] as String;
+            await _applyWinner(db, winner, uid);
+            ((winner['entity'] as String?) == 'pomodoro_session'
+                    ? sessionIdsToMark
+                    : taskIdsToMark)
+                .add(entityId);
           }
         case _OutcomeKind.dropped:
         case _OutcomeKind.unknown:
           break;
       }
     }
-    if (idsToMark.isNotEmpty) {
-      await db.markTasksSynced(idsToMark);
+    if (taskIdsToMark.isNotEmpty) {
+      await db.markTasksSynced(taskIdsToMark);
+    }
+    if (sessionIdsToMark.isNotEmpty) {
+      await db.markSessionsSynced(sessionIdsToMark);
     }
     return (pushed: changes.length, accepted: accepted, conflicted: conflicted);
   }
 
-  /// 拉服务端 `seq > since`(首次 = 0) 的变更,与本地 LWW 比较。
+  /// Conflicted winner 就地收敛 —— 按 winner.entity 分流到对应实体。
+  Future<void> _applyWinner(
+      AppDatabase db, Map<String, dynamic> winner, String uid) async {
+    final entity = winner['entity'] as String?;
+    final entityId = winner['entity_id'] as String;
+    final payload = winner['payload'];
+    final revision = (winner['revision'] as int?) ?? 1;
+    final updatedAtMs = isoToMs((winner['updated_at'] as String?) ?? '');
+    final originDevice = (winner['device_id'] as String?) ?? '';
+    final payloadJson = jsonEncode(payload);
+    if (entity == 'pomodoro_session') {
+      await db.applyRemoteSession(
+        id: entityId,
+        revision: revision,
+        updatedAtMs: updatedAtMs,
+        originDevice: originDevice,
+        userId: uid,
+        payload: payloadJson,
+        fields: sessionFieldsFromCore(payload as Map?),
+      );
+    } else {
+      await db.applyRemoteTask(
+        id: entityId,
+        revision: revision,
+        updatedAtMs: updatedAtMs,
+        originDevice: originDevice,
+        userId: uid,
+        payload: payloadJson,
+        fields: taskFieldsFromCore(payload as Map?),
+      );
+    }
+  }
+
+  /// 拉服务端 `seq > since`(首次 = 0)的变更,与本地 LWW 比较。
   Future<({int pulled, int applied})> pullOnce() async {
     if (kIsWeb) return (pulled: 0, applied: 0);
     final db = _db;
@@ -148,22 +200,42 @@ class SyncClient {
     for (final change in changes) {
       final entity = change['entity'] as String? ?? '';
       final entityId = change['entity_id'] as String? ?? '';
-      if (entity != 'task' || entityId.isEmpty) continue;
-      final remote = _extractChangeTimestamps(change);
-      final local = await db.localTaskCandidate(entityId);
-      final keepLocal = local != null && _localWinsLww(local, remote);
-      if (keepLocal) continue;
-      // 远端胜 → 应用(包含最新字段),同步 sync_state='synced'
-      await db.applyRemoteTask(
-        id: entityId,
-        revision: change['revision'] as int? ?? 1,
-        updatedAtMs: _isoToMs(change['updated_at'] as String? ?? ''),
-        originDevice: change['device_id'] as String? ?? '',
-        userId: uid,
-        payload: jsonEncode(change['payload']),
-        fields: _pickTaskFields(change['payload'] as Map?),
-      );
-      applied += 1;
+      if (entityId.isEmpty) continue;
+      final payloadJson = jsonEncode(change['payload']);
+      switch (entity) {
+        case 'task':
+          final remote = _extractChangeTimestamps(change);
+          final local = await db.localTaskCandidate(entityId);
+          if (local != null && _localWinsLww(local, remote)) continue;
+          await db.applyRemoteTask(
+            id: entityId,
+            revision: (change['revision'] as int?) ?? 1,
+            updatedAtMs: remote.updatedMs,
+            originDevice: remote.deviceId,
+            userId: uid,
+            payload: payloadJson,
+            fields: taskFieldsFromCore(change['payload'] as Map?),
+          );
+          applied += 1;
+        case 'pomodoro_session':
+          final remote = _extractChangeTimestamps(change);
+          final local = await db.localSessionCandidate(entityId);
+          if (local != null && _localWinsLww(local, remote)) continue;
+          await db.applyRemoteSession(
+            id: entityId,
+            revision: (change['revision'] as int?) ?? 1,
+            updatedAtMs: remote.updatedMs,
+            originDevice: remote.deviceId,
+            userId: uid,
+            payload: payloadJson,
+            fields: sessionFieldsFromCore(change['payload'] as Map?),
+          );
+          applied += 1;
+        default:
+          // project / tag / task_tag / sub_task / motto / *_review:
+          // P1 范围外,跳过不崩(cursor 照常推进,不重拉)。
+          break;
+      }
     }
     if (nextCursor != null) {
       final nextSeq = (nextCursor['last_seq'] as int?) ?? 0;
@@ -224,13 +296,14 @@ typedef _RemTimes = ({int rev, int updatedMs, String deviceId});
 
 _RemTimes _extractChangeTimestamps(Map<String, dynamic> change) {
   final rev = (change['revision'] as int?) ?? 1;
-  final updatedMs = _isoToMs(change['updated_at'] as String? ?? '');
+  final updatedMs = isoToMs(change['updated_at'] as String? ?? '');
   final deviceId = (change['device_id'] as String?) ?? '';
   return (rev: rev, updatedMs: updatedMs, deviceId: deviceId);
 }
 
 /// 比较远端 vs 本地候选行,返回 true = 本地胜(left),false = 远端胜(right/tie)
-/// 与 server `lww.rs:33-54` 一致 —— 见模块顶注释。
+/// 与 server `lww.rs:33-54` 一致 —— 见模块顶注释。task/session 候选行
+/// 的元信息列同名(revision / updated_at_ms / origin_device),同一函数复用。
 bool _localWinsLww(Map<String, Object?> local, _RemTimes remote) {
   final localRev = (local['revision'] as int?) ?? 1;
   final localMs = (local['updated_at_ms'] as int?) ?? 0;
@@ -244,46 +317,6 @@ bool _localWinsLww(Map<String, Object?> local, _RemTimes remote) {
   if (cmpDev != 0) return cmpDev > 0;
   // 全等 → tie;tie 时按 server 规则走 right,本端 winsLww 返 false
   return false;
-}
-
-// --- payload → tasks 行 fields(applyRemoteTask 用) ---
-Map<String, Object?> _pickTaskFields(Map? p) {
-  if (p == null) return const {};
-  final out = <String, Object?>{};
-  if (p['title'] is String) out['title'] = p['title'] as String;
-  final pri = p['priority'];
-  if (pri is String) out['priority'] = pri;
-  if (p['project'] is String) out['project'] = p['project'] as String;
-  if (p['due_label'] is String) out['due_label'] = p['due_label'] as String;
-  if (p['tags'] is List) out['tags_csv'] = (p['tags'] as List).join(',');
-  if (p['estimated_pomodoros'] is int) {
-    out['estimated'] = p['estimated_pomodoros'] as int;
-  }
-  if (p['completed_pomodoros'] is int) {
-    out['completed_cnt'] = p['completed_pomodoros'] as int;
-  }
-  if (p['subtask_count'] is int) out['subtask_cnt'] = p['subtask_count'] as int;
-  final st = p['status'];
-  if (st is String) out['completed'] = (st == 'completed') ? 1 : 0;
-  return out;
-}
-
-// --- 时间格式 ---
-int _isoToMs(String iso) {
-  if (iso.isEmpty) return 0;
-  try {
-    return DateTime.parse(iso).millisecondsSinceEpoch;
-  } catch (_) {
-    return 0;
-  }
-}
-
-String _formatServerIso(DateTime d) {
-  String two(int n) => n.toString().padLeft(2, '0');
-  String frac(int n) => n.toString().padLeft(3, '0').substring(0, 3);
-  return '${d.year}-${two(d.month)}-${two(d.day)}T${two(d.hour)}:'
-      '${two(d.minute)}:${two(d.second)}.'
-      '${frac(d.millisecond)}Z';
 }
 
 String _hm(DateTime d) =>

@@ -1,0 +1,167 @@
+// P1 多实体同步的 wire 映射 —— mobile 行列 ↔ `crates/core` 序列化 JSON。
+//
+// 全部纯函数(无 I/O / 无 Flutter 依赖),单测锁行为:
+// - [msToIso] / [isoToMs]:epoch 毫秒 ↔ RFC3339 UTC(server `DateTime<Utc>`)
+// - [dueLabelToIso] / [dueDateToLabel]:mobile 本地化 due_label ↔ core due_date
+// - [coreTaskPayload] / [coreSessionPayload]:push 方向(行 → core JSON)
+// - [taskFieldsFromCore] / [sessionFieldsFromCore]:pull 方向(core JSON → 行列)
+//
+// core 字段权威来源:
+// - Task:`crates/core/src/model/task.rs`(必填 project_id/due_date/completed_at
+//   无 serde default —— 必须**显式**出现,哪怕是 null)
+// - PomodoroSession:`crates/core/src/model/pomodoro.rs`
+
+/// epoch 毫秒 → RFC3339 UTC(毫秒 3 位 + Z;不依赖 toIso8601String,
+/// 它会输出 +02:00 偏移形,server chrono 解析虽兼容但对拍噪音大)。
+String msToIso(int ms) => _formatServerIso(
+      DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true),
+    );
+
+String _formatServerIso(DateTime d) {
+  String two(int n) => n.toString().padLeft(2, '0');
+  String frac(int n) => n.toString().padLeft(3, '0').substring(0, 3);
+  return '${d.year}-${two(d.month)}-${two(d.day)}T${two(d.hour)}:'
+      '${two(d.minute)}:${two(d.second)}.'
+      '${frac(d.millisecond)}Z';
+}
+
+/// RFC3339 → epoch 毫秒;空/坏输入返 0。
+int isoToMs(String iso) {
+  if (iso.isEmpty) return 0;
+  try {
+    return DateTime.parse(iso).millisecondsSinceEpoch;
+  } on FormatException {
+    return 0;
+  }
+}
+
+/// 本地日 yyyy-mm-dd(与 due_label 的"今天/明天"语义同基准)。
+String localDay(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-'
+    '${d.month.toString().padLeft(2, '0')}-'
+    '${d.day.toString().padLeft(2, '0')}';
+
+/// due_label → core due_date(push 方向)。
+/// 「今天/明天/后天」→ 对应本地日期当天 12:00 UTC 近似(日期语义,时刻无意义);
+/// 「每天/每周/空/未知」→ null(core 里"无截止")。
+String? dueLabelToIso(String label, {DateTime? now}) {
+  final base = now ?? DateTime.now();
+  final DateTime? day = switch (label) {
+    '今天' => base,
+    '明天' => base.add(const Duration(days: 1)),
+    '后天' => base.add(const Duration(days: 2)),
+    _ => null,
+  };
+  if (day == null) return null;
+  final localNoon = DateTime(day.year, day.month, day.day, 12);
+  return _formatServerIso(localNoon.toUtc());
+}
+
+/// core due_date → due_label(pull 方向)。
+/// 与本地今天比:今天/明天/昨天/后天;更远按本地日期字符串落格
+/// (mobile due_label 是自由文本列,UI 按精确匹配分流视图,未识别的进「计划」)。
+String dueDateToLabel(String? iso, {DateTime? now}) {
+  if (iso == null || iso.isEmpty) return '';
+  final due = DateTime.tryParse(iso);
+  if (due == null) return '';
+  final base = now ?? DateTime.now();
+  final dueDay = DateTime(due.year, due.month, due.day);
+  final baseDay = DateTime(base.year, base.month, base.day);
+  final diff = dueDay.difference(baseDay).inDays;
+  return switch (diff) {
+    0 => '今天',
+    1 => '明天',
+    2 => '后天',
+    -1 => '昨天',
+    _ => localDay(due),
+  };
+}
+
+/// tasks pending 行 → core::Task JSON(push 方向)。
+/// [row] 来自 `AppDatabase.listPendingTasks`(业务列 + 同步元信息列)。
+Map<String, Object?> coreTaskPayload(Map<String, Object?> row, String userId) {
+  final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
+  return {
+    'id': row['id'],
+    'user_id': userId,
+    'title': row['title'] ?? '',
+    'description': '',
+    // mobile project 是名字;core project_id 是 UUID 引用 —— P1 未建 project
+    // 实体,先 null(project 归属 P2 实体化批次)。
+    'project_id': null,
+    'priority': row['priority'] ?? 'none',
+    'status': ((row['completed'] as int?) ?? 0) == 1 ? 'completed' : 'active',
+    'due_date': dueLabelToIso((row['due_label'] as String?) ?? ''),
+    'estimated_pomodoros': (row['estimated'] as int?) ?? 0,
+    'completed_pomodoros': (row['completed_cnt'] as int?) ?? 0,
+    'pomodoro_duration': null,
+    'reminder': 'none',
+    'repeat': 'none',
+    'repeat_config': null,
+    'repeat_parent_id': null,
+    'repeat_end_date': null,
+    'completed_at': null,
+    // tasks 表无 created 列,created_at 用 updated_at 近似(排序用途,可接受)。
+    'created_at': msToIso(updatedAtMs),
+    'revision': (row['revision'] as int?) ?? 1,
+    'deleted_at': null,
+    'updated_at': msToIso(updatedAtMs),
+  };
+}
+
+/// pomodoro_sessions pending 行 → core::PomodoroSession JSON(push 方向)。
+Map<String, Object?> coreSessionPayload(
+    Map<String, Object?> row, String userId) {
+  String? orNull(Object? v) =>
+      v is String && v.isNotEmpty ? v : null;
+  return {
+    'id': row['id'],
+    'user_id': userId,
+    'task_id': orNull(row['task_id']),
+    'project_id': orNull(row['project_id']),
+    'duration': (row['duration'] as int?) ?? 25,
+    'started_at': msToIso((row['started_at_ms'] as int?) ?? 0),
+    'ended_at': msToIso((row['ended_at_ms'] as int?) ?? 0),
+    'is_completed': ((row['is_completed'] as int?) ?? 1) == 1,
+    'created_at': msToIso((row['created_at_ms'] as int?) ?? 0),
+    'revision': (row['revision'] as int?) ?? 1,
+    'deleted_at': null,
+    'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
+  };
+}
+
+/// core::Task JSON → tasks 行业务列(pull 方向)。
+/// 只放**确定**的字段;project/tags/subtask 在 core Task 无对应,不覆盖本地列。
+Map<String, Object?> taskFieldsFromCore(Map? p) {
+  if (p == null) return const {};
+  final out = <String, Object?>{};
+  if (p['title'] is String) out['title'] = p['title'] as String;
+  if (p['priority'] is String) out['priority'] = p['priority'] as String;
+  final st = p['status'];
+  if (st is String) out['completed'] = st == 'completed' ? 1 : 0;
+  if (p['estimated_pomodoros'] is int) {
+    out['estimated'] = p['estimated_pomodoros'] as int;
+  }
+  if (p['completed_pomodoros'] is int) {
+    out['completed_cnt'] = p['completed_pomodoros'] as int;
+  }
+  if (p['due_date'] is String?) {
+    out['due_label'] = dueDateToLabel(p['due_date'] as String?);
+  }
+  return out;
+}
+
+/// core::PomodoroSession JSON → pomodoro_sessions 行业务列(pull 方向)。
+Map<String, Object?> sessionFieldsFromCore(Map? p) {
+  if (p == null) return const {};
+  final out = <String, Object?>{
+    'task_id': (p['task_id'] as String?) ?? '',
+    'project_id': (p['project_id'] as String?) ?? '',
+    'duration': (p['duration'] as int?) ?? 25,
+    'started_at_ms': isoToMs((p['started_at'] as String?) ?? ''),
+    'ended_at_ms': isoToMs((p['ended_at'] as String?) ?? ''),
+    'is_completed': p['is_completed'] == true ? 1 : 0,
+    'created_at_ms': isoToMs((p['created_at'] as String?) ?? ''),
+  };
+  return out;
+}

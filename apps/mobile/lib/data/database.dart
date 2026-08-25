@@ -339,11 +339,13 @@ class AppDatabase {
   /// 实现对齐;不在 dart 端抽 trait(单 store 无分发开销)。
 
   /// 当前未推送的变更(`sync_state = 'pending'`),按 updated_at_ms 升序。
-  /// 返回 `Map<id, Map<column, value>>` 形式(包含 revision / updated_at_ms
-  /// / origin_device / user_id / payload),SyncClient 直接拼 Change。
+  /// 返回行含**业务列 + 同步元信息列**(P1 起 SyncClient 在 push 时用
+  /// `sync_wire.coreTaskPayload` 从业务列现构造 core JSON —— 不依赖预写 payload)。
   Future<List<Map<String, Object?>>> listPendingTasks({int limit = 200}) async {
     final rows = await _db.rawQuery(
-      '''SELECT id, revision, updated_at_ms, origin_device, user_id, payload
+      '''SELECT id, title, priority, project, due_label, completed,
+                estimated, completed_cnt, subtask_cnt, tags_csv,
+                revision, updated_at_ms, origin_device, user_id, payload
          FROM tasks
          WHERE sync_state = 'pending'
          ORDER BY updated_at_ms ASC
@@ -601,7 +603,7 @@ class AppDatabase {
     'revision': t.syncMeta.revision,
     'sync_state': t.syncMeta.syncState,
     'origin_device': t.syncMeta.originDevice,
-    'payload': _serializePayload(t),
+    'payload': '', // 远端缓存语义,见文件尾注释
     'user_id': t.syncMeta.userId,
     'updated_at_ms': t.syncMeta.updatedAt?.millisecondsSinceEpoch ?? 0,
   };
@@ -680,14 +682,8 @@ class AppDatabase {
     tags: _splitCsv((r['tags_csv'] as String?) ?? ''),
   );
 
-  /// 把 PfTask 业务字段 → 与 server `crate::core::model::Task` 对齐的 JSON 字符串,
-  /// 缓存到 `tasks.payload` 列(SyncClient push 时附 `payload` 字段)。
-  /// 注意:本批**不**包含 sync 字段(revision / updatedAt / originDevice / syncState /
-  /// userId)— 那些是 \"传输元信息\",server 端的 `core::Task` JSON 不需要它们。
-  String _serializePayload(PfTask t) {
-    // 仅在 sync_client 的 payload 映射里直接构造;此处占位返回空串,
-    // 真正的 payload 由 SyncClient.taskToChangeJson(...) 在 push 时构造(它有最新
-    // user_id / device_id 等上下文)。
-    return '';
-  }
+  // payload 列语义(P1 起):**远端权威 JSON 的缓存**,只在 applyRemoteTask /
+  // applyRemoteSession(pull / Conflicted 收敛)写入;本地新写行留空串,
+  // push 时由 SyncClient + sync_wire 从业务列现构造 —— 单一事实源在行列,
+  // 不会出现"payload 缓存与列值漂移"。
 }
