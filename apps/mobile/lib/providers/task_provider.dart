@@ -142,6 +142,9 @@ class TaskProvider extends ChangeNotifier {
     String todayReview = (await db.getMeta('today_review')) ?? '';
 
     final p = TaskProvider._mem();
+    // 装配修复(真机 E2E 抓出):必须把 db 挂回 provider —— 此前漏了这一行,
+    // _db 恒 null → mutator 全走内存、SyncClient 报「demo 模式」、重启丢数据。
+    p._db = db;
     p._tasks.addAll(tasks);
     p._journals.addAll(journals);
     p._sessions.addAll(sessions);

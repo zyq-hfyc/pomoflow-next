@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -22,6 +24,30 @@ class MePage extends StatefulWidget {
 class _MePageState extends State<MePage> {
   bool _syncing = false;
   String _syncLabel = '点击立即同步';
+  String? _avatarDataUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAvatar();
+  }
+
+  /// 拉当前头像(GET /v1/auth/avatar,与 account_page 同一端点);
+  /// 404 / 离线静默降级首字母。资料头圆环真机验证 #1 修复项。
+  Future<void> _loadAvatar() async {
+    try {
+      final av = await ApiClient.instance.get('/v1/auth/avatar');
+      final b64 = av['avatar_base64'] as String?;
+      if (!mounted) return;
+      setState(() {
+        _avatarDataUrl = b64 == null
+            ? null
+            : 'data:${(av['mime'] as String?) ?? 'image/png'};base64,$b64';
+      });
+    } on ApiException {
+      // 未设置头像 / 离线 → 首字母占位
+    }
+  }
 
   /// 立即同步(P3d-B-Phase-2 真实接入 SyncClient.runOnce):
   /// pull → push,带错误处理。
@@ -66,9 +92,11 @@ class _MePageState extends State<MePage> {
       child: CustomScrollView(
         slivers: [
           _meAppBar(theme),
-          SliverToBoxAdapter(child: _ProfileHead(auth: auth)),
+          SliverToBoxAdapter(
+            child: _ProfileHead(auth: auth, avatarDataUrl: _avatarDataUrl),
+          ),
           const SliverToBoxAdapter(child: SizedBox(height: 12)),
-          const SliverToBoxAdapter(child: _AccountMenuCard()),
+          SliverToBoxAdapter(child: _AccountMenuCard(onReturn: _loadAvatar)),
           const SliverToBoxAdapter(child: SizedBox(height: 12)),
           SliverToBoxAdapter(
             child: _SyncRow(
@@ -103,10 +131,12 @@ class _MePageState extends State<MePage> {
 }
 
 /// 渐变资料头(.profile-head):brand → brand-600 对角渐变,白字。
+/// 圆环 = 真头像(dataUrl,无则首字母)。
 class _ProfileHead extends StatelessWidget {
-  const _ProfileHead({required this.auth});
+  const _ProfileHead({required this.auth, this.avatarDataUrl});
 
   final AuthProvider auth;
+  final String? avatarDataUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -140,15 +170,25 @@ class _ProfileHead extends StatelessWidget {
               color: Colors.white.withValues(alpha: .22),
               shape: BoxShape.circle,
             ),
+            clipBehavior: Clip.antiAlias,
             alignment: Alignment.center,
-            child: Text(
-              initial,
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w800,
-                color: Colors.white,
-              ),
-            ),
+            child: avatarDataUrl != null
+                ? Image.memory(
+                    base64Decode(avatarDataUrl!.split(',').last),
+                    fit: BoxFit.cover,
+                    width: 58,
+                    height: 58,
+                    cacheWidth: 116,
+                    gaplessPlayback: true,
+                  )
+                : Text(
+                    initial,
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
+                  ),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -187,7 +227,10 @@ class _ProfileHead extends StatelessWidget {
 
 /// 账号管理菜单卡(§4.4 入口列表 → AccountPage 五模块)。
 class _AccountMenuCard extends StatelessWidget {
-  const _AccountMenuCard();
+  const _AccountMenuCard({this.onReturn});
+
+  /// 从账号页返回时回调(刷新资料头头像 —— 账号页里可能刚换过头像)。
+  final VoidCallback? onReturn;
 
   @override
   Widget build(BuildContext context) {
@@ -217,8 +260,8 @@ class _AccountMenuCard extends StatelessWidget {
     );
   }
 
-  void _openAccount(BuildContext context, String section) {
-    Navigator.push(
+  Future<void> _openAccount(BuildContext context, String section) async {
+    await Navigator.push(
       context,
       PageRouteBuilder(
         pageBuilder: (_, _, _) => AccountPage(initialSection: section),
@@ -232,6 +275,7 @@ class _AccountMenuCard extends StatelessWidget {
         transitionDuration: const Duration(milliseconds: 300),
       ),
     );
+    onReturn?.call();
   }
 }
 
