@@ -35,7 +35,7 @@ void main() {
         'ended_at_ms', 'is_completed', 'created_at_ms', 'revision',
         'sync_state', 'updated_at_ms', 'origin_device', 'payload', 'user_id',
       ]));
-      expect(await db.getMeta('schema_version'), '6');
+      expect(await db.getMeta('schema_version'), '7');
     } finally {
       await db.close();
     }
@@ -99,7 +99,12 @@ void main() {
         user_id TEXT NOT NULL DEFAULT ''
       )
     ''');
-    await raw.insert('tasks', {'id': 'legacy00000zz', 'title': '老库任务'});
+    await raw.insert('tasks', {
+      'id': 'cccccccc-cccc-4ccc-8ccc-cccccccccc01',
+      'title': '老库任务',
+    });
+    // 短码毒行(v7 应清掉):id 非 36 位 UUID。
+    await raw.insert('tasks', {'id': 'legacy00000zz', 'title': '短码毒行'});
     await raw.execute(
         "CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL DEFAULT '')");
     await raw.insert('meta', {'k': 'schema_version', 'v': '4'});
@@ -126,12 +131,15 @@ void main() {
       expect(names, contains('updated_at_ms'),
           reason: 'v4→v5 必须补上 ChangeLogStore 引用的缺列');
 
-      // 老行保留 + markTaskPending 不再抛(v5 事故正是抛在这里)。
+      // 老行保留(UUID id)+ 短码毒行被 v7 清掉;markTaskPending 不再抛
+      // (v5 事故正是抛在这里)。
       final rows = await db.raw.query('tasks');
       expect(rows, hasLength(1));
       expect(rows.first['title'], '老库任务');
       await db.markTaskPending(
-          id: 'legacy00000zz', originDevice: 'dev-up', userId: 'u-1');
+          id: 'cccccccc-cccc-4ccc-8ccc-cccccccccc01',
+          originDevice: 'dev-up',
+          userId: 'u-1');
       final pending = await db.listPendingTasks();
       expect(pending, hasLength(1));
 
@@ -140,7 +148,7 @@ void main() {
           .rawQuery('PRAGMA table_info(pomodoro_sessions)');
       final v6cols = await db.raw.rawQuery('PRAGMA table_info(tasks)');
       expect(v6cols.map((r) => r['name']), contains('deleted_at_ms'));
-      expect(await db.getMeta('schema_version'), '6');
+      expect(await db.getMeta('schema_version'), '7');
     } finally {
       await db.close();
       await tmp.delete(recursive: true);

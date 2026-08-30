@@ -42,7 +42,8 @@ class AppDatabase {
   /// schema v3 → v4:journals.id INTEGER → TEXT。
   /// schema v4 → v5:tasks 补 updated_at_ms 列 + 新建 pomodoro_sessions 表。
   /// schema v5 → v6:tasks 补 deleted_at_ms 列(软删除,对齐桌面 store 同名列)。
-  static const _schemaVersion = 6;
+  /// schema v6 → v7:清非法 id 行(14 字符短码 → 标准 UUID 切换)。
+  static const _schemaVersion = 7;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -78,6 +79,10 @@ class AppDatabase {
           // v5 → v6:tasks 补 deleted_at_ms 列(软删除)。
           if (oldVersion < 6) {
             await _v5ToV6(db);
+          }
+          // v6 → v7:清非法 id 行(id 切标准 UUID v4 的配套清毒)。
+          if (oldVersion < 7) {
+            await _v6ToV7(db);
           }
         },
       ),
@@ -230,6 +235,18 @@ class AppDatabase {
     await _addColumnIfMissing(
       db, 'tasks', 'ALTER TABLE tasks ADD COLUMN deleted_at_ms INTEGER NOT NULL DEFAULT 0');
     await db.insert('meta', {'k': 'schema_version', 'v': '6'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// v6 → v7 升级:**清毒**——id 全面切标准 UUID v4 的配套迁移。
+  /// 旧 14 字符 base64Url 短码行:从未成功同步过(push 通之前生成的),
+  /// 且推上服务端会毒死桌面端(Id::parse 拒收 → list_tasks 整页炸)。
+  /// 直接删除 + 重置 seed_done(种子 id 已换合法 UUID,重新播种)。
+  static Future<void> _v6ToV7(Database db) async {
+    await db.execute('DELETE FROM tasks WHERE LENGTH(id) != 36');
+    await db.execute('DELETE FROM pomodoro_sessions WHERE LENGTH(id) != 36');
+    await db.delete('meta', where: "k = 'seed_done'");
+    await db.insert('meta', {'k': 'schema_version', 'v': '7'},
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 

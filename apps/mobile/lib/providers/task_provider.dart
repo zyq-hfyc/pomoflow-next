@@ -1,11 +1,9 @@
-import 'dart:convert';
-import 'dart:math' as math;
-
 import 'package:flutter/foundation.dart';
 
 import '../data/database.dart';
 import '../models/session.dart';
 import '../models/task.dart';
+import '../services/sync_wire.dart';
 
 /// 任务/手账数据仓库 —— P3d-Phase-1 落 sqflite 持久化(支持 web 内存兜底)。
 ///
@@ -114,14 +112,14 @@ class TaskProvider extends ChangeNotifier {
 
     // 全部关联 demo 任务(计数口径要求 task_id 非空,无任务的会话不计)。
     return [
-      at(0, 9, 25, taskId: 't01aaaa0000zzzz'),
-      at(0, 11, 50, taskId: 't02bbbb0000zzzz'),
-      at(0, 15, 25, taskId: 't05eeee0000zzzz'),
-      at(1, 10, 50, taskId: 't01aaaa0000zzzz'),
-      at(2, 9, 25, taskId: 't04dddd0000zzzz'),
-      at(3, 14, 75, taskId: 't03cccc0000zzzz'),
-      at(4, 10, 50, taskId: 't02bbbb0000zzzz'),
-      at(6, 16, 25, taskId: 't01aaaa0000zzzz'),
+      at(0, 9, 25, taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01'),
+      at(0, 11, 50, taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa02'),
+      at(0, 15, 25, taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa05'),
+      at(1, 10, 50, taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01'),
+      at(2, 9, 25, taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa04'),
+      at(3, 14, 75, taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa03'),
+      at(4, 10, 50, taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa02'),
+      at(6, 16, 25, taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01'),
     ];
   }
 
@@ -381,7 +379,7 @@ class TaskProvider extends ChangeNotifier {
       _sessions.insert(
         0,
         PfSession(
-          id: _uuid14(),
+          id: uuidV4(),
           taskId: focusTask?.id ?? '',
           durationMinutes: durationMinutes,
           startedAt: start,
@@ -419,16 +417,12 @@ class TaskProvider extends ChangeNotifier {
 
   Future<String> nextId() async => await _allocateId();
 
-  Future<String> _allocateId() async => _uuid14();
+  Future<String> _allocateId() async => uuidV4();
 
-  /// 14 字符 UUID 短码:用 Random.secure 生成 12 字节 → base64Url(16 字符)截前 14 位。
-  /// 12 字节 = 96 位随机,生日前缀碰撞概率 ≈ 2⁻⁹⁶(可忽略)。
-  static String _uuid14() {
-    final rnd = math.Random.secure();
-    final bytes = List<int>.generate(12, (_) => rnd.nextInt(256));
-    final b64 = base64Url.encode(bytes).replaceAll('=', '');
-    return b64.substring(0, 14);
-  }
+  // id 必须是标准 UUID v4:桌面端 `Id::parse`(uuid::Uuid 校验)拒收
+  // 其他格式,一行毒数据会把桌面任务页整页炸掉(真机 E2E 抓出 —— 14 字符
+  // base64Url 短码推上服务端,桌面拉下来 list_tasks 直接 storage error)。
+  // 生成器统一走 sync_wire.uuidV4。
 
   /// mutator 末尾调用:bump revision + sync_state='pending' + updated_at_ms=now
   /// + origin_device/user_id 盖章(setSyncContext 注入的身份)。
@@ -553,12 +547,12 @@ class _DemoJIds {
 (_DemoIds, _DemoJIds) _seedIds() {
   return (
     const _DemoIds(
-      't01aaaa0000zzzz',
-      't02bbbb0000zzzz',
-      't03cccc0000zzzz',
-      't04dddd0000zzzz',
-      't05eeee0000zzzz',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa02',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa03',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa04',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa05',
     ),
-    const _DemoJIds('j01xxxx0000zzzz', 'j02yyyy0000zzzz'),
+    const _DemoJIds('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb01', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb02'),
   );
 }
