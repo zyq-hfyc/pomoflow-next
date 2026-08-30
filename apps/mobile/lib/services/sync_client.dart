@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
@@ -323,8 +322,7 @@ String _hm(DateTime d) =>
     '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
 String _uuidChangeId() {
-  // 幂等键:服务端用 change.id 做去重。
-  final rnd = math.Random.secure();
-  final bytes = List<int>.generate(16, (_) => rnd.nextInt(256));
-  return base64Url.encode(bytes).replaceAll('=', '');
+  // 幂等键:服务端 Change.id 是 uuid::Uuid —— 必须标准 UUID v4
+  // (此前 base64Url 短码被 serde 拒收 400,真机 E2E 抓出)。
+  return uuidV4();
 }

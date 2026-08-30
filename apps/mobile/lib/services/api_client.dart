@@ -93,11 +93,7 @@ class ApiClient {
       throw ApiException('网络错误: $e');
     }
     if (resp.statusCode >= 400) {
-      final json = jsonDecode(resp.body);
-      if (json is Map<String, dynamic> && json['error'] is Map) {
-        throw ApiException(json['error']['message']?.toString() ?? '请求失败');
-      }
-      throw ApiException('请求失败(${resp.statusCode})');
+      throw ApiException(_parseErrorMessage(resp));
     }
     return jsonDecode(resp.body) as List<dynamic>;
   }
@@ -145,18 +141,33 @@ class ApiClient {
       }
     }
 
-    final json = jsonDecode(resp.body) as Map<String, dynamic>;
+    // 错误响应先于 jsonDecode 处理 —— axum 错误体常是纯文本(text/plain),
+    // 直接 jsonDecode 会抛 FormatException 把真实错误信息吞掉(真机抓出)。
     if (resp.statusCode >= 400) {
-      // 结构化错误信封:{error:{code,message,...}} 或纯文本
-      final err = json['error'];
-      if (err is Map<String, dynamic>) {
-        throw ApiException(err['message']?.toString() ?? '请求失败');
-      }
-      throw ApiException(
-        json['message']?.toString() ?? '请求失败(${resp.statusCode})',
-      );
+      throw ApiException(_parseErrorMessage(resp));
     }
-    return json;
+    return jsonDecode(resp.body) as Map<String, dynamic>;
+  }
+
+  /// 错误体解析:优先 JSON 信封 {error:{message}} / {message};
+  /// 不是 JSON 则透传纯文本前 120 字符(如 axum 的 "payload: ..." serde 错误)。
+  static String _parseErrorMessage(http.Response resp) {
+    try {
+      final json = jsonDecode(resp.body);
+      if (json is Map<String, dynamic>) {
+        final err = json['error'];
+        if (err is Map<String, dynamic>) {
+          return err['message']?.toString() ?? '请求失败(${resp.statusCode})';
+        }
+        return json['message']?.toString() ?? '请求失败(${resp.statusCode})';
+      }
+    } on FormatException {
+      // 落到纯文本透传
+    }
+    final text = resp.body.trim();
+    if (text.isEmpty) return '请求失败(${resp.statusCode})';
+    final short = text.length > 120 ? '${text.substring(0, 120)}…' : text;
+    return '请求失败(${resp.statusCode}): $short';
   }
 
   Future<http.Response> _send(

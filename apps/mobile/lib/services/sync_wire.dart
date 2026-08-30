@@ -1,7 +1,6 @@
 // P1 多实体同步的 wire 映射 —— mobile 行列 ↔ `crates/core` 序列化 JSON。
-//
 // 全部纯函数(无 I/O / 无 Flutter 依赖),单测锁行为:
-// - [msToIso] / [isoToMs]:epoch 毫秒 ↔ RFC3339 UTC(server `DateTime<Utc>`)
+// - [msToIso] / [isoToMs] / [uuidV4]:传输层基础工具
 // - [dueLabelToIso] / [dueDateToLabel]:mobile 本地化 due_label ↔ core due_date
 // - [coreTaskPayload] / [coreSessionPayload]:push 方向(行 → core JSON)
 // - [taskFieldsFromCore] / [sessionFieldsFromCore]:pull 方向(core JSON → 行列)
@@ -13,11 +12,27 @@
 // 桌面端 round-trip 对拍噪音小,serde 兼容锁见
 // `crates/core/tests/mobile_wire_compat.rs`。
 
+import 'dart:math' as math;
+
 /// epoch 毫秒 → RFC3339 UTC(毫秒 3 位 + Z;不依赖 toIso8601String,
 /// 它会输出 +02:00 偏移形,server chrono 解析虽兼容但对拍噪音大)。
 String msToIso(int ms) => _formatServerIso(
       DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true),
     );
+
+/// 标准 UUID v4 字符串(8-4-4-4-12,version/variant 位按 RFC 4122)。
+/// 服务端 `Change.id: uuid::Uuid` 只认这种格式 —— base64Url 短码会被
+/// serde 拒收 400(真机 E2E 抓出)。熵来自 math.Random.secure。
+String uuidV4() {
+  final rnd = math.Random.secure();
+  final b = List<int>.generate(16, (_) => rnd.nextInt(256));
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant 10
+  String h(int i) => b[i].toRadixString(16).padLeft(2, '0');
+  return '${h(0)}${h(1)}${h(2)}${h(3)}-${h(4)}${h(5)}-'
+      '${h(6)}${h(7)}-${h(8)}${h(9)}-'
+      '${h(10)}${h(11)}${h(12)}${h(13)}${h(14)}${h(15)}';
+}
 
 String _formatServerIso(DateTime d) {
   String two(int n) => n.toString().padLeft(2, '0');

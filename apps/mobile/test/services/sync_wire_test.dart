@@ -23,6 +23,22 @@ void main() {
     });
   });
 
+  group('uuidV4', () {
+    test('emits canonical 8-4-4-4-12 lowercase hex with v4 bits', () {
+      final re = RegExp(
+          r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$');
+      for (var i = 0; i < 20; i++) {
+        final id = uuidV4();
+        expect(id, matches(re), reason: '第 $i 个: $id');
+      }
+    });
+
+    test('distinct across calls (entropy sanity)', () {
+      final ids = {for (var i = 0; i < 50; i++) uuidV4()};
+      expect(ids, hasLength(50));
+    });
+  });
+
   group('dueLabelToIso / dueDateToLabel', () {
     final now = DateTime(2026, 8, 25, 9, 30);
 
