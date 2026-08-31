@@ -84,3 +84,7 @@ artifacts/
 # Android 机器本地配置(SDK/flutter 路径,各机器 owner 自配)
 apps/mobile/android/local.properties
 apps/mobile/android/.gradle/
+
+# release 签名(密码/keystore 绝不入仓)
+apps/mobile/android/key.properties
+apps/mobile/android/pomoflow-release.keystore
