@@ -101,21 +101,38 @@ void main() {
     );
   });
 
-  test('完成任务 = 全量已完成且未删除(口径妥协,见模块注释)', () {
+  test('完成任务 = 区间内 completed_at 计数(v8 口径升级)', () {
     final tasks = [
-      PfTask(id: 't1', title: 'A', completed: true),
-      PfTask(id: 't2', title: 'B', completed: true),
-      PfTask(id: 't3', title: 'C', completed: false),
       PfTask(
-        id: 't4',
-        title: 'D',
+        id: 't1',
+        title: 'A',
         completed: true,
-        deletedAt: DateTime(2026, 8, 25),
+        completedAt: DateTime(2026, 8, 20, 10),
+      ),
+      PfTask(
+        id: 't2',
+        title: 'B',
+        completed: true,
+        completedAt: DateTime(2026, 7, 15, 10), // 上月,不计
+      ),
+      PfTask(
+        id: 't3',
+        title: 'C',
+        completed: true,
+        completedAt: DateTime(2026, 9, 2, 10), // 下月,不计
+      ),
+      PfTask(id: 't4', title: 'D'), // 未完成
+      PfTask(
+        id: 't5',
+        title: 'E',
+        completed: true,
+        completedAt: DateTime(2026, 8, 20, 9),
+        deletedAt: DateTime(2026, 8, 25), // 已删,不计
       ),
     ];
     final r = aggregateStats(
         sessions: const [], tasks: tasks, dim: '本月', now: now);
-    expect(r.doneTasks, 2);
+    expect(r.doneTasks, 1);
   });
 
   test('计数口径:放弃会话与无任务会话不计(对齐桌面 counts_session)', () {

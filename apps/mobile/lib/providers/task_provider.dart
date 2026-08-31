@@ -290,9 +290,10 @@ class TaskProvider extends ChangeNotifier {
   Future<void> toggleDone(String id) async {
     final i = _tasks.indexWhere((t) => t.id == id);
     if (i < 0) return;
+    final now = DateTime.now();
     final updated = _tasks[i].completed
-        ? _tasks[i].copyWith(completed: false)
-        : _tasks[i].copyWith(completed: true);
+        ? _tasks[i].copyWith(completed: false, clearCompletedAt: true)
+        : _tasks[i].copyWith(completed: true, completedAt: now);
     _tasks[i] = updated;
     final db = _db;
     if (db != null) {
@@ -402,6 +403,44 @@ class TaskProvider extends ChangeNotifier {
           await _markPending(db, updated.id);
         }
       }
+    }
+    notifyListeners();
+  }
+
+  /// 中途放弃的专注(focus_page「跳过」时调用;对齐桌面 stop_pomodoro 语义):
+  /// 落一条 is_completed=false 的 session —— 不计今日番茄/统计(两端同
+  /// 口径),但历史可查、随同步保留;elapsedSeconds < 60 不落(误触保护)。
+  Future<void> abandonPomodoro({required int elapsedSeconds}) async {
+    if (elapsedSeconds < 60) return;
+    final db = _db;
+    final end = DateTime.now();
+    final start = end.subtract(Duration(seconds: elapsedSeconds));
+    final minutes = (elapsedSeconds / 60).round().clamp(1, 1000);
+    if (db != null) {
+      final id = uuidV4();
+      final s = PfSession(
+        id: id,
+        taskId: focusTask?.id ?? '',
+        durationMinutes: minutes,
+        startedAt: start,
+        endedAt: end,
+        isCompleted: false,
+      );
+      _sessions.insert(0, s);
+      await db.insertSession(s);
+      await _markSessionPending(db, id);
+    } else {
+      _sessions.insert(
+        0,
+        PfSession(
+          id: uuidV4(),
+          taskId: focusTask?.id ?? '',
+          durationMinutes: minutes,
+          startedAt: start,
+          endedAt: end,
+          isCompleted: false,
+        ),
+      );
     }
     notifyListeners();
   }

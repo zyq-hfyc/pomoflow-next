@@ -62,6 +62,7 @@ class PfTask {
     this.completedPomos = 0,
     this.subtaskCount = 0,
     this.completed = false,
+    this.completedAt,
     this.deletedAt,
     this.syncMeta = const PfSyncMeta(),
   });
@@ -80,6 +81,10 @@ class PfTask {
   final int subtaskCount;
   final bool completed;
 
+  /// 完成时刻(null = 未完成;对齐 core `completed_at`)。toggleDone 完成
+  /// 时盖 now,取消清空 —— 统计「完成任务」的区间口径以此为准。
+  final DateTime? completedAt;
+
   /// 软删除时刻(null = 活任务;对齐 core `deleted_at`)。UI 永不渲染墓碑
   /// (DB listTasks 已滤),此字段只随同步流转。
   final DateTime? deletedAt;
@@ -94,6 +99,7 @@ class PfTask {
   String get pomoLabel => '$completedPomos/$estimatedPomos';
 
   /// 业务字段 copy。**id 与 syncMeta 不可变**(由 SyncClient / provider 决定)。
+  /// [clearCompletedAt]:copyWith 的 null 会被 `??` 吞,取消完成要显式清。
   PfTask copyWith({
     String? title,
     PfPriority? priority,
@@ -104,6 +110,8 @@ class PfTask {
     int? completedPomos,
     int? subtaskCount,
     bool? completed,
+    DateTime? completedAt,
+    bool clearCompletedAt = false,
     DateTime? deletedAt,
     PfSyncMeta? syncMeta,
   }) => PfTask(
@@ -117,6 +125,7 @@ class PfTask {
     completedPomos: completedPomos ?? this.completedPomos,
     subtaskCount: subtaskCount ?? this.subtaskCount,
     completed: completed ?? this.completed,
+    completedAt: clearCompletedAt ? null : (completedAt ?? this.completedAt),
     deletedAt: deletedAt ?? this.deletedAt,
     syncMeta: syncMeta ?? this.syncMeta,
   );

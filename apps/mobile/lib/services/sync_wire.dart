@@ -99,6 +99,7 @@ String dueDateToLabel(String? iso, {DateTime? now}) {
 Map<String, Object?> coreTaskPayload(Map<String, Object?> row, String userId) {
   final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
   final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
+  final completedAtMs = (row['completed_at_ms'] as int?) ?? 0;
   return {
     'id': row['id'],
     'user_id': userId,
@@ -118,7 +119,9 @@ Map<String, Object?> coreTaskPayload(Map<String, Object?> row, String userId) {
     'repeat_config': null,
     'repeat_parent_id': null,
     'repeat_end_date': null,
-    'completed_at': null,
+    // 完成时刻(此前硬编码 null —— mobile 勾完成的任务推上去,桌面区间
+    // 口径的「完成任务」永远是 0;v8 起发真实值)。
+    'completed_at': completedAtMs > 0 ? msToIso(completedAtMs) : null,
     // tasks 表无 created 列,created_at 用 updated_at 近似(排序用途,可接受)。
     'created_at': msToIso(updatedAtMs),
     'revision': (row['revision'] as int?) ?? 1,
@@ -158,6 +161,10 @@ Map<String, Object?> taskFieldsFromCore(Map? p) {
   if (p['priority'] is String) out['priority'] = p['priority'] as String;
   final st = p['status'];
   if (st is String) out['completed'] = st == 'completed' ? 1 : 0;
+  // 完成时刻:远端 core::Task.completed_at(iso/null)→ completed_at_ms。
+  if (p['completed_at'] is String?) {
+    out['completed_at_ms'] = isoToMs((p['completed_at'] as String?) ?? '');
+  }
   if (p['estimated_pomodoros'] is int) {
     out['estimated'] = p['estimated_pomodoros'] as int;
   }

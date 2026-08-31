@@ -43,7 +43,8 @@ class AppDatabase {
   /// schema v4 → v5:tasks 补 updated_at_ms 列 + 新建 pomodoro_sessions 表。
   /// schema v5 → v6:tasks 补 deleted_at_ms 列(软删除,对齐桌面 store 同名列)。
   /// schema v6 → v7:清非法 id 行(14 字符短码 → 标准 UUID 切换)。
-  static const _schemaVersion = 7;
+  /// schema v7 → v8:tasks 补 completed_at_ms 列(区间口径「完成任务」前置)。
+  static const _schemaVersion = 8;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -84,6 +85,10 @@ class AppDatabase {
           if (oldVersion < 7) {
             await _v6ToV7(db);
           }
+          // v7 → v8:tasks 补 completed_at_ms 列(完成时刻,0=未完成)。
+          if (oldVersion < 8) {
+            await _v7ToV8(db);
+          }
         },
       ),
     );
@@ -115,7 +120,8 @@ class AppDatabase {
         payload TEXT NOT NULL DEFAULT '',
         user_id TEXT NOT NULL DEFAULT '',
         updated_at_ms INTEGER NOT NULL DEFAULT 0,
-        deleted_at_ms INTEGER NOT NULL DEFAULT 0
+        deleted_at_ms INTEGER NOT NULL DEFAULT 0,
+        completed_at_ms INTEGER NOT NULL DEFAULT 0
       )
     ''');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)');
@@ -250,6 +256,15 @@ class AppDatabase {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// v7 → v8 升级:tasks 补 `completed_at_ms` 完成时刻列(0 = 未完成/未知)。
+  /// 老库里已完成的行没有历史时刻,回填 0(区间口径下不计,保守可接受)。
+  static Future<void> _v7ToV8(Database db) async {
+    await _addColumnIfMissing(
+      db, 'tasks', 'ALTER TABLE tasks ADD COLUMN completed_at_ms INTEGER NOT NULL DEFAULT 0');
+    await db.insert('meta', {'k': 'schema_version', 'v': '8'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
   /// pomodoro_sessions(P1 多实体同步):core::PomodoroSession 对齐。
   /// `task_id`/`project_id` 用 `''` 表示 core 的 `None`;时间列 epoch 毫秒。
   static Future<void> _createSessionsTable(Database db) async {
@@ -381,7 +396,7 @@ class AppDatabase {
     final rows = await _db.rawQuery(
       '''SELECT id, title, priority, project, due_label, completed,
                 estimated, completed_cnt, subtask_cnt, tags_csv,
-                revision, updated_at_ms, deleted_at_ms,
+                revision, updated_at_ms, deleted_at_ms, completed_at_ms,
                 origin_device, user_id, payload
          FROM tasks
          WHERE sync_state = 'pending'
@@ -669,6 +684,7 @@ class AppDatabase {
     'user_id': t.syncMeta.userId,
     'updated_at_ms': t.syncMeta.updatedAt?.millisecondsSinceEpoch ?? 0,
     'deleted_at_ms': t.deletedAt?.millisecondsSinceEpoch ?? 0,
+    'completed_at_ms': t.completedAt?.millisecondsSinceEpoch ?? 0,
   };
 
   PfTask _taskFromRow(Map<String, Object?> r) => PfTask(
@@ -685,6 +701,10 @@ class AppDatabase {
     deletedAt: r['deleted_at_ms'] != null && (r['deleted_at_ms'] as int) > 0
         ? DateTime.fromMillisecondsSinceEpoch(r['deleted_at_ms'] as int)
         : null,
+    completedAt:
+        r['completed_at_ms'] != null && (r['completed_at_ms'] as int) > 0
+            ? DateTime.fromMillisecondsSinceEpoch(r['completed_at_ms'] as int)
+            : null,
     syncMeta: PfSyncMeta(
       revision: (r['revision'] as int?) ?? 1,
       updatedAt: r['updated_at_ms'] != null && (r['updated_at_ms'] as int) > 0

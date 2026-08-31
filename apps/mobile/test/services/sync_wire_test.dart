@@ -128,6 +128,33 @@ void main() {
       expect(p['due_date'], isNull);
     });
 
+    test('completed_at round-trip: done task emits iso, undone emits null', () {
+      final done = coreTaskPayload(<String, Object?>{
+        'id': 'c1', 'title': '完成', 'completed': 1,
+        'completed_at_ms': 1746149400123,
+      }, 'u');
+      expect(done['status'], 'completed');
+      expect(done['completed_at'], msToIso(1746149400123));
+      final undone = coreTaskPayload(<String, Object?>{
+        'id': 'c2', 'title': '未完成', 'completed': 0,
+      }, 'u');
+      expect(undone['completed_at'], isNull);
+
+      // pull 方向:远端 completed_at → completed_at_ms。
+      final f = taskFieldsFromCore(<String, dynamic>{
+        'status': 'completed',
+        'completed_at': msToIso(1746149400123),
+      });
+      expect(f['completed'], 1);
+      expect(f['completed_at_ms'], 1746149400123);
+      final f2 = taskFieldsFromCore(<String, dynamic>{
+        'status': 'active',
+        'completed_at': null,
+      });
+      expect(f2['completed'], 0);
+      expect(f2['completed_at_ms'], 0);
+    });
+
     test('tombstone row emits non-null deleted_at; live row emits null', () {
       final deleted = coreTaskPayload(<String, Object?>{
         'id': 'd1', 'title': '已删', 'deleted_at_ms': 1746149400123,

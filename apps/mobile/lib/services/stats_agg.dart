@@ -11,8 +11,8 @@ import '../models/task.dart';
 /// distribution);mobile 是轻量版,维度范围定义对齐:
 /// 今天/本周(周一起)/本月/本季/半年/全年。
 ///
-/// 已知口径妥协:「完成任务」卡 = 当前**全量**已完成数 —— mobile tasks
-/// 表暂无 completed_at 列,无法按区间过滤;P2 补列后改区间口径。
+/// 「完成任务」= 区间口径(completed_at 落在维度内);v8 之前的老数据
+/// completed_at=0 不计 —— 保守可接受。
 
 /// 一个维度的聚合结果。
 class PfStatsSummary {
@@ -42,7 +42,8 @@ class PfStatsSummary {
   final int totalMinutes;
   final int pomos;
 
-  /// 全量已完成任务数(口径妥协,见文件头注释)。
+  /// 区间内完成的任务数(completed_at 落在维度范围内;v8 列落地后
+  /// 从全量妥协口径升级 —— 老数据 completed_at=0 不计,保守可接受)。
   final int doneTasks;
 
   /// 日均分钟(总分钟 / 维度自然天数;今天维度 = 当日分钟)。
@@ -113,13 +114,22 @@ PfStatsSummary aggregateStats({
   final dayCount = end.difference(start).inDays;
   final activeDays = inRange.map((s) => _dayKey(s.startedAt)).toSet().length;
 
+  // 区间内完成的任务(completed_at 落在 [start, end);老行 0 不计)。
+  final doneTasks = tasks
+      .where((t) =>
+          !t.isDeleted &&
+          t.completedAt != null &&
+          !t.completedAt!.isBefore(start) &&
+          t.completedAt!.isBefore(end))
+      .length;
+
   return PfStatsSummary(
     trendMins: trendMins,
     trendLabels: trendLabels,
     trendTitle: '近 7 天',
     totalMinutes: totalMinutes,
     pomos: inRange.length,
-    doneTasks: tasks.where((t) => t.completed && !t.isDeleted).length,
+    doneTasks: doneTasks,
     avgMinutes: dayCount <= 1
         ? totalMinutes
         : (totalMinutes / dayCount).round(),

@@ -99,6 +99,14 @@ class _FocusPageState extends State<FocusPage> {
 
   void _skip() {
     _timer?.cancel();
+    // 中途放弃且已专注 ≥1 分钟 → 落 is_completed=false 会话(不计番茄,
+    // 对齐桌面 stop_pomodoro;历史可查)。<1 分钟视为误触,不落。
+    final elapsed = _total - _left;
+    if (_mode == _TimerMode.focus && elapsed >= 60) {
+      context
+          .read<TaskProvider>()
+          .abandonPomodoro(elapsedSeconds: elapsed);
+    }
     setState(() {
       _left = _total;
       _running = false;
