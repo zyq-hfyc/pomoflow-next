@@ -243,6 +243,10 @@ class _TasksPageState extends State<TasksPage> {
 
   /// 单选 sheet。返回 `(T? value,)` 包装:选「全部」(null 值)也能赋值
   /// 清筛选;用户直接关 sheet 返回 null 不改状态。
+  ///
+  /// body 用 Column + for(TaskPickerSheet 同款)—— pfSheet 的 body 在
+  /// _SheetScaffold 的 Column 里,ListView 无有界高度会渲染塌陷
+  /// (真机表现为只有蒙层没有内容)。
   Future<(T, )?> _pickSheet<T>({
     required String title,
     required List<T> options,
@@ -253,21 +257,18 @@ class _TasksPageState extends State<TasksPage> {
       context,
       title: title,
       heightFactor: .5,
-      body: (ctx) => Material(
-        type: MaterialType.transparency,
-        child: ListView(
-          children: [
-            for (final o in options)
-              ListTile(
-                title: Text(labelOf(o), style: const TextStyle(fontSize: 15)),
-                trailing: o == selected
-                    ? Icon(Icons.check_circle,
-                        size: 20, color: Theme.of(ctx).pfBrand)
-                    : null,
-                onTap: () => Navigator.pop(ctx, (o,)),
-              ),
-          ],
-        ),
+      body: (ctx) => Column(
+        children: [
+          for (final o in options)
+            ListTile(
+              title: Text(labelOf(o), style: const TextStyle(fontSize: 15)),
+              trailing: o == selected
+                  ? Icon(Icons.check_circle,
+                      size: 20, color: Theme.of(ctx).pfBrand)
+                  : null,
+              onTap: () => Navigator.pop(ctx, (o,)),
+            ),
+        ],
       ),
     );
   }
