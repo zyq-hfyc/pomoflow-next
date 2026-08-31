@@ -621,6 +621,7 @@ class _DevicesBody extends StatefulWidget {
 
 class _DevicesBodyState extends State<_DevicesBody> {
   List<dynamic>? _sessions;
+  List<dynamic>? _loginLogs;
 
   @override
   void initState() {
@@ -629,26 +630,43 @@ class _DevicesBodyState extends State<_DevicesBody> {
   }
 
   Future<void> _load() async {
+    final refresh = await ApiClient.instance.getRefreshToken() ?? '';
+    // 登录设备与最近登录记录并行拉;各自失败不互相阻断。
+    final sFuture = ApiClient.instance.postList('/v1/auth/sessions', {
+      'refresh_token': refresh,
+    });
+    final lFuture = ApiClient.instance.getList('/v1/auth/login-logs');
+    List<dynamic>? sessions;
+    List<dynamic>? logs;
     try {
-      final list = await ApiClient.instance.postList('/v1/auth/sessions', {
-        'refresh_token': await ApiClient.instance.getRefreshToken() ?? '',
-      });
-      if (mounted) setState(() => _sessions = list);
+      sessions = await sFuture;
     } on ApiException {
       // 旧后端无此端点 → 静默
     }
+    try {
+      logs = await lFuture;
+    } on ApiException {
+      // 无端点/离线 → 历史块不渲染
+    }
+    if (mounted) setState(() => _sessions = sessions ?? _sessions ?? []);
+    if (mounted) setState(() => _loginLogs = logs);
   }
 
-  Future<void> _kick(int id) async {
-    try {
-      await ApiClient.instance.post('/v1/auth/sessions/revoke', {
-        'refresh_token': await ApiClient.instance.getRefreshToken() ?? '',
-        'revoke_id': id,
-      });
-      _load();
-    } on ApiException catch (e) {
-      if (mounted) _AccountHelpers.hint(context, e.message);
+  Future<void> _kickDevice(List<int> sessionIds) async {
+    // 按设备下线:该设备可能有多个活跃 token(每次登录一个),
+    // 逐个 revoke 才算真正下线;server 拒绝踢 current,跳过即可。
+    final refresh = await ApiClient.instance.getRefreshToken() ?? '';
+    for (final id in sessionIds) {
+      try {
+        await ApiClient.instance.post('/v1/auth/sessions/revoke', {
+          'refresh_token': refresh,
+          'revoke_id': id,
+        });
+      } on ApiException catch (e) {
+        if (mounted) _AccountHelpers.hint(context, e.message);
+      }
     }
+    _load();
   }
 
   Future<void> _kickOthers() async {
@@ -669,7 +687,41 @@ class _DevicesBodyState extends State<_DevicesBody> {
     if (list == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    final others = list.where((s) => s['current'] != true).length;
+
+    // 会话(token)→ 设备聚合:同 device_id 只留**最新一条**(current 优先),
+    // 否则每次登录一行 token,同一设备在"在线设备"里出现多条。
+    final byDevice = <String, List<dynamic>>{};
+    for (final s in list) {
+      final key = (s['device_id'] ?? '').toString();
+      byDevice.putIfAbsent(key, () => []).add(s);
+    }
+    final devices = <(dynamic, List<int>)>[];
+    for (final entry in byDevice.entries) {
+      final group = entry.value;
+      dynamic latest;
+      for (final s in group) {
+        if (latest == null ||
+            s['current'] == true ||
+            ((s['created_ms'] as int? ?? 0) >
+                (latest['created_ms'] as int? ?? 0) &&
+                latest['current'] != true)) {
+          latest = s;
+        }
+      }
+      devices.add((
+        latest,
+        [
+          for (final s in group)
+            if (s['id'] is int) s['id'] as int,
+        ],
+      ));
+    }
+    devices.sort((a, b) =>
+        ((b.$1['created_ms'] as int? ?? 0)).compareTo(a.$1['created_ms'] as int? ?? 0));
+
+    final others = devices.where((d) => d.$1['current'] != true).length;
+    final logs = _loginLogs;
+
     return ListView(
       padding: const EdgeInsets.only(bottom: 40),
       children: [
@@ -677,15 +729,17 @@ class _DevicesBodyState extends State<_DevicesBody> {
           theme,
           '当前设备管理、单台下线、一键退出其他设备。',
         ),
-        for (final s in list)
+        for (final (s, ids) in devices)
           _AccountHelpers.kv(
             context,
-            s['current'] == true ? '本机' : '设备',
-            (s['device_name'] ?? s['device_id']?.toString() ?? '?').toString(),
+            s['current'] == true ? '本机' : '在线设备',
+            '${(s['device_name'] ?? s['device_id']?.toString() ?? '?').toString()}'
+                '  ·  ${_fmtTime(s['created_ms'] as int? ?? 0)}',
             trailing: s['current'] == true
                 ? _AccountHelpers.pillBadge(theme, '当前', theme.pfBrand)
                 : TextButton(
-                    onPressed: s['id'] is int ? () => _kick(s['id']) : null,
+                    onPressed:
+                        ids.isNotEmpty ? () => _kickDevice(ids) : null,
                     child: const Text('下线', style: TextStyle(fontSize: 12)),
                   ),
           ),
@@ -705,8 +759,42 @@ class _DevicesBodyState extends State<_DevicesBody> {
               ),
             ),
           ),
+        // === 最近登录记录(含失败;同一设备的多次登录在这里体现)===
+        if (logs != null && logs.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
+            child: Text(
+              '最近登录记录',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+          ),
+          for (final log in logs.take(15))
+            _AccountHelpers.kv(
+              context,
+              log['ok'] == true ? '成功' : '失败',
+              '${(log['device_name'] ?? log['device_id'] ?? '?').toString()}'
+                  '  ·  ${_fmtTime(log['created_ms'] as int? ?? 0)}'
+                  '${log['ip'] != null && (log['ip'] as String).isNotEmpty ? '  ·  ${log['ip']}' : ''}',
+              trailing: _AccountHelpers.pillBadge(
+                theme,
+                (log['method'] ?? '').toString(),
+                log['ok'] == true ? theme.pfBrand : theme.colorScheme.error,
+              ),
+            ),
+        ],
       ],
     );
+  }
+
+  static String _fmtTime(int ms) {
+    if (ms <= 0) return '';
+    final d = DateTime.fromMillisecondsSinceEpoch(ms);
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(d.month)}-${two(d.day)} ${two(d.hour)}:${two(d.minute)}';
   }
 }
 

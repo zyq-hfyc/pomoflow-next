@@ -62,6 +62,10 @@ class ApiClient {
   /// 已认证 GET(401 自动刷新)。
   Future<Map<String, dynamic>> get(String path) async => _request('GET', path);
 
+  /// 已认证 GET,返回 JSON 数组(如 login-logs 列表)。
+  Future<List<dynamic>> getList(String path) async =>
+      _requestList('GET', path);
+
   /// 已认证 POST(401 自动刷新)。
   Future<Map<String, dynamic>> post(String path, Map<String, dynamic> body) =>
       _request('POST', path, body: body);
@@ -77,20 +81,31 @@ class ApiClient {
   ) => _request('POST', path, body: body, authenticated: false);
 
   /// 已认证 POST,返回 JSON 数组(如 sessions 列表)。
-  Future<List<dynamic>> postList(String path, Map<String, dynamic> body) async {
+  Future<List<dynamic>> postList(String path, Map<String, dynamic> body) =>
+      _requestList('POST', path, body: body);
+
+  /// 数组响应版请求(GET/POST;401 不在此重试 —— 列表端点均为幂等读,
+  /// 过期时直接抛「登录已过期」交给上层重登)。
+  Future<List<dynamic>> _requestList(
+    String method,
+    String path, {
+    Map<String, dynamic>? body,
+  }) async {
     if (_baseUrl.isEmpty) throw ApiException('未配置服务器地址');
     final uri = Uri.parse('$_baseUrl$path');
-    final headers = {
+    final headers = <String, String>{
       'Content-Type': 'application/json',
       if (_accessToken != null) 'Authorization': 'Bearer $_accessToken',
     };
     http.Response resp;
     try {
-      resp = await http
-          .post(uri, headers: headers, body: jsonEncode(body))
+      resp = await _send(method, uri, headers, body)
           .timeout(const Duration(seconds: 15));
     } catch (e) {
       throw ApiException('网络错误: $e');
+    }
+    if (resp.statusCode == 401) {
+      throw ApiException('登录已过期,请重新登录');
     }
     if (resp.statusCode >= 400) {
       throw ApiException(_parseErrorMessage(resp));
