@@ -1,0 +1,105 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:workmanager/workmanager.dart';
+
+import '../data/database.dart';
+import '../providers/auth_provider.dart' show AuthProvider;
+import 'api_client.dart';
+import 'sync_client.dart';
+
+/// 后台自动同步(workmanager)—— mobile 版 spawn_auto_sync。
+///
+/// **关键约束**:callbackDispatcher 跑在独立 background isolate,主 isolate
+/// 的单例(ApiClient / SyncClient / TaskProvider 挂的 AppDatabase)全部
+/// 不可见 —— 每次任务执行都在这里重建最小依赖链:
+///
+/// ```text
+/// ApiClient.initialize()   ← SharedPreferences(server_url)+ secure storage(token)
+/// AppDatabase.open()       ← path_provider 平台通道
+/// 读 device_id / user_id   ← secure storage(AuthProvider 公开的 keyset)
+/// SyncClient.configure → runOnce()
+/// ```
+///
+/// 登出态:userId 读不到 → runOnce 返回「未登录,跳过」自愈,不报错。
+/// UI 数据刷新:后台 pull 落库后主 isolate 内存是旧的 —— HomePage 的
+/// WidgetsBindingObserver 在 resumed 时 reloadFromDb 兜底。
+///
+/// 周期与开关:对齐桌面端语义 —— **默认关**,「我的」页开关打开;
+/// 周期 30 分钟(Android 系统最小 15 分钟,取桌面默认值)。
+const kSyncTaskName = 'pomoflow-periodic-sync';
+const kAutoSyncPref = 'auto_sync_enabled';
+const kSyncInterval = Duration(minutes: 30);
+
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((task, inputData) async {
+    try {
+      await _runBackgroundSyncOnce();
+    } on Exception catch (e) {
+      // 单次失败不抛(workmanager 返 false 会触发退避重试,和下个周期
+      // 语义重复);下个周期自然重试。日志供 logcat 排查。
+      debugPrint('[bg-sync] $task failed: $e');
+    } catch (e) {
+      debugPrint('[bg-sync] $task error: $e');
+    }
+    return true;
+  });
+}
+
+/// 后台 isolate 重建依赖链并跑一轮 pull→push。
+Future<void> _runBackgroundSyncOnce() async {
+  await ApiClient.instance.initialize();
+  final db = await AppDatabase.open();
+  try {
+    const storage = FlutterSecureStorage(
+      aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    );
+    final deviceId =
+        await storage.read(key: AuthProvider.storageKeyDeviceId);
+    final userId = await storage.read(key: AuthProvider.storageKeyUserId);
+    SyncClient.configure(
+      db: () => db,
+      deviceId: () => deviceId ?? '',
+      userId: () => userId,
+    );
+    final msg = await SyncClient.instance.runOnce();
+    debugPrint('[bg-sync] $msg');
+  } finally {
+    await db.close();
+  }
+}
+
+/// 调度控制:开关持久化 + register / cancel。
+class SyncScheduler {
+  /// 默认**关**(对齐桌面端 `auto_sync_enabled == "1"` 缺省 false 语义)。
+  static Future<bool> isEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(kAutoSyncPref) ?? false;
+  }
+
+  static Future<void> setEnabled(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(kAutoSyncPref, value);
+    await apply();
+  }
+
+  /// 按当前开关注册/取消周期任务(幂等;keep 策略不重置已有节拍)。
+  static Future<void> apply() async {
+    if (kIsWeb) return; // workmanager 不支持 web,短路
+    final on = await isEnabled();
+    if (on) {
+      await Workmanager().registerPeriodicTask(
+        kSyncTaskName,
+        kSyncTaskName,
+        frequency: kSyncInterval,
+        constraints: Constraints(networkType: NetworkType.connected),
+        existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+        backoffPolicy: BackoffPolicy.exponential,
+        backoffPolicyDelay: const Duration(minutes: 5),
+      );
+    } else {
+      await Workmanager().cancelByUniqueName(kSyncTaskName);
+    }
+  }
+}

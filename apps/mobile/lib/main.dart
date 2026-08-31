@@ -1,10 +1,13 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:workmanager/workmanager.dart';
 
 import 'providers/auth_provider.dart';
 import 'providers/nav_provider.dart';
 import 'providers/task_provider.dart';
 import 'providers/theme_provider.dart';
+import 'services/background_sync.dart';
 import 'services/sync_client.dart';
 import 'pages/login_page.dart';
 import 'pages/home_page.dart';
@@ -12,9 +15,22 @@ import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 后台自动同步(workmanager):native 平台初始化 + 按开关注册周期任务;
+  // web 短路(SyncScheduler.apply 内部 kIsWeb 判断)。
+  await _initBackgroundSync();
   // 启动时同步预热 sqflite(失败降级内存 demo);web 平台 `open()` 内部走 `kIsWeb` 走 demo
   final task = await _safeTaskProvider();
   runApp(PomoFlowApp(taskProvider: task));
+}
+
+Future<void> _initBackgroundSync() async {
+  if (kIsWeb) return; // workmanager 不支持 web
+  try {
+    await Workmanager().initialize(callbackDispatcher);
+    await SyncScheduler.apply();
+  } on Exception catch (e) {
+    debugPrint('background sync init failed: $e');
+  }
 }
 
 Future<TaskProvider> _safeTaskProvider() async {

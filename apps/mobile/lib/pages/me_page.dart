@@ -7,6 +7,7 @@ import '../providers/auth_provider.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/api_client.dart';
+import '../services/background_sync.dart';
 import '../services/sync_client.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_sheet.dart';
@@ -24,12 +25,30 @@ class MePage extends StatefulWidget {
 class _MePageState extends State<MePage> {
   bool _syncing = false;
   String _syncLabel = '点击立即同步';
+  bool _autoSync = false;
   String? _avatarDataUrl;
 
   @override
   void initState() {
     super.initState();
     _loadAvatar();
+    _loadAutoSync();
+  }
+
+  Future<void> _loadAutoSync() async {
+    final on = await SyncScheduler.isEnabled();
+    if (mounted) setState(() => _autoSync = on);
+  }
+
+  Future<void> _toggleAutoSync(bool value) async {
+    setState(() => _autoSync = value);
+    await SyncScheduler.setEnabled(value);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(value
+          ? '已开启自动同步(每 30 分钟,联网时)'
+          : '已关闭自动同步'),
+    ));
   }
 
   /// 拉当前头像(GET /v1/auth/avatar,与 account_page 同一端点);
@@ -103,6 +122,8 @@ class _MePageState extends State<MePage> {
               label: _syncLabel,
               syncing: _syncing,
               onTap: _syncNow,
+              autoSync: _autoSync,
+              onAutoSyncChanged: _toggleAutoSync,
             ),
           ),
           const SliverToBoxAdapter(child: SizedBox(height: 12)),
@@ -279,17 +300,21 @@ class _AccountMenuCard extends StatelessWidget {
   }
 }
 
-/// 同步行(.sync-row):图标块 + 标题/状态 + 立即同步。
+/// 同步行(.sync-row):图标块 + 标题/状态 + 立即同步 + 自动同步开关。
 class _SyncRow extends StatelessWidget {
   const _SyncRow({
     required this.label,
     required this.syncing,
     required this.onTap,
+    required this.autoSync,
+    required this.onAutoSyncChanged,
   });
 
   final String label;
   final bool syncing;
   final VoidCallback onTap;
+  final bool autoSync;
+  final ValueChanged<bool> onAutoSyncChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -303,39 +328,69 @@ class _SyncRow extends StatelessWidget {
         border: Border.all(color: theme.pfLine),
         boxShadow: theme.pfShadowSm,
       ),
-      child: Row(
+      child: Column(
         children: [
-          _IconBlock(emoji: syncing ? '⏳' : '🔄'),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '数据同步',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-                ),
-                Text(
-                  label,
-                  style: TextStyle(fontSize: 12, color: theme.pfMuted),
-                ),
-              ],
-            ),
-          ),
-          GestureDetector(
-            onTap: onTap,
-            behavior: HitTestBehavior.opaque,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-              child: Text(
-                '立即同步',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: theme.pfBrand700,
+          Row(
+            children: [
+              _IconBlock(emoji: syncing ? '⏳' : '🔄'),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '数据同步',
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                    ),
+                    Text(
+                      label,
+                      style: TextStyle(fontSize: 12, color: theme.pfMuted),
+                    ),
+                  ],
                 ),
               ),
-            ),
+              GestureDetector(
+                onTap: onTap,
+                behavior: HitTestBehavior.opaque,
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                  child: Text(
+                    '立即同步',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: theme.pfBrand700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          Divider(height: 24, color: theme.pfLine),
+          Row(
+            children: [
+              _IconBlock(emoji: '⚡'),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '自动同步',
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                    ),
+                    Text(
+                      autoSync ? '每 30 分钟 · 联网时后台同步' : '关闭中',
+                      style: TextStyle(fontSize: 12, color: theme.pfMuted),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(value: autoSync, onChanged: onAutoSyncChanged),
+            ],
           ),
         ],
       ),

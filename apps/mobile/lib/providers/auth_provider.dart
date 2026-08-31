@@ -37,10 +37,11 @@ class AuthProvider extends ChangeNotifier {
 
   /// === 设备标识(P3d-A 真机自报)================================================
   /// Keychain/EncryptedSharedPreferences 落盘,跨次启动同一台设备一致。
-  static const _kDeviceIdKey = 'flutter.auth_device_id';
+  /// public:后台同步 isolate(workmanager)重建依赖链时要读同 keyset。
+  static const storageKeyDeviceId = 'flutter.auth_device_id';
 
   /// === P3d-B-Phase-2 userId 持久化(与 device_id 同 keyset)===================
-  static const _kUserIdKey = 'flutter.auth_user_id';
+  static const storageKeyUserId = 'flutter.auth_user_id';
 
   /// 复用 api_client.dart 的 FlutterSecureStorage 同实例;web 上自动 fallback 到 localStorage。
   static const _storage = FlutterSecureStorage(
@@ -77,7 +78,7 @@ class AuthProvider extends ChangeNotifier {
         final pid = profile['user_id'] as String?;
         if (pid != null && pid.isNotEmpty && pid != _userId) {
           _userId = pid;
-          await _storage.write(key: _kUserIdKey, value: pid);
+          await _storage.write(key: storageKeyUserId, value: pid);
         }
       } catch (_) {
         // token 过期且 refresh 失败 → 已在 ApiClient 内清空
@@ -89,24 +90,24 @@ class AuthProvider extends ChangeNotifier {
 
   /// 首次启动生成 UUID-like 写 secure storage,后续读出复用。与 device_id 同形态。
   Future<String> _ensureUserId() async {
-    final existing = await _storage.read(key: _kUserIdKey);
+    final existing = await _storage.read(key: storageKeyUserId);
     if (existing != null && existing.isNotEmpty) return existing;
     final rnd = math.Random.secure();
     final bytes = List<int>.generate(16, (_) => rnd.nextInt(256));
     final id = base64Url.encode(bytes).replaceAll('=', '');
-    await _storage.write(key: _kUserIdKey, value: id);
+    await _storage.write(key: storageKeyUserId, value: id);
     return id;
   }
 
   /// 首次启动生成 UUID-like 写 secure storage,后续读出复用。
   /// 长度 22(16 字节 base64Url)对齐 desktop `meta.device_id` UUID 形态。
   Future<String> _ensureDeviceId() async {
-    final existing = await _storage.read(key: _kDeviceIdKey);
+    final existing = await _storage.read(key: storageKeyDeviceId);
     if (existing != null && existing.isNotEmpty) return existing;
     final rnd = math.Random.secure();
     final bytes = List<int>.generate(16, (_) => rnd.nextInt(256));
     final id = base64Url.encode(bytes).replaceAll('=', '');
-    await _storage.write(key: _kDeviceIdKey, value: id);
+    await _storage.write(key: storageKeyDeviceId, value: id);
     return id;
   }
 
@@ -205,7 +206,7 @@ class AuthProvider extends ChangeNotifier {
     final loginUid = resp['user_id'] as String?;
     if (loginUid != null && loginUid.isNotEmpty) {
       _userId = loginUid;
-      await _storage.write(key: _kUserIdKey, value: loginUid);
+      await _storage.write(key: storageKeyUserId, value: loginUid);
     }
     username = resp['username'] as String?;
     try {
@@ -217,7 +218,7 @@ class AuthProvider extends ChangeNotifier {
       final pid = profile['user_id'] as String?;
       if (pid != null && pid.isNotEmpty && pid != _userId) {
         _userId = pid;
-        await _storage.write(key: _kUserIdKey, value: pid);
+        await _storage.write(key: storageKeyUserId, value: pid);
       }
     } catch (_) {
       // 网络/profile 暂时拉不到:留 displayName/email 为 null,下次启动
@@ -241,7 +242,7 @@ class AuthProvider extends ChangeNotifier {
     displayName = null;
     // userId 同时清(全端踢出后,re-login 时 _onAuthSuccess 会重写)。
     _userId = null;
-    await _storage.delete(key: _kUserIdKey);
+    await _storage.delete(key: storageKeyUserId);
     notifyListeners();
   }
 }
