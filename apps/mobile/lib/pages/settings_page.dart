@@ -130,14 +130,21 @@ class _Card extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: theme.pfSurface,
         borderRadius: BorderRadius.circular(PfRadii.lg),
         border: Border.all(color: theme.pfLine),
         boxShadow: theme.pfShadowSm,
       ),
-      child: child,
+      // 透明 Material:给 ListTile 提供 ink 宿主(「No material widget
+      // found」修复)—— Container 没有 Material,真机红屏 + 错误码。
+      child: Material(
+        type: MaterialType.transparency,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: child,
+        ),
+      ),
     );
   }
 }
