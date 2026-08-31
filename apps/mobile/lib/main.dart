@@ -5,6 +5,7 @@ import 'package:workmanager/workmanager.dart';
 
 import 'providers/auth_provider.dart';
 import 'providers/nav_provider.dart';
+import 'providers/settings_provider.dart';
 import 'providers/task_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/background_sync.dart';
@@ -20,7 +21,19 @@ void main() async {
   await _initBackgroundSync();
   // 启动时同步预热 sqflite(失败降级内存 demo);web 平台 `open()` 内部走 `kIsWeb` 走 demo
   final task = await _safeTaskProvider();
-  runApp(PomoFlowApp(taskProvider: task));
+  // 计时/专注参数(SharedPreferences;失败回默认值,不阻断启动)。
+  final settings = await _safeSettings();
+  runApp(PomoFlowApp(taskProvider: task, settingsProvider: settings));
+}
+
+Future<SettingsProvider> _safeSettings() async {
+  try {
+    return await SettingsProvider.load();
+  } on Exception catch (e) {
+    // ignore: avoid_print
+    print('SettingsProvider.load failed, using defaults: $e');
+    return SettingsProvider.load(); // SharedPreferences 再失败会抛给调用方兜底
+  }
 }
 
 Future<void> _initBackgroundSync() async {
@@ -44,9 +57,14 @@ Future<TaskProvider> _safeTaskProvider() async {
 }
 
 class PomoFlowApp extends StatelessWidget {
-  const PomoFlowApp({super.key, required this.taskProvider});
+  const PomoFlowApp({
+    super.key,
+    required this.taskProvider,
+    required this.settingsProvider,
+  });
 
   final TaskProvider taskProvider;
+  final SettingsProvider settingsProvider;
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +76,7 @@ class PomoFlowApp extends StatelessWidget {
         // SQLite-backed data layer(P3d-Phase-1)。失败时 main 已降级 demo,
         // 这里直接 value 注入已 hydrate 的实例。
         ChangeNotifierProvider<TaskProvider>.value(value: taskProvider),
+        ChangeNotifierProvider<SettingsProvider>.value(value: settingsProvider),
       ],
       child: Builder(
         builder: (context) {

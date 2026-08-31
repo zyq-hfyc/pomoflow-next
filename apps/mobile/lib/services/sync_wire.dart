@@ -113,9 +113,12 @@ Map<String, Object?> coreTaskPayload(Map<String, Object?> row, String userId) {
     'due_date': dueLabelToIso((row['due_label'] as String?) ?? ''),
     'estimated_pomodoros': (row['estimated'] as int?) ?? 0,
     'completed_pomodoros': (row['completed_cnt'] as int?) ?? 0,
-    'pomodoro_duration': null,
+    // 任务级单番茄时长(0 → null = 用全局设置;此前硬编码 null,表单选了也不上云)。
+    'pomodoro_duration': ((row['pomodoro_duration'] as int?) ?? 0) > 0
+        ? (row['pomodoro_duration'] as int)
+        : null,
     'reminder': 'none',
-    'repeat': 'none',
+    'repeat': (row['repeat'] as String?) ?? 'none',
     'repeat_config': null,
     'repeat_parent_id': null,
     'repeat_end_date': null,
@@ -173,6 +176,10 @@ Map<String, Object?> taskFieldsFromCore(Map? p) {
   }
   if (p['due_date'] is String?) {
     out['due_label'] = dueDateToLabel(p['due_date'] as String?);
+  }
+  if (p['repeat'] is String) out['repeat'] = p['repeat'] as String;
+  if (p['pomodoro_duration'] is int) {
+    out['pomodoro_duration'] = p['pomodoro_duration'] as int;
   }
   // 软删除收敛:远端墓碑(iso 串)→ 本地 deleted_at_ms;活任务 null → 0。
   if (p['deleted_at'] is String?) {

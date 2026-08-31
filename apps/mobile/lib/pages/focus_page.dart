@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/task.dart';
+import '../providers/settings_provider.dart';
 import '../providers/task_provider.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_controls.dart';
@@ -22,16 +23,31 @@ class FocusPage extends StatefulWidget {
 
 enum _TimerMode { focus, short, long }
 
-const _modeCfg = {
-  _TimerMode.focus: (seconds: 1500, label: '专注时段', showPomo: true),
-  _TimerMode.short: (seconds: 300, label: '短休息', showPomo: false),
-  _TimerMode.long: (seconds: 900, label: '长休息', showPomo: false),
+const _modeLabel = {
+  _TimerMode.focus: '专注时段',
+  _TimerMode.short: '短休息',
+  _TimerMode.long: '长休息',
 };
 
 class _FocusPageState extends State<FocusPage> {
   _TimerMode _mode = _TimerMode.focus;
-  late int _total = _modeCfg[_mode]!.seconds;
+  late int _total = _secondsFor(_mode);
   late int _left = _total;
+
+  /// 时长来源(设置页 + 任务级覆盖,对齐 core `pomodoro_duration` 语义):
+  /// 专注 = 任务级 pomodoroDuration > 0 ? 任务值 : 全局 focusMinutes;
+  /// 休息 = 全局设置。修改不重置进行中的倒计时 —— 下一次「开始/切换」生效。
+  int _secondsFor(_TimerMode m) {
+    final settings = context.read<SettingsProvider>();
+    return switch (m) {
+      _TimerMode.focus =>
+        (context.read<TaskProvider>().focusTask?.pomodoroDuration ?? 0) > 0
+            ? context.read<TaskProvider>().focusTask!.pomodoroDuration * 60
+            : settings.focusMinutes * 60,
+      _TimerMode.short => settings.shortBreakMinutes * 60,
+      _TimerMode.long => settings.longBreakMinutes * 60,
+    };
+  }
   bool _running = false;
   bool _started = false; // 是否进入过运行(区分「开始」与「继续」)
   Timer? _timer;
@@ -59,7 +75,7 @@ class _FocusPageState extends State<FocusPage> {
     _timer?.cancel();
     setState(() {
       _mode = m;
-      _total = _modeCfg[m]!.seconds;
+      _total = _secondsFor(m);
       _left = _total;
       _running = false;
       _started = false;
@@ -108,6 +124,7 @@ class _FocusPageState extends State<FocusPage> {
           .abandonPomodoro(elapsedSeconds: elapsed);
     }
     setState(() {
+      _total = _secondsFor(_mode); // 归零重取(设置/任务可能已变)
       _left = _total;
       _running = false;
       _started = false;
@@ -133,7 +150,7 @@ class _FocusPageState extends State<FocusPage> {
     final theme = Theme.of(context);
     final tasks = context.watch<TaskProvider>();
     final focusTask = tasks.focusTask;
-    final cfg = _modeCfg[_mode]!;
+    final cfg = (label: _modeLabel[_mode]!, showPomo: _mode == _TimerMode.focus);
 
     return Container(
       color: theme.pfBg,
@@ -192,7 +209,7 @@ class _FocusPageState extends State<FocusPage> {
     return _started ? '▶ 继续' : '▶ 开始';
   }
 
-  Widget _ring({required ({int seconds, String label, bool showPomo}) cfg}) {
+  Widget _ring({required ({String label, bool showPomo}) cfg}) {
     final theme = Theme.of(context);
     final tasks = context.watch<TaskProvider>();
     final focusTask = tasks.focusTask;

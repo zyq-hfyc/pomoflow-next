@@ -44,7 +44,8 @@ class AppDatabase {
   /// schema v5 → v6:tasks 补 deleted_at_ms 列(软删除,对齐桌面 store 同名列)。
   /// schema v6 → v7:清非法 id 行(14 字符短码 → 标准 UUID 切换)。
   /// schema v7 → v8:tasks 补 completed_at_ms 列(区间口径「完成任务」前置)。
-  static const _schemaVersion = 8;
+  /// schema v8 → v9:tasks 补 pomodoro_duration + repeat 列(任务级计时参数)。
+  static const _schemaVersion = 9;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -89,6 +90,10 @@ class AppDatabase {
           if (oldVersion < 8) {
             await _v7ToV8(db);
           }
+          // v8 → v9:tasks 补任务级计时参数两列。
+          if (oldVersion < 9) {
+            await _v8ToV9(db);
+          }
         },
       ),
     );
@@ -121,7 +126,9 @@ class AppDatabase {
         user_id TEXT NOT NULL DEFAULT '',
         updated_at_ms INTEGER NOT NULL DEFAULT 0,
         deleted_at_ms INTEGER NOT NULL DEFAULT 0,
-        completed_at_ms INTEGER NOT NULL DEFAULT 0
+        completed_at_ms INTEGER NOT NULL DEFAULT 0,
+        pomodoro_duration INTEGER NOT NULL DEFAULT 0,
+        repeat TEXT NOT NULL DEFAULT 'none'
       )
     ''');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)');
@@ -265,6 +272,16 @@ class AppDatabase {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// v8 → v9 升级:任务级计时参数(单番茄时长覆盖全局 + 重复标记)。
+  static Future<void> _v8ToV9(Database db) async {
+    await _addColumnIfMissing(
+      db, 'tasks', 'ALTER TABLE tasks ADD COLUMN pomodoro_duration INTEGER NOT NULL DEFAULT 0');
+    await _addColumnIfMissing(
+      db, 'tasks', "ALTER TABLE tasks ADD COLUMN repeat TEXT NOT NULL DEFAULT 'none'");
+    await db.insert('meta', {'k': 'schema_version', 'v': '9'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
   /// pomodoro_sessions(P1 多实体同步):core::PomodoroSession 对齐。
   /// `task_id`/`project_id` 用 `''` 表示 core 的 `None`;时间列 epoch 毫秒。
   static Future<void> _createSessionsTable(Database db) async {
@@ -397,6 +414,7 @@ class AppDatabase {
       '''SELECT id, title, priority, project, due_label, completed,
                 estimated, completed_cnt, subtask_cnt, tags_csv,
                 revision, updated_at_ms, deleted_at_ms, completed_at_ms,
+                pomodoro_duration, repeat,
                 origin_device, user_id, payload
          FROM tasks
          WHERE sync_state = 'pending'
@@ -685,6 +703,8 @@ class AppDatabase {
     'updated_at_ms': t.syncMeta.updatedAt?.millisecondsSinceEpoch ?? 0,
     'deleted_at_ms': t.deletedAt?.millisecondsSinceEpoch ?? 0,
     'completed_at_ms': t.completedAt?.millisecondsSinceEpoch ?? 0,
+    'pomodoro_duration': t.pomodoroDuration,
+    'repeat': t.repeat,
   };
 
   PfTask _taskFromRow(Map<String, Object?> r) => PfTask(
@@ -705,6 +725,8 @@ class AppDatabase {
         r['completed_at_ms'] != null && (r['completed_at_ms'] as int) > 0
             ? DateTime.fromMillisecondsSinceEpoch(r['completed_at_ms'] as int)
             : null,
+    pomodoroDuration: (r['pomodoro_duration'] as int?) ?? 0,
+    repeat: (r['repeat'] as String?) ?? 'none',
     syncMeta: PfSyncMeta(
       revision: (r['revision'] as int?) ?? 1,
       updatedAt: r['updated_at_ms'] != null && (r['updated_at_ms'] as int) > 0

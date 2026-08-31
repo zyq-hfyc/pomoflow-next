@@ -51,8 +51,13 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
       widget.initial != null && widget.initial!.estimatedPomos > 0
           ? widget.initial!.estimatedPomos
           : 2;
-  int _duration = 25;
-  String _repeat = '不重复';
+  late int _duration = widget.initial != null &&
+          widget.initial!.pomodoroDuration > 0
+      ? widget.initial!.pomodoroDuration
+      : 25;
+  late String _repeat = _coreToRepeatLabel(
+      widget.initial != null ? widget.initial!.repeat : 'none',
+  );
 
   @override
   void dispose() {
@@ -60,6 +65,9 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
     _tagsCtrl.dispose();
     super.dispose();
   }
+
+  /// 当前 UI 选项 → core Repeat snake 名。
+  String _repeatCore() => _repeatUiToCore[_repeat] ?? 'none';
 
   Future<void> _submit() async {
     final title = _titleCtrl.text.trim();
@@ -87,6 +95,8 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
           dueLabel: dueLabel,
           tags: tags,
           estimatedPomos: _pomos,
+          pomodoroDuration: _duration,
+          repeat: _repeatCore(),
         ),
       );
     } else {
@@ -99,6 +109,8 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
           dueLabel: dueLabel,
           tags: tags,
           estimatedPomos: _pomos,
+          pomodoroDuration: _duration,
+          repeat: _repeatCore(),
         ),
       );
     }
@@ -201,6 +213,21 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
     );
   }
 }
+
+// repeat:UI 选项 ↔ core Repeat snake 名(none/daily/weekly/weekdays)。
+// mobile 只存储与同步;实例生成是桌面 repeat 引擎职责。
+const _repeatUiToCore = {
+  '不重复': 'none',
+  '每天': 'daily',
+  '每周一': 'weekly',
+  '工作日': 'weekdays',
+};
+String _coreToRepeatLabel(String core) =>
+    _repeatUiToCore.entries
+        .where((e) => e.value == core)
+        .map((e) => e.key)
+        .firstOrNull ??
+    '不重复';
 
 /// 任务详情 Sheet(§5.3):kv 行 + 开始专注/编辑 + 删除(软删除,二次确认)。
 void showTaskDetailSheet(BuildContext context, PfTask task) {

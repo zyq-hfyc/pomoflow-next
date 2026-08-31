@@ -119,6 +119,29 @@ void main() {
       expect(p['created_at'], msToIso(1746149400123));
     });
 
+    test('pomodoro_duration/repeat round-trip both ways', () {
+      final p = coreTaskPayload(<String, Object?>{
+        'id': 'd9', 'title': '带参数', 'completed': 0,
+        'pomodoro_duration': 45, 'repeat': 'daily',
+      }, 'u');
+      expect(p['pomodoro_duration'], 45);
+      expect(p['repeat'], 'daily');
+      // 未设(0)→ null(用全局设置)。
+      final p0 = coreTaskPayload(<String, Object?>{
+        'id': 'd8', 'title': '默认', 'completed': 0,
+      }, 'u');
+      expect(p0['pomodoro_duration'], isNull);
+      expect(p0['repeat'], 'none');
+
+      // pull 方向。
+      final f = taskFieldsFromCore(<String, dynamic>{
+        'pomodoro_duration': 50,
+        'repeat': 'weekly',
+      });
+      expect(f['pomodoro_duration'], 50);
+      expect(f['repeat'], 'weekly');
+    });
+
     test('active task with no due label', () {
       final p = coreTaskPayload(<String, Object?>{
         'id': 'x', 'title': 't', 'priority': 'none',

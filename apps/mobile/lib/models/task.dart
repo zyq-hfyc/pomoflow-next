@@ -60,6 +60,8 @@ class PfTask {
     this.tags = const [],
     this.estimatedPomos = 0,
     this.completedPomos = 0,
+    this.pomodoroDuration = 0,
+    this.repeat = 'none',
     this.subtaskCount = 0,
     this.completed = false,
     this.completedAt,
@@ -78,6 +80,15 @@ class PfTask {
   final List<String> tags;
   final int estimatedPomos;
   final int completedPomos;
+
+  /// 单番茄时长(分钟,0 = 未设 → 用全局设置;对齐 core
+  /// `pomodoro_duration: Option<u32>` 的「覆盖全局」语义)。
+  final int pomodoroDuration;
+
+  /// 重复(none/daily/weekdays/weekly,对齐 core Repeat snake 名)。
+  /// mobile 只存储与同步;实例生成是桌面 repeat 引擎职责。
+  final String repeat;
+
   final int subtaskCount;
   final bool completed;
 
@@ -108,6 +119,8 @@ class PfTask {
     List<String>? tags,
     int? estimatedPomos,
     int? completedPomos,
+    int? pomodoroDuration,
+    String? repeat,
     int? subtaskCount,
     bool? completed,
     DateTime? completedAt,
@@ -123,6 +136,8 @@ class PfTask {
     tags: tags ?? this.tags,
     estimatedPomos: estimatedPomos ?? this.estimatedPomos,
     completedPomos: completedPomos ?? this.completedPomos,
+    pomodoroDuration: pomodoroDuration ?? this.pomodoroDuration,
+    repeat: repeat ?? this.repeat,
     subtaskCount: subtaskCount ?? this.subtaskCount,
     completed: completed ?? this.completed,
     completedAt: clearCompletedAt ? null : (completedAt ?? this.completedAt),
