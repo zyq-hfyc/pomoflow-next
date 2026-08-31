@@ -303,6 +303,37 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 回收站:已软删除的任务(按删除时间倒序)。
+  Future<List<PfTask>> deletedTasks() async {
+    final db = _db;
+    if (db == null) return const [];
+    return db.listDeletedTasks();
+  }
+
+  /// 恢复:清墓碑 + 标 pending(LWW 常规通道,对端同步后重新出现)。
+  Future<void> restoreTask(String id) async {
+    final db = _db;
+    if (db == null) return;
+    try {
+      await db.restoreTask(
+        id: id,
+        originDevice: _deviceIdProvider?.call() ?? '',
+        userId: _userIdProvider?.call() ?? '',
+      );
+    } on Exception catch (e) {
+      debugPrint('restoreTask failed for $id: $e');
+    }
+    await reloadFromDb();
+  }
+
+  /// 彻底删除:硬删本地行(服务端已是墓碑快照,不会再传播显示)。
+  Future<void> purgeTask(String id) async {
+    final db = _db;
+    if (db == null) return;
+    await db.purgeTask(id);
+    await reloadFromDb();
+  }
+
   /// 编辑任务(业务字段):内存替换 + DB 更新 + 标 pending(LWW 常规通道)。
   /// id / syncMeta / completed / completedPomos 由 copyWith 语义保留。
   Future<void> editTask(PfTask task) async {

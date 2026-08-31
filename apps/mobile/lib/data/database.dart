@@ -374,6 +374,43 @@ class AppDatabase {
     return rows.map(_taskFromRow).toList();
   }
 
+  /// 回收站:已软删除的行,按删除时间倒序(最近的在前)。
+  Future<List<PfTask>> listDeletedTasks() async {
+    final rows = await _db.query(
+      'tasks',
+      where: 'deleted_at_ms > 0',
+      orderBy: 'deleted_at_ms DESC',
+    );
+    return rows.map(_taskFromRow).toList();
+  }
+
+  /// 恢复:清墓碑 + bump revision + 标 pending —— 恢复就是一次普通编辑,
+  /// 走 LWW 常规通道(对端同步后任务重新出现)。
+  Future<void> restoreTask({
+    required String id,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    await _db.rawUpdate(
+      '''UPDATE tasks
+         SET deleted_at_ms = 0,
+             revision = revision + 1,
+             sync_state = 'pending',
+             updated_at_ms = ?,
+             origin_device = ?,
+             user_id = ?
+         WHERE id = ? AND deleted_at_ms > 0''',
+      [nowMs, originDevice, userId, id],
+    );
+  }
+
+  /// 彻底删除:硬删本地行。服务端快照已是墓碑(revision 最新),
+  /// 其他端/新设备拉到的是墓碑照样隐藏 —— 无需服务端操作。
+  Future<void> purgeTask(String id) async {
+    await _db.delete('tasks', where: 'id = ?', whereArgs: [id]);
+  }
+
   Future<int> insertTask(PfTask t) async {
     return _db.insert('tasks', _taskToRow(t));
   }

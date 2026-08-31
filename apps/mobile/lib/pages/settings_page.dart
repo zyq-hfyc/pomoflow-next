@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../providers/settings_provider.dart';
 import '../providers/theme_provider.dart';
 import '../theme/tokens.dart';
+import 'trash_page.dart';
 import '../widgets/pf_sheet.dart';
 
 /// 设置页(§7 精简版):专注/休息时长 + 主题 + 关于。
@@ -91,6 +92,33 @@ class SettingsPage extends StatelessWidget {
                   trailing: Switch(
                     value: themeProv.mode == ThemeMode.dark,
                     onChanged: (_) => themeProv.toggle(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: _Card(
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text(
+                    '回收站',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: Text(
+                    '恢复或彻底删除已删任务',
+                    style: TextStyle(fontSize: 12, color: theme.pfMuted),
+                  ),
+                  trailing: Icon(
+                    Icons.chevron_right,
+                    size: 20,
+                    color: theme.pfMuted,
+                  ),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const TrashPage()),
                   ),
                 ),
               ),
