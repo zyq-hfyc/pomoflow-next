@@ -19,25 +19,31 @@ class TasksPage extends StatefulWidget {
 
 class _TasksPageState extends State<TasksPage> {
   String _view = '今天';
-
-  /// 原型 viewStat:每视图 4 统计(预计分钟/进行中/已专注/已完成)。
-  static const _viewStats = <String, (int, int, int, int)>{
-    '今天': (335, 4, 50, 1),
-    '明天': (25, 1, 0, 0),
-    '本周': (420, 7, 90, 3),
-    '计划': (600, 9, 120, 2),
-    '已完成': (0, 0, 0, 12),
-    '手账': (0, 0, 0, 0),
-  };
+  bool _searching = false;
+  String _query = '';
+  String? _filterProject; // null = 全部
+  PfPriority? _filterPriority; // null = 全部
+  String? _filterTag; // null = 全部
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final tasks = context.watch<TaskProvider>();
-    final stat = _viewStats[_view] ?? (0, 0, 0, 0);
     final isJournal = _view == '手账';
-    // 缓存视图任务:避免在 isEmpty / length / itemBuilder 三处重复调用。
-    final viewList = isJournal ? const <PfTask>[] : tasks.viewTasks(_view);
+    // 视图任务 → 搜索 + 三筛选叠加;缓存避免多处重复调用。
+    final filtered = _applyFilters(
+      isJournal ? const <PfTask>[] : tasks.viewTasks(_view),
+    );
+    // 4 统计从**当前视图任务**实时算(此前 _viewStats 硬编码 demo):
+    // 预计/已专注分钟 = 番茄数 ×(任务级时长 || 25)。
+    int minutesPer(PfTask t) =>
+        t.pomodoroDuration > 0 ? t.pomodoroDuration : 25;
+    final estMinutes = filtered.fold<int>(
+        0, (a, t) => a + t.estimatedPomos * minutesPer(t));
+    final doing = filtered.where((t) => !t.completed).length;
+    final focusedMinutes = filtered.fold<int>(
+        0, (a, t) => a + t.completedPomos * minutesPer(t));
+    final done = filtered.where((t) => t.completed).length;
 
     return Container(
       color: theme.pfBg,
@@ -50,10 +56,25 @@ class _TasksPageState extends State<TasksPage> {
                 subtitle: '规划清单，按时兑现',
                 action: PillButton(
                   tooltip: '搜索',
-                  child: const Text('🔍', style: TextStyle(fontSize: 15)),
-                  onTap: () => _hint('搜索将在 P3c 接入'),
+                  child: Text(
+                    _searching ? '✕' : '🔍',
+                    style: const TextStyle(fontSize: 15),
+                  ),
+                  onTap: () => setState(() {
+                    _searching = !_searching;
+                    if (!_searching) _query = '';
+                  }),
                 ),
               ),
+              if (_searching)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                    child: _SearchField(
+                      onChanged: (v) => setState(() => _query = v),
+                    ),
+                  ),
+                ),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.only(top: 14),
@@ -76,13 +97,13 @@ class _TasksPageState extends State<TasksPage> {
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                   child: Row(
                     children: [
-                      _StatCell(value: '${stat.$1}', label: '预计分钟'),
+                      _StatCell(value: '$estMinutes', label: '预计分钟'),
                       const SizedBox(width: 9),
-                      _StatCell(value: '${stat.$2}', label: '进行中'),
+                      _StatCell(value: '$doing', label: '进行中'),
                       const SizedBox(width: 9),
-                      _StatCell(value: '${stat.$3}', label: '已专注'),
+                      _StatCell(value: '$focusedMinutes', label: '已专注'),
                       const SizedBox(width: 9),
-                      _StatCell(value: '${stat.$4}', label: '已完成'),
+                      _StatCell(value: '$done', label: '已完成'),
                     ],
                   ),
                 ),
@@ -93,10 +114,22 @@ class _TasksPageState extends State<TasksPage> {
                   child: Wrap(
                     spacing: 8,
                     runSpacing: 8,
-                    children: const [
-                      _FilterChip(label: '📁 全部项目'),
-                      _FilterChip(label: '🔥 优先级'),
-                      _FilterChip(label: '🏷 标签'),
+                    children: [
+                      _FilterChip(
+                        label: '📁 ${_filterProject ?? '全部项目'}',
+                        active: _filterProject != null,
+                        onTap: () => _pickProject(tasks),
+                      ),
+                      _FilterChip(
+                        label: '🔥 ${_filterPriority?.label ?? '优先级'}',
+                        active: _filterPriority != null,
+                        onTap: () => _pickPriority(),
+                      ),
+                      _FilterChip(
+                        label: '🏷 ${_filterTag ?? '标签'}',
+                        active: _filterTag != null,
+                        onTap: () => _pickTag(tasks),
+                      ),
                     ],
                   ),
                 ),
@@ -113,7 +146,7 @@ class _TasksPageState extends State<TasksPage> {
                     },
                   ),
                 )
-              else if (viewList.isEmpty)
+              else if (filtered.isEmpty)
                 SliverFillRemaining(
                   hasScrollBody: false,
                   child: _EmptyView(view: _view),
@@ -122,10 +155,10 @@ class _TasksPageState extends State<TasksPage> {
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
                   sliver: SliverList.separated(
-                    itemCount: viewList.length,
+                    itemCount: filtered.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 10),
                     itemBuilder: (context, i) {
-                      return _TaskCard(task: viewList[i]);
+                      return _TaskCard(task: filtered[i]);
                     },
                   ),
                 ),
@@ -143,8 +176,101 @@ class _TasksPageState extends State<TasksPage> {
     );
   }
 
-  void _hint(String msg) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  /// 视图任务 → 搜索(标题/项目/标签模糊)+ 三筛选叠加。
+  List<PfTask> _applyFilters(List<PfTask> src) {
+    final q = _query.trim().toLowerCase();
+    return src.where((t) {
+      if (_filterProject != null && t.project != _filterProject) return false;
+      if (_filterPriority != null && t.priority != _filterPriority) {
+        return false;
+      }
+      if (_filterTag != null && !t.tags.contains(_filterTag)) return false;
+      if (q.isEmpty) return true;
+      return t.title.toLowerCase().contains(q) ||
+          t.project.toLowerCase().contains(q) ||
+          t.tags.any((tag) => tag.toLowerCase().contains(q));
+    }).toList();
+  }
+
+  Future<void> _pickProject(TaskProvider tasks) async {
+    final projects = tasks.tasks
+        .map((t) => t.project)
+        .where((p) => p.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    final picked = await _pickSheet<String?>(
+      title: '按项目筛选',
+      options: [null, ...projects],
+      selected: _filterProject,
+      labelOf: (p) => p ?? '全部项目',
+    );
+    if (picked != null) {
+      setState(() => _filterProject = picked.$1);
+    }
+  }
+
+  Future<void> _pickPriority() async {
+    final picked = await _pickSheet<PfPriority?>(
+      title: '按优先级筛选',
+      options: [
+        null,
+        PfPriority.high,
+        PfPriority.medium,
+        PfPriority.low,
+        PfPriority.none,
+      ],
+      selected: _filterPriority,
+      labelOf: (p) => p?.label ?? '全部优先级',
+    );
+    if (picked != null) {
+      setState(() => _filterPriority = picked.$1);
+    }
+  }
+
+  Future<void> _pickTag(TaskProvider tasks) async {
+    final tags = tasks.tasks.expand((t) => t.tags).toSet().toList()..sort();
+    final picked = await _pickSheet<String?>(
+      title: '按标签筛选',
+      options: [null, ...tags],
+      selected: _filterTag,
+      labelOf: (t) => t ?? '全部标签',
+    );
+    if (picked != null) {
+      setState(() => _filterTag = picked.$1);
+    }
+  }
+
+  /// 单选 sheet。返回 `(T? value,)` 包装:选「全部」(null 值)也能赋值
+  /// 清筛选;用户直接关 sheet 返回 null 不改状态。
+  Future<(T, )?> _pickSheet<T>({
+    required String title,
+    required List<T> options,
+    required T selected,
+    required String Function(T) labelOf,
+  }) {
+    return pfSheet<(T,)>(
+      context,
+      title: title,
+      heightFactor: .5,
+      body: (ctx) => Material(
+        type: MaterialType.transparency,
+        child: ListView(
+          children: [
+            for (final o in options)
+              ListTile(
+                title: Text(labelOf(o), style: const TextStyle(fontSize: 15)),
+                trailing: o == selected
+                    ? Icon(Icons.check_circle,
+                        size: 20, color: Theme.of(ctx).pfBrand)
+                    : null,
+                onTap: () => Navigator.pop(ctx, (o,)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// 统计小卡(.stat)。
@@ -186,23 +312,95 @@ class _StatCell extends StatelessWidget {
   }
 }
 
-/// 筛选 chip(.filter-chip,本批静态展示)。
-class _FilterChip extends StatelessWidget {
-  const _FilterChip({required this.label});
+/// 搜索条:surface 圆角输入框,实时过滤。StatefulWidget 持 controller
+/// (每帧重建 controller 会闪光标)。
+class _SearchField extends StatefulWidget {
+  const _SearchField({required this.onChanged});
 
-  final String label;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_SearchField> createState() => _SearchFieldState();
+}
+
+class _SearchFieldState extends State<_SearchField> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-      decoration: BoxDecoration(
-        color: theme.pfSurface,
-        borderRadius: BorderRadius.circular(PfRadii.pill),
-        border: Border.all(color: theme.pfLine),
+    return TextField(
+      controller: _ctrl,
+      autofocus: true,
+      onChanged: widget.onChanged,
+      style: const TextStyle(fontSize: 14),
+      decoration: InputDecoration(
+        hintText: '搜索标题 / 项目 / 标签…',
+        hintStyle: TextStyle(fontSize: 13, color: theme.pfMuted),
+        prefixIcon: Icon(Icons.search, size: 18, color: theme.pfMuted),
+        isDense: true,
+        filled: true,
+        fillColor: theme.pfSurface,
+        contentPadding: const EdgeInsets.symmetric(vertical: 10),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: BorderSide(color: theme.pfLine),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: BorderSide(color: theme.pfLine),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: BorderSide(color: theme.pfBrand),
+        ),
       ),
-      child: Text(label, style: TextStyle(fontSize: 12, color: theme.pfMuted)),
+    );
+  }
+}
+
+/// 筛选 chip:可点(唤起单选 sheet);激活态 brand 描边。
+class _FilterChip extends StatelessWidget {
+  const _FilterChip({
+    required this.label,
+    required this.onTap,
+    this.active = false,
+  });
+
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        decoration: BoxDecoration(
+          color: active ? theme.pfBrand50 : theme.pfSurface,
+          borderRadius: BorderRadius.circular(PfRadii.pill),
+          border: Border.all(
+            color: active ? theme.pfBrand100 : theme.pfLine,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: active ? theme.pfBrand700 : theme.pfMuted,
+            fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+          ),
+        ),
+      ),
     );
   }
 }
