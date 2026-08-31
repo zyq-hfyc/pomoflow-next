@@ -17,7 +17,7 @@ class TrashPage extends StatefulWidget {
 }
 
 class _TrashPageState extends State<TrashPage> {
-  List<PfTask>? _items;
+  List<List<PfTask>>? _groups;
 
   @override
   void initState() {
@@ -27,39 +27,51 @@ class _TrashPageState extends State<TrashPage> {
 
   Future<void> _load() async {
     final items = await context.read<TaskProvider>().deletedTasks();
-    if (mounted) setState(() => _items = items);
+    if (mounted) setState(() => _groups = clusterDeletedTasks(items));
   }
 
-  Future<void> _restore(PfTask t) async {
-    await context.read<TaskProvider>().restoreTask(t.id);
+  Future<void> _restore(List<PfTask> group) async {
+    final provider = context.read<TaskProvider>();
+    for (final t in group) {
+      await provider.restoreTask(t.id);
+    }
     await _load();
     if (mounted) {
+      final label = group.length > 1
+          ? '「${group.first.title}」等 ${group.length} 个任务'
+          : '「${group.first.title}」';
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('已恢复「${t.title}」')));
+          .showSnackBar(SnackBar(content: Text('已恢复 $label')));
     }
   }
 
-  Future<void> _purge(PfTask t) async {
-    final ok = await _confirm(
-      '彻底删除',
-      '「${t.title}」将被永久删除,无法恢复。',
-    );
+  Future<void> _purge(List<PfTask> group) async {
+    final label = group.length > 1
+        ? '「${group.first.title}」等 ${group.length} 个任务(重复任务实例)'
+        : '「${group.first.title}」';
+    final ok = await _confirm('彻底删除', '$label将被永久删除,无法恢复。');
     if (ok != true || !mounted) return;
-    await context.read<TaskProvider>().purgeTask(t.id);
+    final provider = context.read<TaskProvider>();
+    for (final t in group) {
+      await provider.purgeTask(t.id);
+    }
     await _load();
   }
 
   Future<void> _purgeAll() async {
-    final items = _items ?? const <PfTask>[];
-    if (items.isEmpty) return;
+    final groups = _groups ?? const <List<PfTask>>[];
+    final count = groups.fold<int>(0, (a, g) => a + g.length);
+    if (count == 0) return;
     final ok = await _confirm(
       '清空回收站',
-      '将永久删除 ${items.length} 个任务,无法恢复。',
+      '将永久删除 $count 个任务,无法恢复。',
     );
     if (ok != true || !mounted) return;
     final provider = context.read<TaskProvider>();
-    for (final t in items) {
-      await provider.purgeTask(t.id);
+    for (final g in groups) {
+      for (final t in g) {
+        await provider.purgeTask(t.id);
+      }
     }
     await _load();
   }
@@ -94,7 +106,8 @@ class _TrashPageState extends State<TrashPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final items = _items;
+    final groups = _groups;
+    final total = groups?.fold<int>(0, (a, g) => a + g.length) ?? 0;
     return Scaffold(
       backgroundColor: theme.pfBg,
       appBar: AppBar(
@@ -104,7 +117,7 @@ class _TrashPageState extends State<TrashPage> {
         centerTitle: true,
         title: const Text('回收站', style: TextStyle(fontSize: 17)),
         actions: [
-          if (items != null && items.isNotEmpty)
+          if (total > 0)
             TextButton(
               onPressed: _purgeAll,
               child: Text(
@@ -117,9 +130,9 @@ class _TrashPageState extends State<TrashPage> {
             ),
         ],
       ),
-      body: items == null
+      body: groups == null
           ? const Center(child: CircularProgressIndicator())
-          : items.isEmpty
+          : groups.isEmpty
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -138,12 +151,12 @@ class _TrashPageState extends State<TrashPage> {
                   type: MaterialType.transparency,
                   child: ListView.separated(
                     padding: const EdgeInsets.fromLTRB(16, 10, 16, 40),
-                    itemCount: items.length,
+                    itemCount: groups.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 10),
                     itemBuilder: (context, i) => _TrashRow(
-                      task: items[i],
-                      onRestore: () => _restore(items[i]),
-                      onPurge: () => _purge(items[i]),
+                      group: groups[i],
+                      onRestore: () => _restore(groups[i]),
+                      onPurge: () => _purge(groups[i]),
                     ),
                   ),
                 ),
@@ -151,20 +164,43 @@ class _TrashPageState extends State<TrashPage> {
   }
 }
 
+/// 回收站聚类:桌面 repeat 引擎为重复模板预生成每周实例(独立 UUID、
+/// 同标题),删除模板时全部实例一起级联软删(删除时间毫秒级相邻)——
+/// 平铺显示会有几十行同名。同标题且删除时间差 < 5s 归为一组
+/// (≈ 同一次删除动作),整组恢复/彻底删。
+List<List<PfTask>> clusterDeletedTasks(List<PfTask> items) {
+  const windowMs = 5 * 1000;
+  final out = <List<PfTask>>[];
+  for (final t in items) {
+    final last = out.isEmpty ? null : out.last;
+    final lastDel = last?.first.deletedAt?.millisecondsSinceEpoch ?? 0;
+    final del = t.deletedAt?.millisecondsSinceEpoch ?? 0;
+    if (last != null &&
+        last.first.title == t.title &&
+        (lastDel - del).abs() < windowMs) {
+      last.add(t);
+    } else {
+      out.add([t]);
+    }
+  }
+  return out;
+}
+
 class _TrashRow extends StatelessWidget {
   const _TrashRow({
-    required this.task,
+    required this.group,
     required this.onRestore,
     required this.onPurge,
   });
 
-  final PfTask task;
+  final List<PfTask> group;
   final VoidCallback onRestore;
   final VoidCallback onPurge;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final task = group.first;
     final deletedAt = task.deletedAt;
     String two(int n) => n.toString().padLeft(2, '0');
     final when = deletedAt == null
@@ -184,15 +220,41 @@ class _TrashRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  task.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 15,
-                    color: theme.pfMuted,
-                    decoration: TextDecoration.lineThrough,
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        task.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 15,
+                          color: theme.pfMuted,
+                          decoration: TextDecoration.lineThrough,
+                        ),
+                      ),
+                    ),
+                    if (group.length > 1)
+                      Container(
+                        margin: const EdgeInsets.only(left: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: theme.pfBrand50,
+                          borderRadius: BorderRadius.circular(PfRadii.pill),
+                        ),
+                        child: Text(
+                          '×${group.length} 重复实例',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                            color: theme.pfBrand700,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
                 if (when.isNotEmpty)
                   Padding(
