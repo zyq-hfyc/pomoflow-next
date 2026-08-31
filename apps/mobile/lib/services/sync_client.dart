@@ -70,6 +70,28 @@ class SyncClient {
     final changes = <Map<String, dynamic>>[];
     // task 实体:业务列 + 元信息列都在 listPendingTasks 结果里,
     // payload 由 wire 层从业务列现构造(markTaskPending 不再预写 payload)。
+    // project 名 → 实体 id 懒解析(本地无则当场建 pending 实体行,同批推上)。
+    final projectIdByName = <String, String>{};
+    Future<String?> resolveProject(String name) async {
+      if (name.isEmpty) return null;
+      final cached = projectIdByName[name];
+      if (cached != null) return cached;
+      final found = await db.findProjectByName(name);
+      if (found != null) {
+        projectIdByName[name] = found.id;
+        return found.id;
+      }
+      final id = uuidV4();
+      await db.insertPendingProject(
+        id: id,
+        name: name,
+        originDevice: deviceId,
+        userId: uid,
+      );
+      projectIdByName[name] = id;
+      return id;
+    }
+
     for (final row in await db.listPendingTasks()) {
       changes.add({
         'id': _uuidChangeId(),
@@ -78,7 +100,23 @@ class SyncClient {
         'entity_id': row['id'] as String,
         'revision': (row['revision'] as int?) ?? 1,
         'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
-        'payload': coreTaskPayload(row, uid),
+        'payload': coreTaskPayload(
+          row,
+          uid,
+          projectId: await resolveProject((row['project'] as String?) ?? ''),
+        ),
+      });
+    }
+    // project 实体(懒建的任务归属项目;桌面建的项目也从这里推回)。
+    for (final row in await db.listPendingProjects()) {
+      changes.add({
+        'id': _uuidChangeId(),
+        'device_id': deviceId,
+        'entity': 'project',
+        'entity_id': row['id'] as String,
+        'revision': (row['revision'] as int?) ?? 1,
+        'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
+        'payload': coreProjectPayload(row, uid),
       });
     }
     for (final row in await db.listPendingSessions()) {
@@ -107,6 +145,7 @@ class SyncClient {
     int accepted = 0;
     int conflicted = 0;
     final taskIdsToMark = <String>[];
+    final projectIdsToMark = <String>[];
     final sessionIdsToMark = <String>[];
     for (final r in results) {
       final outcome = _parseApplyOutcome(r);
@@ -116,7 +155,11 @@ class SyncClient {
           final entityId = _nestedStr(r, ['Accepted', 'entity_id']);
           final entity = _nestedStr(r, ['Accepted', 'entity']);
           if (entityId == null || entityId.isEmpty) break;
-          (entity == 'pomodoro_session' ? sessionIdsToMark : taskIdsToMark)
+          (switch (entity) {
+            'pomodoro_session' => sessionIdsToMark,
+            'project' => projectIdsToMark,
+            _ => taskIdsToMark,
+          })
               .add(entityId);
         case _OutcomeKind.conflicted:
           conflicted += 1;
@@ -124,9 +167,11 @@ class SyncClient {
           if (winner != null) {
             final entityId = winner['entity_id'] as String;
             await _applyWinner(db, winner, uid);
-            ((winner['entity'] as String?) == 'pomodoro_session'
-                    ? sessionIdsToMark
-                    : taskIdsToMark)
+            (switch (winner['entity'] as String?) {
+              'pomodoro_session' => sessionIdsToMark,
+              'project' => projectIdsToMark,
+              _ => taskIdsToMark,
+            })
                 .add(entityId);
           }
         case _OutcomeKind.dropped:
@@ -136,6 +181,9 @@ class SyncClient {
     }
     if (taskIdsToMark.isNotEmpty) {
       await db.markTasksSynced(taskIdsToMark);
+    }
+    if (projectIdsToMark.isNotEmpty) {
+      await db.markProjectsSynced(projectIdsToMark);
     }
     if (sessionIdsToMark.isNotEmpty) {
       await db.markSessionsSynced(sessionIdsToMark);
@@ -153,7 +201,17 @@ class SyncClient {
     final updatedAtMs = isoToMs((winner['updated_at'] as String?) ?? '');
     final originDevice = (winner['device_id'] as String?) ?? '';
     final payloadJson = jsonEncode(payload);
-    if (entity == 'pomodoro_session') {
+    if (entity == 'project') {
+      await db.applyRemoteProject(
+        id: entityId,
+        revision: revision,
+        updatedAtMs: updatedAtMs,
+        originDevice: originDevice,
+        userId: uid,
+        payload: payloadJson,
+        fields: projectFieldsFromCore(payload as Map?),
+      );
+    } else if (entity == 'pomodoro_session') {
       await db.applyRemoteSession(
         id: entityId,
         revision: revision,
@@ -206,6 +264,17 @@ class SyncClient {
           final remote = _extractChangeTimestamps(change);
           final local = await db.localTaskCandidate(entityId);
           if (local != null && _localWinsLww(local, remote)) continue;
+          final fields = taskFieldsFromCore(change['payload'] as Map?);
+          // project_id → 本地项目名(实体一般先于/同批到达;查不到留空,
+          // 后续该任务任一次同步更新会自愈补上)。
+          final pid = (change['payload'] as Map?)?['project_id'] as String?;
+          if (pid != null && pid.isNotEmpty) {
+            final proj = await db.localProjectCandidate(pid);
+            final name = proj == null
+                ? null
+                : await db.findProjectNameById(pid);
+            if (name != null && name.isNotEmpty) fields['project'] = name;
+          }
           await db.applyRemoteTask(
             id: entityId,
             revision: (change['revision'] as int?) ?? 1,
@@ -213,7 +282,21 @@ class SyncClient {
             originDevice: remote.deviceId,
             userId: uid,
             payload: payloadJson,
-            fields: taskFieldsFromCore(change['payload'] as Map?),
+            fields: fields,
+          );
+          applied += 1;
+        case 'project':
+          final remote = _extractChangeTimestamps(change);
+          final local = await db.localProjectCandidate(entityId);
+          if (local != null && _localWinsLww(local, remote)) continue;
+          await db.applyRemoteProject(
+            id: entityId,
+            revision: (change['revision'] as int?) ?? 1,
+            updatedAtMs: remote.updatedMs,
+            originDevice: remote.deviceId,
+            userId: uid,
+            payload: payloadJson,
+            fields: projectFieldsFromCore(change['payload'] as Map?),
           );
           applied += 1;
         case 'pomodoro_session':
@@ -231,8 +314,8 @@ class SyncClient {
           );
           applied += 1;
         default:
-          // project / tag / task_tag / sub_task / motto / *_review:
-          // P1 范围外,跳过不崩(cursor 照常推进,不重拉)。
+          // tag / task_tag / sub_task / motto / *_review:
+          // 范围外,跳过不崩(cursor 照常推进,不重拉)。
           break;
       }
     }

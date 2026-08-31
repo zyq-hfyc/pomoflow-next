@@ -119,6 +119,39 @@ void main() {
       expect(p['created_at'], msToIso(1746149400123));
     });
 
+    test('projectId param maps to core project_id; absent stays null', () {
+      final withProj = coreTaskPayload(<String, Object?>{
+        'id': 'p1', 'title': '带项目', 'project': '研发',
+      }, 'u', projectId: 'dddddddd-dddd-4ddd-8ddd-dddddddddd01');
+      expect(withProj['project_id'], 'dddddddd-dddd-4ddd-8ddd-dddddddddd01');
+      final noProj = coreTaskPayload(<String, Object?>{
+        'id': 'p2', 'title': '无项目', 'project': '',
+      }, 'u');
+      expect(noProj['project_id'], isNull);
+    });
+
+    test('project payload round-trip', () {
+      final p = coreProjectPayload(<String, Object?>{
+        'id': 'dddddddd-dddd-4ddd-8ddd-dddddddddd02',
+        'name': '产品设计',
+        'color': '#E8590C',
+        'revision': 1,
+        'updated_at_ms': 1746149400123,
+      }, 'u-7');
+      expect(p['name'], '产品设计');
+      expect(p['color'], '#E8590C');
+      expect(p['parent_id'], isNull);
+      expect(p['display_order'], 0);
+      expect(p['deleted_at'], isNull);
+
+      final f = projectFieldsFromCore(<String, dynamic>{
+        'name': '运营',
+        'color': '#4D8EE0',
+      });
+      expect(f['name'], '运营');
+      expect(f['color'], '#4D8EE0');
+    });
+
     test('pomodoro_duration/repeat round-trip both ways', () {
       final p = coreTaskPayload(<String, Object?>{
         'id': 'd9', 'title': '带参数', 'completed': 0,

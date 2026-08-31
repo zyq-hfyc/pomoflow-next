@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
+import '../models/project.dart';
 import '../models/session.dart';
 import '../models/task.dart';
 
@@ -45,7 +46,8 @@ class AppDatabase {
   /// schema v6 → v7:清非法 id 行(14 字符短码 → 标准 UUID 切换)。
   /// schema v7 → v8:tasks 补 completed_at_ms 列(区间口径「完成任务」前置)。
   /// schema v8 → v9:tasks 补 pomodoro_duration + repeat 列(任务级计时参数)。
-  static const _schemaVersion = 9;
+  /// schema v9 → v10:新建 projects 表(project 实体化,任务项目归属跨端)。
+  static const _schemaVersion = 10;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -94,6 +96,10 @@ class AppDatabase {
           if (oldVersion < 9) {
             await _v8ToV9(db);
           }
+          // v9 → v10:新建 projects 表。
+          if (oldVersion < 10) {
+            await _v9ToV10(db);
+          }
         },
       ),
     );
@@ -133,6 +139,7 @@ class AppDatabase {
     ''');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)');
     await _createSessionsTable(db);
+    await _createProjectsTable(db);
     await db.execute('''
       CREATE TABLE IF NOT EXISTS journals (
         id TEXT PRIMARY KEY,
@@ -270,6 +277,31 @@ class AppDatabase {
       db, 'tasks', 'ALTER TABLE tasks ADD COLUMN completed_at_ms INTEGER NOT NULL DEFAULT 0');
     await db.insert('meta', {'k': 'schema_version', 'v': '8'},
         conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// v9 → v10 升级:新建 projects 表(project 实体化)。
+  static Future<void> _v9ToV10(Database db) async {
+    await _createProjectsTable(db);
+    await db.insert('meta', {'k': 'schema_version', 'v': '10'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// projects(P1 实体化):core::Project 平铺子集(name/color,无层级 ——
+  /// mobile 端平铺;桌面的 parent_id 树拉下来落在 payload 里不展开)。
+  static Future<void> _createProjectsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 1,
+        sync_state TEXT NOT NULL DEFAULT 'synced',
+        updated_at_ms INTEGER NOT NULL DEFAULT 0,
+        origin_device TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT ''
+      )
+    ''');
   }
 
   /// v8 → v9 升级:任务级计时参数(单番茄时长覆盖全局 + 重复标记)。
@@ -670,6 +702,146 @@ class AppDatabase {
          WHERE id = ?''',
       [nowMs, originDevice, userId, id],
     );
+  }
+
+  // === projects(P1 实体化)====================================================
+
+  /// 未删除的项目(墓碑行过滤;名字 → id 映射 / push resolve 用)。
+  Future<List<PfProject>> listProjects() async {
+    final rows = await _db.query(
+      'projects',
+      where: "sync_state != 'tombstone'",
+      orderBy: 'name ASC',
+    );
+    return rows
+        .map((r) => PfProject(
+              id: r['id'] as String,
+              name: r['name'] as String,
+              color: (r['color'] as String?) ?? '',
+              syncMeta: PfSyncMeta(
+                revision: (r['revision'] as int?) ?? 1,
+                updatedAt: (r['updated_at_ms'] as int? ?? 0) > 0
+                    ? DateTime.fromMillisecondsSinceEpoch(
+                        r['updated_at_ms'] as int)
+                    : null,
+                originDevice: (r['origin_device'] as String?) ?? '',
+                syncState: (r['sync_state'] as String?) ?? 'synced',
+                userId: (r['user_id'] as String?) ?? '',
+              ),
+            ))
+        .toList();
+  }
+
+  Future<PfProject?> findProjectByName(String name) async {
+    final rows = await _db.query(
+      'projects',
+      where: "name = ? AND sync_state != 'tombstone'",
+      whereArgs: [name],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return PfProject(
+      id: rows.first['id'] as String,
+      name: name,
+      color: (rows.first['color'] as String?) ?? '',
+    );
+  }
+
+  /// pull task 时 project_id → 名字(展示列)。
+  Future<String?> findProjectNameById(String id) async {
+    final rows = await _db.query(
+      'projects',
+      columns: ['name'],
+      where: "id = ? AND sync_state != 'tombstone'",
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['name'] as String?;
+  }
+
+  /// 懒建项目(push resolve 时):同步创建的实体行,直接标 pending。
+  Future<void> insertPendingProject({
+    required String id,
+    required String name,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    await _db.insert('projects', {
+      'id': id,
+      'name': name,
+      'color': '',
+      'revision': 1,
+      'sync_state': 'pending',
+      'updated_at_ms': nowMs,
+      'origin_device': originDevice,
+      'payload': '',
+      'user_id': userId,
+    });
+  }
+
+  Future<List<Map<String, Object?>>> listPendingProjects({int limit = 100}) async {
+    return _db.rawQuery(
+      '''SELECT id, name, color, revision, updated_at_ms,
+                origin_device, user_id, payload
+         FROM projects
+         WHERE sync_state = 'pending'
+         ORDER BY updated_at_ms ASC
+         LIMIT ?''',
+      [limit],
+    );
+  }
+
+  Future<void> applyRemoteProject({
+    required String id,
+    required int revision,
+    required int updatedAtMs,
+    required String originDevice,
+    required String userId,
+    required String payload,
+    required Map<String, Object?> fields,
+  }) async {
+    await _db.transaction((txn) async {
+      final exists = (await txn.query('projects',
+              where: 'id = ?', whereArgs: [id], limit: 1))
+          .isNotEmpty;
+      final row = <String, Object?>{
+        ...fields,
+        'revision': revision,
+        'updated_at_ms': updatedAtMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+        'payload': payload,
+        'sync_state': 'synced',
+      };
+      if (exists) {
+        await txn.update('projects', row, where: 'id = ?', whereArgs: [id]);
+      } else {
+        row['id'] = id;
+        await txn.insert('projects', row);
+      }
+    });
+  }
+
+  Future<void> markProjectsSynced(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await _db.rawUpdate(
+      "UPDATE projects SET sync_state = 'synced' WHERE id IN ($placeholders)",
+      ids,
+    );
+  }
+
+  Future<Map<String, Object?>?> localProjectCandidate(String id) async {
+    final rows = await _db.query(
+      'projects',
+      columns: ['id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
   }
 
   // === journals ================================================================

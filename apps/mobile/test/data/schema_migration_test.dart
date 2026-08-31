@@ -26,6 +26,13 @@ void main() {
         'id', 'revision', 'sync_state', 'origin_device', 'payload',
         'user_id', 'updated_at_ms', 'deleted_at_ms', 'completed_at_ms',
       ]));
+      final projectCols = await db.raw
+          .rawQuery('PRAGMA table_info(projects)');
+      expect(
+        projectCols.map((r) => r['name']),
+        containsAll(['id', 'name', 'color', 'revision', 'sync_state',
+                     'updated_at_ms', 'origin_device', 'payload', 'user_id']),
+      );
       final sessionCols = await db.raw
           .rawQuery('PRAGMA table_info(pomodoro_sessions)');
       final sessionNames =
@@ -35,7 +42,7 @@ void main() {
         'ended_at_ms', 'is_completed', 'created_at_ms', 'revision',
         'sync_state', 'updated_at_ms', 'origin_device', 'payload', 'user_id',
       ]));
-      expect(await db.getMeta('schema_version'), '9');
+      expect(await db.getMeta('schema_version'), '10');
     } finally {
       await db.close();
     }
@@ -148,7 +155,7 @@ void main() {
           .rawQuery('PRAGMA table_info(pomodoro_sessions)');
       final v6cols = await db.raw.rawQuery('PRAGMA table_info(tasks)');
       expect(v6cols.map((r) => r['name']), contains('deleted_at_ms'));
-      expect(await db.getMeta('schema_version'), '9');
+      expect(await db.getMeta('schema_version'), '10');
     } finally {
       await db.close();
       await tmp.delete(recursive: true);

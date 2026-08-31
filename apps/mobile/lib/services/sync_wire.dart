@@ -95,8 +95,14 @@ String dueDateToLabel(String? iso, {DateTime? now}) {
 }
 
 /// tasks pending 行 → core::Task JSON(push 方向)。
-/// [row] 来自 `AppDatabase.listPendingTasks`(业务列 + 同步元信息列)。
-Map<String, Object?> coreTaskPayload(Map<String, Object?> row, String userId) {
+/// [row] 来自 `AppDatabase.listPendingTasks`(业务列 + 同步元信息列);
+/// [projectId] 是 push 编排层懒解析的项目实体 id(名字 → 本地实体,无则
+/// 当场创建,pull 端用名字展示)。
+Map<String, Object?> coreTaskPayload(
+  Map<String, Object?> row,
+  String userId, {
+  String? projectId,
+}) {
   final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
   final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
   final completedAtMs = (row['completed_at_ms'] as int?) ?? 0;
@@ -105,9 +111,9 @@ Map<String, Object?> coreTaskPayload(Map<String, Object?> row, String userId) {
     'user_id': userId,
     'title': row['title'] ?? '',
     'description': '',
-    // mobile project 是名字;core project_id 是 UUID 引用 —— P1 未建 project
-    // 实体,先 null(project 归属 P2 实体化批次)。
-    'project_id': null,
+    'project_id': (projectId != null && projectId.isNotEmpty)
+        ? projectId
+        : null,
     'priority': row['priority'] ?? 'none',
     'status': ((row['completed'] as int?) ?? 0) == 1 ? 'completed' : 'active',
     'due_date': dueLabelToIso((row['due_label'] as String?) ?? ''),
@@ -153,6 +159,34 @@ Map<String, Object?> coreSessionPayload(
     'deleted_at': null,
     'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
   };
+}
+
+/// projects pending 行 → core::Project JSON(push 方向)。
+/// mobile 平铺子集:parent_id 恒 null(层级是桌面 UI 概念)。
+Map<String, Object?> coreProjectPayload(
+    Map<String, Object?> row, String userId) {
+  final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
+  return {
+    'id': row['id'],
+    'user_id': userId,
+    'name': row['name'] ?? '',
+    'color': (row['color'] as String?) ?? '',
+    'parent_id': null,
+    'display_order': 0,
+    'created_at': msToIso(updatedAtMs),
+    'revision': (row['revision'] as int?) ?? 1,
+    'deleted_at': null,
+    'updated_at': msToIso(updatedAtMs),
+  };
+}
+
+/// core::Project JSON → projects 行业务列(pull 方向)。
+Map<String, Object?> projectFieldsFromCore(Map? p) {
+  if (p == null) return const {};
+  final out = <String, Object?>{};
+  if (p['name'] is String) out['name'] = p['name'] as String;
+  if (p['color'] is String) out['color'] = p['color'] as String;
+  return out;
 }
 
 /// core::Task JSON → tasks 行业务列(pull 方向)。
