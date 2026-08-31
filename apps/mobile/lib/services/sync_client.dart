@@ -119,6 +119,28 @@ class SyncClient {
         'payload': coreProjectPayload(row, uid),
       });
     }
+    for (final row in await db.listPendingTags()) {
+      changes.add({
+        'id': _uuidChangeId(),
+        'device_id': deviceId,
+        'entity': 'tag',
+        'entity_id': row['id'] as String,
+        'revision': (row['revision'] as int?) ?? 1,
+        'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
+        'payload': coreTagPayload(row, uid),
+      });
+    }
+    for (final row in await db.listPendingTaskTags()) {
+      changes.add({
+        'id': _uuidChangeId(),
+        'device_id': deviceId,
+        'entity': 'task_tag',
+        'entity_id': row['task_id'] as String,
+        'revision': (row['revision'] as int?) ?? 1,
+        'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
+        'payload': coreTaskTagPayload(row, uid),
+      });
+    }
     for (final row in await db.listPendingSessions()) {
       changes.add({
         'id': _uuidChangeId(),
@@ -146,6 +168,8 @@ class SyncClient {
     int conflicted = 0;
     final taskIdsToMark = <String>[];
     final projectIdsToMark = <String>[];
+    final tagIdsToMark = <String>[];
+    final taskTagIdsToMark = <String>[];
     final sessionIdsToMark = <String>[];
     for (final r in results) {
       final outcome = _parseApplyOutcome(r);
@@ -158,6 +182,8 @@ class SyncClient {
           (switch (entity) {
             'pomodoro_session' => sessionIdsToMark,
             'project' => projectIdsToMark,
+            'tag' => tagIdsToMark,
+            'task_tag' => taskTagIdsToMark,
             _ => taskIdsToMark,
           })
               .add(entityId);
@@ -170,6 +196,8 @@ class SyncClient {
             (switch (winner['entity'] as String?) {
               'pomodoro_session' => sessionIdsToMark,
               'project' => projectIdsToMark,
+              'tag' => tagIdsToMark,
+              'task_tag' => taskTagIdsToMark,
               _ => taskIdsToMark,
             })
                 .add(entityId);
@@ -184,6 +212,12 @@ class SyncClient {
     }
     if (projectIdsToMark.isNotEmpty) {
       await db.markProjectsSynced(projectIdsToMark);
+    }
+    if (tagIdsToMark.isNotEmpty) {
+      await db.markTagsSynced(tagIdsToMark);
+    }
+    if (taskTagIdsToMark.isNotEmpty) {
+      await db.markTaskTagsSynced(taskTagIdsToMark);
     }
     if (sessionIdsToMark.isNotEmpty) {
       await db.markSessionsSynced(sessionIdsToMark);
@@ -211,6 +245,19 @@ class SyncClient {
         payload: payloadJson,
         fields: projectFieldsFromCore(payload as Map?),
       );
+    } else if (entity == 'tag') {
+      await db.applyRemoteTag(
+        id: entityId,
+        revision: revision,
+        updatedAtMs: updatedAtMs,
+        originDevice: originDevice,
+        userId: uid,
+        payload: payloadJson,
+        fields: tagFieldsFromCore(payload as Map?),
+      );
+    } else if (entity == 'task_tag') {
+      await _applyRemoteTaskTag(db, entityId, payload as Map?, revision,
+          updatedAtMs, originDevice, uid, payloadJson);
     } else if (entity == 'pomodoro_session') {
       await db.applyRemoteSession(
         id: entityId,
@@ -299,6 +346,28 @@ class SyncClient {
             fields: projectFieldsFromCore(change['payload'] as Map?),
           );
           applied += 1;
+        case 'tag':
+          final remote = _extractChangeTimestamps(change);
+          final local = await db.localTagCandidate(entityId);
+          if (local != null && _localWinsLww(local, remote)) continue;
+          await db.applyRemoteTag(
+            id: entityId,
+            revision: (change['revision'] as int?) ?? 1,
+            updatedAtMs: remote.updatedMs,
+            originDevice: remote.deviceId,
+            userId: uid,
+            payload: payloadJson,
+            fields: tagFieldsFromCore(change['payload'] as Map?),
+          );
+          applied += 1;
+        case 'task_tag':
+          final remote = _extractChangeTimestamps(change);
+          final local = await db.localTaskTagCandidate(entityId);
+          if (local != null && _localWinsLww(local, remote)) continue;
+          await _applyRemoteTaskTag(db, entityId, change['payload'] as Map?,
+              (change['revision'] as int?) ?? 1, remote.updatedMs,
+              remote.deviceId, uid, payloadJson);
+          applied += 1;
         case 'pomodoro_session':
           final remote = _extractChangeTimestamps(change);
           final local = await db.localSessionCandidate(entityId);
@@ -314,7 +383,7 @@ class SyncClient {
           );
           applied += 1;
         default:
-          // tag / task_tag / sub_task / motto / *_review:
+          // sub_task / motto / *_review:
           // 范围外,跳过不崩(cursor 照常推进,不重拉)。
           break;
       }
@@ -336,6 +405,34 @@ class SyncClient {
     final ts = DateTime.now();
     return '已同步 · ${_hm(ts)} · 推送 ${push.accepted}接受 · 拉取 ${pull.applied}应用';
   }
+}
+
+// --- task_tag 收敛 helper ----------------------------------------------------
+
+Future<void> _applyRemoteTaskTag(
+  AppDatabase db,
+  String taskId,
+  Map? payload,
+  int revision,
+  int updatedAtMs,
+  String originDevice,
+  String uid,
+  String payloadJson,
+) async {
+  final ids = (payload?['tag_ids'] as List?)
+          ?.map((e) => e.toString())
+          .where((e) => e.isNotEmpty)
+          .toList() ??
+      const <String>[];
+  await db.applyRemoteTaskTag(
+    taskId: taskId,
+    tagIds: ids,
+    revision: revision,
+    updatedAtMs: updatedAtMs,
+    originDevice: originDevice,
+    userId: uid,
+    payload: payloadJson,
+  );
 }
 
 // --- outcome 解码 ------------------------------------------------------------

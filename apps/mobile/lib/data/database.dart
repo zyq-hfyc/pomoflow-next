@@ -7,6 +7,7 @@ import 'package:sqflite/sqflite.dart';
 import '../models/project.dart';
 import '../models/session.dart';
 import '../models/task.dart';
+import '../services/sync_wire.dart' show uuidV4;
 
 /// 本轮 P3d-B-Phase-1 sqflite 落盘层 + P3d-B-Phase-2 同步位元数据。
 ///
@@ -47,7 +48,8 @@ class AppDatabase {
   /// schema v7 → v8:tasks 补 completed_at_ms 列(区间口径「完成任务」前置)。
   /// schema v8 → v9:tasks 补 pomodoro_duration + repeat 列(任务级计时参数)。
   /// schema v9 → v10:新建 projects 表(project 实体化,任务项目归属跨端)。
-  static const _schemaVersion = 10;
+  /// schema v10 → v11:新建 tags + task_tag_sync 表(标签跨端,对齐桌面表名)。
+  static const _schemaVersion = 11;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -100,6 +102,10 @@ class AppDatabase {
           if (oldVersion < 10) {
             await _v9ToV10(db);
           }
+          // v10 → v11:新建 tags + task_tag_sync 表。
+          if (oldVersion < 11) {
+            await _v10ToV11(db);
+          }
         },
       ),
     );
@@ -140,6 +146,8 @@ class AppDatabase {
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)');
     await _createSessionsTable(db);
     await _createProjectsTable(db);
+    await _createTagsTable(db);
+    await _createTaskTagSyncTable(db);
     await db.execute('''
       CREATE TABLE IF NOT EXISTS journals (
         id TEXT PRIMARY KEY,
@@ -277,6 +285,48 @@ class AppDatabase {
       db, 'tasks', 'ALTER TABLE tasks ADD COLUMN completed_at_ms INTEGER NOT NULL DEFAULT 0');
     await db.insert('meta', {'k': 'schema_version', 'v': '8'},
         conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// v10 → v11 升级:新建 tags + task_tag_sync 表(标签跨端)。
+  static Future<void> _v10ToV11(Database db) async {
+    await _createTagsTable(db);
+    await _createTaskTagSyncTable(db);
+    await db.insert('meta', {'k': 'schema_version', 'v': '11'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// tags:core::Tag 平铺子集(名字 + 颜色)。
+  static Future<void> _createTagsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS tags (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 1,
+        sync_state TEXT NOT NULL DEFAULT 'synced',
+        updated_at_ms INTEGER NOT NULL DEFAULT 0,
+        origin_device TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT ''
+      )
+    ''');
+  }
+
+  /// task_tag_sync:以 task_id 为键的标签集合整体 LWW(列名对齐桌面
+  /// sqlite.rs 同名表;tag_ids 存 csv,推送前排序去重消除顺序伪冲突)。
+  static Future<void> _createTaskTagSyncTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS task_tag_sync (
+        task_id TEXT PRIMARY KEY,
+        tag_ids TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 1,
+        sync_state TEXT NOT NULL DEFAULT 'synced',
+        updated_at_ms INTEGER NOT NULL DEFAULT 0,
+        origin_device TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT ''
+      )
+    ''');
   }
 
   /// v9 → v10 升级:新建 projects 表(project 实体化)。
@@ -839,6 +889,252 @@ class AppDatabase {
       columns: ['id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
       where: 'id = ?',
       whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  // === tags + task_tag_sync(P1 标签跨端)=======================================
+
+  /// 标签名 → 实体(轻量 record;tag 无独立模型)。
+  Future<({String id, String color})?> findTagByName(String name) async {
+    final rows = await _db.query(
+      'tags',
+      where: "name = ? AND sync_state != 'tombstone'",
+      whereArgs: [name],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return (
+      id: rows.first['id'] as String,
+      color: (rows.first['color'] as String?) ?? '',
+    );
+  }
+
+  /// 懒建标签(名 → 实体 id;无则建 pending 行)。返回 id。
+  Future<String> ensureTag({
+    required String name,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final found = await findTagByName(name);
+    if (found != null) return found.id;
+    final id = uuidV4();
+    await _db.insert('tags', {
+      'id': id,
+      'name': name,
+      'color': '',
+      'revision': 1,
+      'sync_state': 'pending',
+      'updated_at_ms': DateTime.now().millisecondsSinceEpoch,
+      'origin_device': originDevice,
+      'payload': '',
+      'user_id': userId,
+    });
+    return id;
+  }
+
+  Future<String?> findTagNameById(String id) async {
+    final rows = await _db.query(
+      'tags',
+      columns: ['name'],
+      where: "id = ? AND sync_state != 'tombstone'",
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['name'] as String?;
+  }
+
+  Future<List<Map<String, Object?>>> listPendingTags({int limit = 200}) async {
+    return _db.rawQuery(
+      '''SELECT id, name, color, revision, updated_at_ms,
+                origin_device, user_id, payload
+         FROM tags WHERE sync_state = 'pending'
+         ORDER BY updated_at_ms ASC LIMIT ?''',
+      [limit],
+    );
+  }
+
+  Future<void> applyRemoteTag({
+    required String id,
+    required int revision,
+    required int updatedAtMs,
+    required String originDevice,
+    required String userId,
+    required String payload,
+    required Map<String, Object?> fields,
+  }) async {
+    await _db.transaction((txn) async {
+      final exists = (await txn.query('tags',
+              where: 'id = ?', whereArgs: [id], limit: 1))
+          .isNotEmpty;
+      final row = <String, Object?>{
+        ...fields,
+        'revision': revision,
+        'updated_at_ms': updatedAtMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+        'payload': payload,
+        'sync_state': 'synced',
+      };
+      if (exists) {
+        await txn.update('tags', row, where: 'id = ?', whereArgs: [id]);
+      } else {
+        row['id'] = id;
+        await txn.insert('tags', row);
+      }
+    });
+  }
+
+  Future<void> markTagsSynced(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await _db.rawUpdate(
+      "UPDATE tags SET sync_state = 'synced' WHERE id IN ($placeholders)",
+      ids,
+    );
+  }
+
+  Future<Map<String, Object?>?> localTagCandidate(String id) async {
+    final rows = await _db.query(
+      'tags',
+      columns: ['id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  // --- task_tag_sync(以 task_id 为键的集合整体 LWW)--------------------------
+
+  /// mutator 维护:任务的标签名集合 → 懒解析 tag id → upsert task_tag_sync
+  /// 并标 pending。**变更检测**:集合与已存 csv 相同则不 bump(消除伪冲突)。
+  Future<void> syncTaskTagForTask({
+    required String taskId,
+    required List<String> tagNames,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final ids = <String>[];
+    for (final name in tagNames) {
+      if (name.isEmpty) continue;
+      ids.add(await ensureTag(
+        name: name,
+        originDevice: originDevice,
+        userId: userId,
+      ));
+    }
+    ids.sort();
+    final csv = ids.join(',');
+    final existing = await _db.query(
+      'task_tag_sync',
+      where: 'task_id = ?',
+      whereArgs: [taskId],
+      limit: 1,
+    );
+    if (existing.isNotEmpty && (existing.first['tag_ids'] as String?) == csv) {
+      return; // 集合未变,不产生伪变更
+    }
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (existing.isEmpty) {
+      await _db.insert('task_tag_sync', {
+        'task_id': taskId,
+        'tag_ids': csv,
+        'revision': 1,
+        'sync_state': 'pending',
+        'updated_at_ms': nowMs,
+        'origin_device': originDevice,
+        'payload': '',
+        'user_id': userId,
+      });
+    } else {
+      await _db.update(
+        'task_tag_sync',
+        {
+          'tag_ids': csv,
+          'revision': ((existing.first['revision'] as int?) ?? 1) + 1,
+          'sync_state': 'pending',
+          'updated_at_ms': nowMs,
+          'origin_device': originDevice,
+          'user_id': userId,
+        },
+        where: 'task_id = ?',
+        whereArgs: [taskId],
+      );
+    }
+  }
+
+  Future<List<Map<String, Object?>>> listPendingTaskTags(
+      {int limit = 200}) async {
+    return _db.rawQuery(
+      '''SELECT task_id, tag_ids, revision, updated_at_ms,
+                origin_device, user_id, payload
+         FROM task_tag_sync WHERE sync_state = 'pending'
+         ORDER BY updated_at_ms ASC LIMIT ?''',
+      [limit],
+    );
+  }
+
+  /// pull 收敛:tag_ids 集合 → 名字 join 回 tasks.tags_csv(展示列)+
+  /// task_tag_sync 行标 synced。
+  Future<void> applyRemoteTaskTag({
+    required String taskId,
+    required List<String> tagIds,
+    required int revision,
+    required int updatedAtMs,
+    required String originDevice,
+    required String userId,
+    required String payload,
+  }) async {
+    final names = <String>[];
+    for (final id in tagIds) {
+      final name = await findTagNameById(id);
+      if (name != null) names.add(name);
+    }
+    await _db.transaction((txn) async {
+      await txn.update(
+        'tasks',
+        {'tags_csv': names.join(',')},
+        where: 'id = ?',
+        whereArgs: [taskId],
+      );
+      final existing = await txn.query('task_tag_sync',
+          where: 'task_id = ?', whereArgs: [taskId], limit: 1);
+      final row = {
+        'tag_ids': tagIds.join(','),
+        'revision': revision,
+        'updated_at_ms': updatedAtMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+        'payload': payload,
+        'sync_state': 'synced',
+      };
+      if (existing.isEmpty) {
+        await txn.insert('task_tag_sync', {'task_id': taskId, ...row});
+      } else {
+        await txn
+            .update('task_tag_sync', row, where: 'task_id = ?', whereArgs: [taskId]);
+      }
+    });
+  }
+
+  Future<void> markTaskTagsSynced(List<String> taskIds) async {
+    if (taskIds.isEmpty) return;
+    final placeholders = List.filled(taskIds.length, '?').join(',');
+    await _db.rawUpdate(
+      "UPDATE task_tag_sync SET sync_state = 'synced' WHERE task_id IN ($placeholders)",
+      taskIds,
+    );
+  }
+
+  Future<Map<String, Object?>?> localTaskTagCandidate(String taskId) async {
+    final rows = await _db.query(
+      'task_tag_sync',
+      columns: ['task_id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
+      where: 'task_id = ?',
+      whereArgs: [taskId],
       limit: 1,
     );
     return rows.isEmpty ? null : rows.first;

@@ -42,7 +42,7 @@ void main() {
         'ended_at_ms', 'is_completed', 'created_at_ms', 'revision',
         'sync_state', 'updated_at_ms', 'origin_device', 'payload', 'user_id',
       ]));
-      expect(await db.getMeta('schema_version'), '10');
+      expect(await db.getMeta('schema_version'), '11');
     } finally {
       await db.close();
     }
@@ -155,7 +155,7 @@ void main() {
           .rawQuery('PRAGMA table_info(pomodoro_sessions)');
       final v6cols = await db.raw.rawQuery('PRAGMA table_info(tasks)');
       expect(v6cols.map((r) => r['name']), contains('deleted_at_ms'));
-      expect(await db.getMeta('schema_version'), '10');
+      expect(await db.getMeta('schema_version'), '11');
     } finally {
       await db.close();
       await tmp.delete(recursive: true);

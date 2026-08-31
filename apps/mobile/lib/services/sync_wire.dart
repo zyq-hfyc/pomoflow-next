@@ -189,6 +189,52 @@ Map<String, Object?> projectFieldsFromCore(Map? p) {
   return out;
 }
 
+/// tags pending 行 → core::Tag JSON(push 方向;字段与 Project 同形)。
+Map<String, Object?> coreTagPayload(Map<String, Object?> row, String userId) {
+  final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
+  return {
+    'id': row['id'],
+    'user_id': userId,
+    'name': row['name'] ?? '',
+    'color': (row['color'] as String?) ?? '',
+    'created_at': msToIso(updatedAtMs),
+    'revision': (row['revision'] as int?) ?? 1,
+    'deleted_at': null,
+    'updated_at': msToIso(updatedAtMs),
+  };
+}
+
+/// core::Tag JSON → tags 行业务列(pull 方向)。
+Map<String, Object?> tagFieldsFromCore(Map? p) {
+  if (p == null) return const {};
+  final out = <String, Object?>{};
+  if (p['name'] is String) out['name'] = p['name'] as String;
+  if (p['color'] is String) out['color'] = p['color'] as String;
+  return out;
+}
+
+/// task_tag_sync pending 行 → core::TaskTagLink JSON(push 方向)。
+/// entity_id = task_id(sync key);tag_ids 排序去重后发(消除顺序伪冲突)。
+Map<String, Object?> coreTaskTagPayload(
+    Map<String, Object?> row, String userId) {
+  final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
+  final csv = (row['tag_ids'] as String?) ?? '';
+  final ids = csv
+      .split(',')
+      .map((e) => e.trim())
+      .where((e) => e.isNotEmpty)
+      .toSet()
+      .toList()
+    ..sort();
+  return {
+    'task_id': row['task_id'],
+    'tag_ids': ids,
+    'user_id': userId,
+    'revision': (row['revision'] as int?) ?? 1,
+    'updated_at': msToIso(updatedAtMs),
+  };
+}
+
 /// core::Task JSON → tasks 行业务列(pull 方向)。
 /// 只放**确定**的字段;project/tags/subtask 在 core Task 无对应,不覆盖本地列。
 Map<String, Object?> taskFieldsFromCore(Map? p) {

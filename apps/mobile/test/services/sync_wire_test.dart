@@ -152,6 +152,38 @@ void main() {
       expect(f['color'], '#4D8EE0');
     });
 
+    test('tag payload round-trip', () {
+      final p = coreTagPayload(<String, Object?>{
+        'id': 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01',
+        'name': '生活',
+        'color': '#40B884',
+        'revision': 1,
+        'updated_at_ms': 1746149400123,
+      }, 'u-8');
+      expect(p['name'], '生活');
+      expect(p['color'], '#40B884');
+      expect(p['deleted_at'], isNull);
+      final f = tagFieldsFromCore(<String, dynamic>{'name': '工作', 'color': ''});
+      expect(f['name'], '工作');
+    });
+
+    test('task_tag payload: csv ids sorted deduped; entity key = task_id', () {
+      final p = coreTaskTagPayload(<String, Object?>{
+        'task_id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa99',
+        'tag_ids': 't-b,t-a,t-b,',
+        'revision': 2,
+        'updated_at_ms': 1746149400123,
+      }, 'u-8');
+      expect(p['task_id'], 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa99');
+      expect(p['tag_ids'], ['t-a', 't-b']); // 排序 + 去重 + 空段剔除
+      expect(p['revision'], 2);
+      // 空集合 = 清除关联(tombstone 语义,ADR-010)。
+      final empty = coreTaskTagPayload(<String, Object?>{
+        'task_id': 'x', 'tag_ids': '', 'revision': 1, 'updated_at_ms': 1,
+      }, 'u');
+      expect(empty['tag_ids'], isEmpty);
+    });
+
     test('pomodoro_duration/repeat round-trip both ways', () {
       final p = coreTaskPayload(<String, Object?>{
         'id': 'd9', 'title': '带参数', 'completed': 0,

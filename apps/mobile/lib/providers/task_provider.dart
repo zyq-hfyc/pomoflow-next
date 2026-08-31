@@ -498,17 +498,33 @@ class TaskProvider extends ChangeNotifier {
   /// + origin_device/user_id 盖章(setSyncContext 注入的身份)。
   /// payload 不在此写 —— push 时由 SyncClient 从行内业务列现构造(见
   /// sync_client.dart 注释)。web 平台不调(demo() 内存)。
+  /// 顺带维护 task_tag_sync(标签名集合 → 实体 id 集合;变更检测不伪 bump)。
   Future<void> _markPending(AppDatabase db, String id) async {
+    final originDevice = _deviceIdProvider?.call() ?? '';
+    final userId = _userIdProvider?.call() ?? '';
     try {
       await db.markTaskPending(
         id: id,
-        originDevice: _deviceIdProvider?.call() ?? '',
-        userId: _userIdProvider?.call() ?? '',
+        originDevice: originDevice,
+        userId: userId,
       );
     } on Exception catch (e) {
       // 不再静默吞 —— schema 级错误会以静默失效告终(v5 缺列事故教训),
       // 打日志让回归可见,但也不阻塞 UI 主流程。
       debugPrint('markTaskPending failed for $id: $e');
+    }
+    try {
+      final i = _tasks.indexWhere((t) => t.id == id);
+      if (i >= 0) {
+        await db.syncTaskTagForTask(
+          taskId: id,
+          tagNames: _tasks[i].tags,
+          originDevice: originDevice,
+          userId: userId,
+        );
+      }
+    } on Exception catch (e) {
+      debugPrint('syncTaskTagForTask failed for $id: $e');
     }
   }
 
