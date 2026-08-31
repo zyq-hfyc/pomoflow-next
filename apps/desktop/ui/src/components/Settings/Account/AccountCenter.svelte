@@ -274,6 +274,23 @@
     }
   }
 
+  /** 按设备下线:该设备可能有多个活跃 token(每次登录一个),逐个 revoke。 */
+  async function kickDevice(ids: number[]) {
+    if (busy) return;
+    busy = true;
+    error = null;
+    try {
+      for (const id of ids) {
+        await authRevokeSession(id);
+      }
+      sessions = await authListSessions();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function revokeOthers() {
     if (busy) return;
     busy = true;
@@ -294,6 +311,35 @@
     return fmt(t.settings.account.lastChanged, {
       time: new Date(profile.password_changed_ms).toLocaleDateString(),
     });
+  });
+
+  /** 会话(token)→ 设备聚合:同 device_id 只留最新一条(current 优先),
+   *  否则每次登录一行 token,同一设备在"在线设备"里出现多条(与 mobile
+   *  account_page 同款修复)。ids = 该设备全部 session id(下线用)。 */
+  const devices = $derived.by(() => {
+    if (!sessions) return [];
+    const byDev = new Map<
+      string,
+      { ss: (typeof sessions)[number]; ids: number[] }
+    >();
+    for (const ss of sessions) {
+      const key = ss.device_id ?? "";
+      const cur = byDev.get(key);
+      if (!cur) {
+        byDev.set(key, { ss, ids: ss.id != null ? [ss.id] : [] });
+      } else {
+        if (ss.id != null) cur.ids.push(ss.id);
+        if (
+          ss.current ||
+          (!cur.ss.current && (ss.created_ms ?? 0) > (cur.ss.created_ms ?? 0))
+        ) {
+          cur.ss = ss;
+        }
+      }
+    }
+    const list = [...byDev.values()];
+    list.sort((a, b) => (b.ss.created_ms ?? 0) - (a.ss.created_ms ?? 0));
+    return list;
   });
 
   // 头像随共享状态;设备区进入时拉会话(prop section 响应式)
@@ -571,35 +617,35 @@
             </button>
           </div>
         {:else}
-          {#each sessions as ss (ss.id)}
+          {#each devices as d (d.ss.device_id)}
             <div class="device-row">
               <div class="device-icon"><MonitorSmartphone size={18} /></div>
               <div class="device-info">
                 <div class="device-name">
-                  {ss.device_name || (ss.device_id ?? "?").slice(0, 8)}
-                  {#if ss.current}<span class="device-current">{t.settings.sync.currentDevice}</span>{/if}
+                  {d.ss.device_name || (d.ss.device_id ?? "?").slice(0, 8)}
+                  {#if d.ss.current}<span class="device-current">{t.settings.sync.currentDevice}</span>{/if}
                 </div>
                 <div class="device-meta">
                   {fmt(t.settings.account.deviceAt, {
-                    time: ss.created_ms ? new Date(ss.created_ms).toLocaleString() : "—",
+                    time: d.ss.created_ms ? new Date(d.ss.created_ms).toLocaleString() : "—",
                   })}
                 </div>
               </div>
-              {#if !ss.current}
-                <button type="button" class="ac-btn-sm" disabled={busy} onclick={() => void kick(ss.id)}>
+              {#if !d.ss.current}
+                <button type="button" class="ac-btn-sm" disabled={busy} onclick={() => void kickDevice(d.ids)}>
                   {t.settings.sync.kick}
                 </button>
               {/if}
             </div>
           {/each}
-          {#if sessions.length <= 1}
+          {#if devices.length <= 1}
             <div class="device-row">
               <div class="device-meta">{t.settings.sync.noOtherDevices}</div>
             </div>
           {/if}
         {/if}
       </div>
-      {#if sessions && sessions.some((s) => !s.current)}
+      {#if devices.length > 0 && devices.some((d) => !d.ss.current)}
         <div class="devices-footer">
           <button type="button" class="ac-btn-danger-sm" disabled={busy} onclick={() => void revokeOthers()}>
             {t.settings.sync.revokeOthers}
