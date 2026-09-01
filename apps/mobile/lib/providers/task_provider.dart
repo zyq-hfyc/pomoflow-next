@@ -29,6 +29,9 @@ class TaskProvider extends ChangeNotifier {
     final demoSessions = _demoSessions(DateTime.now());
     return p
       .._tasks.addAll([
+        // 单番茄时长(pomodoroDuration)对齐桌面语义:每任务独立设置。
+        // 0 = 回退到全局 focusMinutes(用户自改后会变);25 锁定「这任务
+        // 一个番茄就是 25 分钟」,避免 Bug2:种子无值 → 全局 5min → 显 5min。
         PfTask(
           id: demo.$1.id1,
           title: '撰写产品需求文档',
@@ -38,6 +41,7 @@ class TaskProvider extends ChangeNotifier {
           estimatedPomos: 4,
           completedPomos: 2,
           subtaskCount: 2,
+          pomodoroDuration: 25,
         ),
         PfTask(
           id: demo.$1.id2,
@@ -46,6 +50,7 @@ class TaskProvider extends ChangeNotifier {
           project: '研发',
           dueLabel: '今天',
           estimatedPomos: 2,
+          pomodoroDuration: 25,
         ),
         PfTask(
           id: demo.$1.id3,
@@ -54,6 +59,7 @@ class TaskProvider extends ChangeNotifier {
           project: '运营',
           dueLabel: '明天',
           estimatedPomos: 1,
+          pomodoroDuration: 25,
         ),
         PfTask(
           id: demo.$1.id4,
@@ -64,6 +70,7 @@ class TaskProvider extends ChangeNotifier {
           estimatedPomos: 3,
           completedPomos: 0,
           subtaskCount: 1,
+          pomodoroDuration: 25,
         ),
         PfTask(
           id: demo.$1.id5,
@@ -72,6 +79,7 @@ class TaskProvider extends ChangeNotifier {
           project: '日常',
           dueLabel: '每天',
           estimatedPomos: 1,
+          pomodoroDuration: 25,
         ),
       ])
       .._journals.addAll([
@@ -174,6 +182,28 @@ class TaskProvider extends ChangeNotifier {
           await db.insertSubtask(sub);
         }
       }
+    }
+
+    // 老库种子 pomodoroDuration 兜底:Bug2 反馈,seed 任务未显式设
+    // pomodoroDuration(0)→ 回退全局 focusMinutes(用户可能改 5 min)
+    // → 点「开始」显 5min。种子任务存在且 pomodoroDuration==0 → 一
+    // 次性补成 25(幂等:已设即跳过),并刷新内存 + 触发通知。
+    bool bumped = false;
+    for (final t in seedDemo._tasks) {
+      final live = p._tasks.firstWhere(
+        (x) => x.id == t.id,
+        orElse: () => t,
+      );
+      if (live.id == t.id && live.pomodoroDuration == 0 && t.pomodoroDuration > 0) {
+        await db.updateTask(live.copyWith(pomodoroDuration: t.pomodoroDuration));
+        bumped = true;
+      }
+    }
+    if (bumped) {
+      final all = await db.listTasks();
+      p._tasks
+        ..clear()
+        ..addAll(all);
     }
 
     if (seeded == null) {
