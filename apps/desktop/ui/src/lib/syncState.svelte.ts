@@ -12,6 +12,12 @@ const state = $state({
   syncing: false,
   /** 监听器是否已初始化(防重复) */
   initialized: false,
+  /**
+   * 同步完成计数(自动/手动各 +1)。页面 $effect 依赖它 → 同步落库后
+   * 自动重拉(手账日格/任务列表此前只在切月或操作后刷新,同步下来的
+   * 数据要等重进页面才可见 —— 真机反馈"0901 日格未展示"的根因)。
+   */
+  rev: 0,
 });
 
 export function syncState() {
@@ -25,10 +31,17 @@ export function initSyncListener() {
   void onAutoSync((e) => {
     state.last = e;
     state.syncing = false;
+    if (e.ok) state.rev++;
   });
 }
 
 /** 手动同步开始时标记(UI 调用)。 */
 export function markSyncing() {
   state.syncing = true;
+}
+
+/** 手动同步成功后调用(UI 调用):清 syncing + bump rev 触发页面刷新。 */
+export function markSyncDone() {
+  state.syncing = false;
+  state.rev++;
 }

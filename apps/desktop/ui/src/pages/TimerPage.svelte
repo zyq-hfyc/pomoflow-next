@@ -32,6 +32,7 @@
     clearCompletionMessage,
   } from "../lib/timer.svelte";
   import { getSettings } from "../lib/settings.svelte";
+  import { syncState } from "../lib/syncState.svelte";
   import { timerFilter } from "../lib/timerFilter.svelte";
   import * as api from "../lib/api";
   import type {
@@ -144,6 +145,7 @@
   // 路由切换不丢);这里只监听 todayCount 变化刷新页面数据。
   $effect(() => {
     void timer.todayCount;
+    void syncState().rev; // 同步完成 → 侧栏任务/时长重拉
     void refreshTodayMinutes();
     void refreshSidebarTasks();
     void refreshAllActiveTasks();

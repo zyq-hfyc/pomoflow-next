@@ -24,7 +24,7 @@
     type SessionInfo,
   } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
-  import { markSyncing } from "../../lib/syncState.svelte";
+  import { markSyncing, markSyncDone } from "../../lib/syncState.svelte";
   import { navigate } from "../../lib/router.svelte";
 
   const t = $derived(getDict());
@@ -182,6 +182,7 @@
     resultText = "";
     try {
       const r = await syncNow();
+      markSyncDone(); // bump rev → 手账/任务/计时页面自动重拉
       resultText = fmt(t.settings.sync.result, {
         pushed: r.pushed,
         pulled: r.pulled,

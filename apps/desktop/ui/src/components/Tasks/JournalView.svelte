@@ -82,6 +82,7 @@
   $effect(() => {
     const y = year;
     const m = month;
+    void syncState().rev; // 同步完成 → 重拉本月复盘/任务(真机反馈的日格不刷新)
     void load(y, m);
   });
 

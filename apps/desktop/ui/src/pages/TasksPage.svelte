@@ -19,6 +19,7 @@
   //   - start 任务跳到 /timer（同步 P1.7 timer 行为）
 
   import { onMount } from "svelte";
+  import { syncState } from "../lib/syncState.svelte";
   import { Clock, Target, CircleCheck, ChartColumn } from "lucide-svelte";
   import { save } from "@tauri-apps/plugin-dialog";
   import * as api from "../lib/api";
@@ -294,7 +295,12 @@
     }
   }
 
-  onMount(refresh);
+  // onMount(refresh) → $effect:额外依赖 syncState().rev,
+  // 同步落库后(手动/自动)任务列表自动重拉。
+  $effect(() => {
+    void syncState().rev;
+    void refresh();
+  });
 
   function nowIso(): string {
     return new Date().toISOString();
