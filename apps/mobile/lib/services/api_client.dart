@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
 
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -129,14 +133,16 @@ class ApiClient {
 
     http.Response resp;
     try {
-      resp = await _send(
+      resp = await _sendWithRetry(
         method,
         uri,
         headers,
         body,
-      ).timeout(const Duration(seconds: 15));
-    } catch (e) {
-      throw ApiException('网络错误: $e');
+        // 401 之前不应重试所有 5xx —— 让 retry helper 重试 transient,
+        // 401 后的二轮 send 单独处理。
+      );
+    } on _TransientFailure catch (e) {
+      throw ApiException('网络错误: ${e.cause}');
     }
 
     // 401 → refresh → 重试一次
@@ -144,12 +150,11 @@ class ApiClient {
       final refreshed = await _tryRefresh();
       if (refreshed) {
         headers['Authorization'] = 'Bearer $_accessToken';
-        resp = await _send(
-          method,
-          uri,
-          headers,
-          body,
-        ).timeout(const Duration(seconds: 15));
+        try {
+          resp = await _sendWithRetry(method, uri, headers, body);
+        } on _TransientFailure catch (e) {
+          throw ApiException('网络错误: ${e.cause}');
+        }
       } else {
         await clearTokens();
         throw ApiException('登录已过期,请重新登录');
@@ -203,6 +208,70 @@ class ApiClient {
     }
   }
 
+  /// 带指数退避的发送:仅对 transient 错误重试(超时/SocketException/5xx/429),
+  /// 4xx(除 408/429)立即返不重试,4xx 通常是业务错误。
+  /// 退避:500ms → 2s → 8s,每次 ±25% jitter(避免多设备同节拍雪崩)。
+  static const _maxAttempts = 3;
+  static const _baseDelays = [
+    Duration(milliseconds: 500),
+    Duration(seconds: 2),
+    Duration(seconds: 8),
+  ];
+  static final _rng = Random();
+
+  Future<http.Response> _sendWithRetry(
+    String method,
+    Uri uri,
+    Map<String, String> headers,
+    Map<String, dynamic>? body,
+  ) async {
+    Object? lastCause;
+    for (var attempt = 0; attempt < _maxAttempts; attempt++) {
+      http.Response? resp;
+      try {
+        resp = await _send(method, uri, headers, body)
+            .timeout(const Duration(seconds: 15));
+      } on TimeoutException catch (e) {
+        lastCause = e;
+      } on SocketException catch (e) {
+        lastCause = e;
+      } on http.ClientException catch (e) {
+        // connection refused / DNS / TLS —— 同质网络错误
+        lastCause = e;
+      } catch (e) {
+        // 其它意外(FormatException 等)不重试,直接抛给上层
+        rethrow;
+      }
+      // 网络层异常 → 走重试分支
+      if (resp == null) {
+        await _sleepBackoff(attempt);
+        continue;
+      }
+      // 拿到 resp:仅 5xx / 408 / 429 重试
+      if (_isRetryableStatus(resp.statusCode)) {
+        lastCause = 'HTTP ${resp.statusCode}';
+        await _sleepBackoff(attempt);
+        continue;
+      }
+      // 其余(2xx/3xx/4xx 非重试)直接返
+      return resp;
+    }
+    throw _TransientFailure(lastCause ?? '重试耗尽');
+  }
+
+  Future<void> _sleepBackoff(int attempt) async {
+    if (attempt >= _maxAttempts - 1) return;
+    final base = _baseDelays[attempt];
+    final jitterMs =
+        (base.inMilliseconds * 0.25 * (_rng.nextDouble() * 2 - 1)).round();
+    await Future.delayed(
+      Duration(milliseconds: base.inMilliseconds + jitterMs),
+    );
+  }
+
+  bool _isRetryableStatus(int code) =>
+      code == 408 || code == 429 || (code >= 500 && code < 600);
+
   /// 尝试 refresh 轮换;成功返回 true 并更新内存 token。
   Future<bool> _tryRefresh() async {
     final refresh = await _storage.read(key: _keyRefresh);
@@ -222,10 +291,27 @@ class ApiClient {
         json['refresh_token'] as String,
       );
       return true;
-    } catch (_) {
+    } on TimeoutException catch (e) {
+      debugPrint('[api] refresh 超时: $e');
+      return false;
+    } on SocketException catch (e) {
+      debugPrint('[api] refresh 网络错: $e');
+      return false;
+    } catch (e, st) {
+      // 此前 catch(_) 静默 —— refresh body 解析失败 / 服务器下发改 schema
+      // 都会被吞,看不到线索。改 debugPrint + stackTrace。
+      debugPrint('[api] refresh 异常: $e\n$st');
       return false;
     }
   }
+}
+
+/// 内部信号:retry 耗尽后抛出,让 _request 包成 ApiException。
+class _TransientFailure implements Exception {
+  _TransientFailure(this.cause);
+  final Object cause;
+  @override
+  String toString() => cause.toString();
 }
 
 /// API 异常(message 可直接展示给用户)。

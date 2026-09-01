@@ -538,6 +538,14 @@ class AppDatabase {
 
   Future<void> setLastSeq(int seq) => setMeta('last_seq', '$seq');
 
+  /// 防回退写:仅当新 seq 大于当前才落库(stale/duplicate 响应不会拉低进度)。
+  /// 服务端 cursor 单调,但客户端 reorder / 重试时可能拿到旧的响应,
+  /// 旧 setLastSeq 无条件覆盖会让下次拉取从更早位置重放 → 浪费带宽 + 重复 apply。
+  Future<void> setLastSeqIfHigher(int seq) async {
+    final cur = await getLastSeq();
+    if (seq > cur) await setMeta('last_seq', '$seq');
+  }
+
   Future<int> nextId() async {
     final cur = int.tryParse((await getMeta('next_id')) ?? '100') ?? 100;
     final nx = cur + 1;

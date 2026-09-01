@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -27,6 +30,13 @@ import 'sync_client.dart';
 ///
 /// 周期与开关:对齐桌面端语义 —— **默认关**,「我的」页开关打开;
 /// 周期 30 分钟(Android 系统最小 15 分钟,取桌面默认值)。
+///
+/// **workmanager 返回值语义**(重要):executeTask 返 `Future<bool>`:
+/// - true  → workmanager 视为成功,不触发 BackoffPolicy 重试;
+/// - false → 触发 BackoffPolicy.exponential,下个最小周期 5 分钟再试。
+/// 此前 catch-all + 返 true:网络瞬断 → 等 30 分钟下次周期才再试;改成
+/// 区分 transient(网络/超时 → false 触发 workmanager 退避)与
+/// permanent(API 业务错误如 401/400 → true,不浪费 workmanager 重试)。
 const kSyncTaskName = 'pomoflow-periodic-sync';
 const kAutoSyncPref = 'auto_sync_enabled';
 const kSyncInterval = Duration(minutes: 30);
@@ -36,14 +46,25 @@ void callbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
     try {
       await _runBackgroundSyncOnce();
-    } on Exception catch (e) {
-      // 单次失败不抛(workmanager 返 false 会触发退避重试,和下个周期
-      // 语义重复);下个周期自然重试。日志供 logcat 排查。
-      debugPrint('[bg-sync] $task failed: $e');
-    } catch (e) {
-      debugPrint('[bg-sync] $task error: $e');
+      return true;
+    } on ApiException catch (e) {
+      // 业务错误(401/403/404/400/业务信封 message)→ permanent → 返 true
+      // 不触发 workmanager 退避;下个正常周期再说(用户重登后即可恢复)。
+      debugPrint('[bg-sync] api fail (permanent): $e');
+      return true;
+    } on TimeoutException catch (e) {
+      // transient → false 触发 workmanager 退避(5 分钟)
+      debugPrint('[bg-sync] timeout (transient): $e');
+      return false;
+    } on SocketException catch (e) {
+      // transient → false
+      debugPrint('[bg-sync] network (transient): $e');
+      return false;
+    } catch (e, st) {
+      // 未知错误兜底:不再静默吞,留 stack 供 logcat 排查。
+      debugPrint('[bg-sync] unexpected: $e\n$st');
+      return false;
     }
-    return true;
   });
 }
 

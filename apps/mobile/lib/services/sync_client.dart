@@ -367,13 +367,17 @@ class SyncClient {
   }
 
   /// 拉服务端 `seq > since`(首次 = 0)的变更,与本地 LWW 比较。
-  Future<({int pulled, int applied})> pullOnce() async {
-    if (kIsWeb) return (pulled: 0, applied: 0);
+  /// **逐行隔离**:一行 applyRemote* 抛错(DB 锁/磁盘满/字段漂移)只跳过本行,
+  /// 不影响后续变更与 cursor 推进 —— 服务端已下发数据,跳过一行的代价只是
+  /// 那一行的本地视图过期,下个周期服务端还会重发(只要 cursor 不推进过它)。
+  /// 注:cursor 推进按 nextCursor 推进,不会因为 skip 单行而卡死整体。
+  Future<({int pulled, int applied, int skipped})> pullOnce() async {
+    if (kIsWeb) return (pulled: 0, applied: 0, skipped: 0);
     final db = _db;
     final deviceId = (_deviceIdProvider ?? (() => 'flutter-unknown'))();
     final uid = (_userIdProvider ?? (() => null))();
     if (uid == null || uid.isEmpty) {
-      return (pulled: 0, applied: 0);
+      return (pulled: 0, applied: 0, skipped: 0);
     }
     final cursor = await db.getLastSeq();
     final body = {
@@ -386,144 +390,167 @@ class SyncClient {
         const <Map<String, dynamic>>[];
     final nextCursor = resp['next_cursor'] as Map<String, dynamic>?;
     int applied = 0;
+    int skipped = 0;
     for (final change in changes) {
-      final entity = change['entity'] as String? ?? '';
       final entityId = change['entity_id'] as String? ?? '';
       if (entityId.isEmpty) continue;
-      final payloadJson = jsonEncode(change['payload']);
-      switch (entity) {
-        case 'task':
-          final remote = _extractChangeTimestamps(change);
-          final local = await db.localTaskCandidate(entityId);
-          if (local != null && _localWinsLww(local, remote)) continue;
-          final fields = taskFieldsFromCore(change['payload'] as Map?);
-          // project_id → 本地项目名(实体一般先于/同批到达;查不到留空,
-          // 后续该任务任一次同步更新会自愈补上)。
-          final pid = (change['payload'] as Map?)?['project_id'] as String?;
-          if (pid != null && pid.isNotEmpty) {
-            final proj = await db.localProjectCandidate(pid);
-            final name = proj == null
-                ? null
-                : await db.findProjectNameById(pid);
-            if (name != null && name.isNotEmpty) fields['project'] = name;
-          }
-          await db.applyRemoteTask(
-            id: entityId,
-            revision: (change['revision'] as int?) ?? 1,
-            updatedAtMs: remote.updatedMs,
-            originDevice: remote.deviceId,
-            userId: uid,
-            payload: payloadJson,
-            fields: fields,
-          );
-          applied += 1;
-        case 'project':
-          final remote = _extractChangeTimestamps(change);
-          final local = await db.localProjectCandidate(entityId);
-          if (local != null && _localWinsLww(local, remote)) continue;
-          await db.applyRemoteProject(
-            id: entityId,
-            revision: (change['revision'] as int?) ?? 1,
-            updatedAtMs: remote.updatedMs,
-            originDevice: remote.deviceId,
-            userId: uid,
-            payload: payloadJson,
-            fields: projectFieldsFromCore(change['payload'] as Map?),
-          );
-          applied += 1;
-        case 'tag':
-          final remote = _extractChangeTimestamps(change);
-          final local = await db.localTagCandidate(entityId);
-          if (local != null && _localWinsLww(local, remote)) continue;
-          await db.applyRemoteTag(
-            id: entityId,
-            revision: (change['revision'] as int?) ?? 1,
-            updatedAtMs: remote.updatedMs,
-            originDevice: remote.deviceId,
-            userId: uid,
-            payload: payloadJson,
-            fields: tagFieldsFromCore(change['payload'] as Map?),
-          );
-          applied += 1;
-        case 'task_tag':
-          final remote = _extractChangeTimestamps(change);
-          final local = await db.localTaskTagCandidate(entityId);
-          if (local != null && _localWinsLww(local, remote)) continue;
-          await _applyRemoteTaskTag(db, entityId, change['payload'] as Map?,
-              (change['revision'] as int?) ?? 1, remote.updatedMs,
-              remote.deviceId, uid, payloadJson);
-          applied += 1;
-        case 'sub_task':
-          final remote = _extractChangeTimestamps(change);
-          final local = await db.localSubtaskCandidate(entityId);
-          if (local != null && _localWinsLww(local, remote)) continue;
-          await db.applyRemoteSubtask(
-            id: entityId,
-            revision: (change['revision'] as int?) ?? 1,
-            updatedAtMs: remote.updatedMs,
-            originDevice: remote.deviceId,
-            userId: uid,
-            payload: payloadJson,
-            fields: subtaskFieldsFromCore(change['payload'] as Map?),
-          );
-          applied += 1;
-        case 'daily_review':
-          final remote = _extractChangeTimestamps(change);
-          final local = await db.localDailyReviewCandidate(entityId);
-          if (local != null && _localWinsLww(local, remote)) continue;
-          final date = (change['payload'] as Map?)?['date'] as String?;
-          if (date != null && date.isNotEmpty) {
-            await db.applyRemoteDailyReview(
-              id: entityId,
-              date: date,
-              revision: (change['revision'] as int?) ?? 1,
-              updatedAtMs: remote.updatedMs,
-              originDevice: remote.deviceId,
-              userId: uid,
-              payload: payloadJson,
-              fields: dailyReviewFieldsFromCore(change['payload'] as Map?),
-            );
-            applied += 1;
-          }
-        case 'motto':
-          final remote = _extractChangeTimestamps(change);
-          final local = await db.localMottoCandidate(entityId);
-          if (local != null && _localWinsLww(local, remote)) continue;
-          await db.applyRemoteMotto(
-            id: entityId,
-            revision: (change['revision'] as int?) ?? 1,
-            updatedAtMs: remote.updatedMs,
-            originDevice: remote.deviceId,
-            userId: uid,
-            payload: payloadJson,
-            fields: mottoFieldsFromCore(change['payload'] as Map?),
-          );
-          applied += 1;
-        case 'pomodoro_session':
-          final remote = _extractChangeTimestamps(change);
-          final local = await db.localSessionCandidate(entityId);
-          if (local != null && _localWinsLww(local, remote)) continue;
-          await db.applyRemoteSession(
-            id: entityId,
-            revision: (change['revision'] as int?) ?? 1,
-            updatedAtMs: remote.updatedMs,
-            originDevice: remote.deviceId,
-            userId: uid,
-            payload: payloadJson,
-            fields: sessionFieldsFromCore(change['payload'] as Map?),
-          );
-          applied += 1;
-        default:
-          // weekly/monthly review 范围外(mobile 只有日复盘),
-          // 跳过不崩(cursor 照常推进,不重拉)。
-          break;
+      try {
+        if (await _applyChange(db, change, uid, deviceId)) applied += 1;
+      } catch (e, st) {
+        // 单行失败:日志供 logcat 排查,跳过本行,后续继续。
+        // cursor 不受影响 —— 服务端会重发这行(只要下次 still 在
+        // nextCursor 之前;若该 change 的 seq 已纳入 nextCursor,
+        // 下次拉会从其后开始,本行就丢了;对单行容错足够,
+        // 整体同步不被阻断才是首要目标)。
+        skipped += 1;
+        debugPrint(
+          '[sync] pull apply failed entity=${change['entity']} '
+          'id=$entityId: $e\n$st',
+        );
       }
     }
     if (nextCursor != null) {
       final nextSeq = (nextCursor['last_seq'] as int?) ?? 0;
-      await db.setLastSeq(nextSeq);
+      await db.setLastSeqIfHigher(nextSeq);
     }
-    return (pulled: changes.length, applied: applied);
+    return (pulled: changes.length, applied: applied, skipped: skipped);
+  }
+
+  /// 应用单条变更;返回 true = 已应用,false = 本地胜出跳过 / 实体不在范围。
+  Future<bool> _applyChange(
+    AppDatabase db,
+    Map<String, dynamic> change,
+    String uid,
+    String deviceId,
+  ) async {
+    final entity = change['entity'] as String? ?? '';
+    final entityId = change['entity_id'] as String? ?? '';
+    final payloadJson = jsonEncode(change['payload']);
+    switch (entity) {
+      case 'task':
+        final remote = _extractChangeTimestamps(change);
+        final local = await db.localTaskCandidate(entityId);
+        if (local != null && _localWinsLww(local, remote)) return false;
+        final fields = taskFieldsFromCore(change['payload'] as Map?);
+        // project_id → 本地项目名(实体一般先于/同批到达;查不到留空,
+        // 后续该任务任一次同步更新会自愈补上)。
+        final pid = (change['payload'] as Map?)?['project_id'] as String?;
+        if (pid != null && pid.isNotEmpty) {
+          final proj = await db.localProjectCandidate(pid);
+          final name =
+              proj == null ? null : await db.findProjectNameById(pid);
+          if (name != null && name.isNotEmpty) fields['project'] = name;
+        }
+        await db.applyRemoteTask(
+          id: entityId,
+          revision: (change['revision'] as int?) ?? 1,
+          updatedAtMs: remote.updatedMs,
+          originDevice: remote.deviceId,
+          userId: uid,
+          payload: payloadJson,
+          fields: fields,
+        );
+        return true;
+      case 'project':
+        final remote = _extractChangeTimestamps(change);
+        final local = await db.localProjectCandidate(entityId);
+        if (local != null && _localWinsLww(local, remote)) return false;
+        await db.applyRemoteProject(
+          id: entityId,
+          revision: (change['revision'] as int?) ?? 1,
+          updatedAtMs: remote.updatedMs,
+          originDevice: remote.deviceId,
+          userId: uid,
+          payload: payloadJson,
+          fields: projectFieldsFromCore(change['payload'] as Map?),
+        );
+        return true;
+      case 'tag':
+        final remote = _extractChangeTimestamps(change);
+        final local = await db.localTagCandidate(entityId);
+        if (local != null && _localWinsLww(local, remote)) return false;
+        await db.applyRemoteTag(
+          id: entityId,
+          revision: (change['revision'] as int?) ?? 1,
+          updatedAtMs: remote.updatedMs,
+          originDevice: remote.deviceId,
+          userId: uid,
+          payload: payloadJson,
+          fields: tagFieldsFromCore(change['payload'] as Map?),
+        );
+        return true;
+      case 'task_tag':
+        final remote = _extractChangeTimestamps(change);
+        final local = await db.localTaskTagCandidate(entityId);
+        if (local != null && _localWinsLww(local, remote)) return false;
+        await _applyRemoteTaskTag(db, entityId, change['payload'] as Map?,
+            (change['revision'] as int?) ?? 1, remote.updatedMs,
+            remote.deviceId, uid, payloadJson);
+        return true;
+      case 'sub_task':
+        final remote = _extractChangeTimestamps(change);
+        final local = await db.localSubtaskCandidate(entityId);
+        if (local != null && _localWinsLww(local, remote)) return false;
+        await db.applyRemoteSubtask(
+          id: entityId,
+          revision: (change['revision'] as int?) ?? 1,
+          updatedAtMs: remote.updatedMs,
+          originDevice: remote.deviceId,
+          userId: uid,
+          payload: payloadJson,
+          fields: subtaskFieldsFromCore(change['payload'] as Map?),
+        );
+        return true;
+      case 'daily_review':
+        final remote = _extractChangeTimestamps(change);
+        final local = await db.localDailyReviewCandidate(entityId);
+        if (local != null && _localWinsLww(local, remote)) return false;
+        final date = (change['payload'] as Map?)?['date'] as String?;
+        if (date == null || date.isEmpty) return false;
+        await db.applyRemoteDailyReview(
+          id: entityId,
+          date: date,
+          revision: (change['revision'] as int?) ?? 1,
+          updatedAtMs: remote.updatedMs,
+          originDevice: remote.deviceId,
+          userId: uid,
+          payload: payloadJson,
+          fields: dailyReviewFieldsFromCore(change['payload'] as Map?),
+        );
+        return true;
+      case 'motto':
+        final remote = _extractChangeTimestamps(change);
+        final local = await db.localMottoCandidate(entityId);
+        if (local != null && _localWinsLww(local, remote)) return false;
+        await db.applyRemoteMotto(
+          id: entityId,
+          revision: (change['revision'] as int?) ?? 1,
+          updatedAtMs: remote.updatedMs,
+          originDevice: remote.deviceId,
+          userId: uid,
+          payload: payloadJson,
+          fields: mottoFieldsFromCore(change['payload'] as Map?),
+        );
+        return true;
+      case 'pomodoro_session':
+        final remote = _extractChangeTimestamps(change);
+        final local = await db.localSessionCandidate(entityId);
+        if (local != null && _localWinsLww(local, remote)) return false;
+        await db.applyRemoteSession(
+          id: entityId,
+          revision: (change['revision'] as int?) ?? 1,
+          updatedAtMs: remote.updatedMs,
+          originDevice: remote.deviceId,
+          userId: uid,
+          payload: payloadJson,
+          fields: sessionFieldsFromCore(change['payload'] as Map?),
+        );
+        return true;
+      default:
+        // weekly/monthly review 范围外(mobile 只有日复盘),
+        // 跳过不崩(cursor 照常推进,不重拉)。
+        return false;
+    }
   }
 
   /// 编排:先 pull 后 push。返回适合 `me_page` 显示的字符串。
@@ -534,7 +561,9 @@ class SyncClient {
     final pull = await pullOnce();
     final push = await pushOnce();
     final ts = DateTime.now();
-    return '已同步 · ${_hm(ts)} · 推送 ${push.accepted}接受 · 拉取 ${pull.applied}应用';
+    final skipSuffix = pull.skipped > 0 ? ' · 跳过 ${pull.skipped}' : '';
+    return '已同步 · ${_hm(ts)} · 推送 ${push.accepted}接受 · '
+        '拉取 ${pull.applied}应用$skipSuffix';
   }
 }
 
