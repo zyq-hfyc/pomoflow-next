@@ -235,6 +235,40 @@ Map<String, Object?> coreTaskTagPayload(
   };
 }
 
+/// subtasks pending 行 → core::SubTask JSON(push 方向)。
+Map<String, Object?> coreSubtaskPayload(
+    Map<String, Object?> row, String userId) {
+  final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
+  final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
+  return {
+    'id': row['id'],
+    'user_id': userId,
+    'task_id': row['task_id'],
+    'title': row['title'] ?? '',
+    'is_completed': ((row['is_completed'] as int?) ?? 0) == 1,
+    'position': (row['position'] as int?) ?? 0,
+    'created_at': msToIso(updatedAtMs),
+    'revision': (row['revision'] as int?) ?? 1,
+    'deleted_at': deletedAtMs > 0 ? msToIso(deletedAtMs) : null,
+    'updated_at': msToIso(updatedAtMs),
+  };
+}
+
+/// core::SubTask JSON → subtasks 行业务列(pull 方向)。
+Map<String, Object?> subtaskFieldsFromCore(Map? p) {
+  if (p == null) return const {};
+  final out = <String, Object?>{};
+  if (p['title'] is String) out['title'] = p['title'] as String;
+  if (p['is_completed'] is bool) {
+    out['is_completed'] = (p['is_completed'] as bool) ? 1 : 0;
+  }
+  if (p['position'] is int) out['position'] = p['position'] as int;
+  if (p['deleted_at'] is String?) {
+    out['deleted_at_ms'] = isoToMs((p['deleted_at'] as String?) ?? '');
+  }
+  return out;
+}
+
 /// core::Task JSON → tasks 行业务列(pull 方向)。
 /// 只放**确定**的字段;project/tags/subtask 在 core Task 无对应,不覆盖本地列。
 Map<String, Object?> taskFieldsFromCore(Map? p) {

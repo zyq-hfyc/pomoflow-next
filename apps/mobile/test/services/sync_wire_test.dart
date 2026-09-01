@@ -184,6 +184,39 @@ void main() {
       expect(empty['tag_ids'], isEmpty);
     });
 
+    test('subtask payload round-trip incl tombstone', () {
+      final live = coreSubtaskPayload(<String, Object?>{
+        'id': 'ffffffff-ffff-4fff-8fff-ffffffffff01',
+        'task_id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01',
+        'title': '先写大纲',
+        'is_completed': 1,
+        'position': 2,
+        'revision': 3,
+        'updated_at_ms': 1746149400123,
+      }, 'u-9');
+      expect(live['task_id'], 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01');
+      expect(live['is_completed'], isTrue);
+      expect(live['position'], 2);
+      expect(live['deleted_at'], isNull);
+
+      final tomb = coreSubtaskPayload(<String, Object?>{
+        'id': 'x', 'task_id': 't', 'title': '已删',
+        'deleted_at_ms': 1746149400123,
+      }, 'u');
+      expect(tomb['deleted_at'], msToIso(1746149400123));
+
+      final f = subtaskFieldsFromCore(<String, dynamic>{
+        'title': '改了标题',
+        'is_completed': false,
+        'position': 5,
+        'deleted_at': null,
+      });
+      expect(f['title'], '改了标题');
+      expect(f['is_completed'], 0);
+      expect(f['position'], 5);
+      expect(f['deleted_at_ms'], 0);
+    });
+
     test('pomodoro_duration/repeat round-trip both ways', () {
       final p = coreTaskPayload(<String, Object?>{
         'id': 'd9', 'title': '带参数', 'completed': 0,

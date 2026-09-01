@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/subtask.dart';
 import '../models/task.dart';
 import '../providers/nav_provider.dart';
 import '../providers/task_provider.dart';
@@ -229,14 +230,63 @@ String _coreToRepeatLabel(String core) =>
         .firstOrNull ??
     '不重复';
 
-/// 任务详情 Sheet(§5.3):kv 行 + 开始专注/编辑 + 删除(软删除,二次确认)。
+/// 任务详情 Sheet(§5.3):kv 行 + 子任务清单(勾选/新增/删)+ 开始专注/
+/// 编辑 + 删除(软删除,二次确认)。
 void showTaskDetailSheet(BuildContext context, PfTask task) {
   final theme = Theme.of(context);
   pfSheet(
     context,
     title: '任务详情',
     heightFactor: .72,
-    body: (ctx) => Column(
+    body: (ctx) => _TaskDetailBody(task: task, theme: theme),
+  );
+}
+
+class _TaskDetailBody extends StatefulWidget {
+  const _TaskDetailBody({required this.task, required this.theme});
+
+  final PfTask task;
+  final ThemeData theme;
+
+  @override
+  State<_TaskDetailBody> createState() => _TaskDetailBodyState();
+}
+
+class _TaskDetailBodyState extends State<_TaskDetailBody> {
+  List<PfSubTask>? _subtasks;
+  final _subtaskCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSubtasks();
+  }
+
+  @override
+  void dispose() {
+    _subtaskCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadSubtasks() async {
+    final list = await context.read<TaskProvider>().subtasksFor(widget.task.id);
+    if (mounted) setState(() => _subtasks = list);
+  }
+
+  Future<void> _addSubtask() async {
+    final title = _subtaskCtrl.text.trim();
+    if (title.isEmpty) return;
+    _subtaskCtrl.clear();
+    await context.read<TaskProvider>().addSubtask(widget.task.id, title);
+    await _loadSubtasks();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final task = widget.task;
+    final theme = widget.theme;
+    final subtasks = _subtasks;
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _kv('标题', task.title, theme),
@@ -256,8 +306,27 @@ void showTaskDetailSheet(BuildContext context, PfTask task) {
         _kv('番茄', '🍅 ${task.pomoLabel}', theme),
         _kv('提醒', '无', theme),
         _kv('重复', '不重复', theme),
-        const SizedBox(height: 14),
-        const PfNote(text: '描述、子任务清单勾选将在任务编辑器后续批次补齐。'),
+        const SizedBox(height: 12),
+        // === 子任务清单(P1 实体化;随同步跨端)===
+        _SubtaskSection(
+          subtasks: subtasks,
+          controller: _subtaskCtrl,
+          onAdd: _addSubtask,
+          onToggle: (s) async {
+            await context.read<TaskProvider>().toggleSubtask(
+                  s.id,
+                  taskId: task.id,
+                );
+            await _loadSubtasks();
+          },
+          onDelete: (s) async {
+            await context.read<TaskProvider>().deleteSubtask(
+                  s.id,
+                  taskId: task.id,
+                );
+            await _loadSubtasks();
+          },
+        ),
         const SizedBox(height: 14),
         Row(
           children: [
@@ -266,7 +335,7 @@ void showTaskDetailSheet(BuildContext context, PfTask task) {
                 label: '▶ 开始专注',
                 height: 50,
                 onTap: () {
-                  Navigator.pop(ctx);
+                  Navigator.pop(context);
                   context.read<TaskProvider>().setFocusTask(task.id);
                   context.read<NavProvider>().select(0);
                 },
@@ -278,8 +347,8 @@ void showTaskDetailSheet(BuildContext context, PfTask task) {
                 label: '编辑',
                 height: 50,
                 onTap: () {
-                  Navigator.pop(ctx);
-                  showTaskCreateSheet(ctx, editTask: task);
+                  Navigator.pop(context);
+                  showTaskCreateSheet(context, editTask: task);
                 },
               ),
             ),
@@ -288,8 +357,132 @@ void showTaskDetailSheet(BuildContext context, PfTask task) {
         const SizedBox(height: 10),
         _DeleteTaskButton(task: task),
       ],
-    ),
-  );
+    );
+  }
+}
+
+/// 子任务区:勾选列表 + 新增输入行 + 行内删除。
+class _SubtaskSection extends StatelessWidget {
+  const _SubtaskSection({
+    required this.subtasks,
+    required this.controller,
+    required this.onAdd,
+    required this.onToggle,
+    required this.onDelete,
+  });
+
+  final List<PfSubTask>? subtasks;
+  final TextEditingController controller;
+  final VoidCallback onAdd;
+  final void Function(PfSubTask) onToggle;
+  final void Function(PfSubTask) onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final list = subtasks;
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.pfSurface2,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: theme.pfLine),
+      ),
+      child: Column(
+        children: [
+          if (list == null)
+            const Padding(
+              padding: EdgeInsets.all(14),
+              child: SizedBox(
+                height: 16,
+                width: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else ...[
+            for (final s in list)
+              Row(
+                children: [
+                  GestureDetector(
+                    onTap: () => onToggle(s),
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      width: 20,
+                      height: 20,
+                      margin: const EdgeInsets.only(left: 12),
+                      decoration: BoxDecoration(
+                        color: s.isCompleted
+                            ? theme.colorScheme.tertiary
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: s.isCompleted
+                              ? theme.colorScheme.tertiary
+                              : theme.pfLine,
+                          width: 2,
+                        ),
+                      ),
+                      child: s.isCompleted
+                          ? const Icon(Icons.check, size: 12, color: Colors.white)
+                          : null,
+                    ),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Text(
+                        s.title,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          decoration: s.isCompleted
+                              ? TextDecoration.lineThrough
+                              : null,
+                          color: s.isCompleted
+                              ? theme.pfMuted
+                              : theme.colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.close,
+                        size: 16, color: theme.pfMuted),
+                    onPressed: () => onDelete(s),
+                    tooltip: '删除子任务',
+                  ),
+                ],
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+              child: Row(
+                children: [
+                  Icon(Icons.add, size: 16, color: theme.pfBrand700),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: TextField(
+                      controller: controller,
+                      onSubmitted: (_) => onAdd(),
+                      style: const TextStyle(fontSize: 13.5),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                        hintText: '添加子任务,回车确认',
+                        hintStyle:
+                            TextStyle(fontSize: 12.5, color: theme.pfMuted),
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: onAdd,
+                    child: const Text('添加', style: TextStyle(fontSize: 12.5)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 /// 通栏 danger 删除按钮 + 二次确认(软删除,多端同步收敛)。

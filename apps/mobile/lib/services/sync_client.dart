@@ -141,6 +141,17 @@ class SyncClient {
         'payload': coreTaskTagPayload(row, uid),
       });
     }
+    for (final row in await db.listPendingSubtasks()) {
+      changes.add({
+        'id': _uuidChangeId(),
+        'device_id': deviceId,
+        'entity': 'sub_task',
+        'entity_id': row['id'] as String,
+        'revision': (row['revision'] as int?) ?? 1,
+        'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
+        'payload': coreSubtaskPayload(row, uid),
+      });
+    }
     for (final row in await db.listPendingSessions()) {
       changes.add({
         'id': _uuidChangeId(),
@@ -170,6 +181,7 @@ class SyncClient {
     final projectIdsToMark = <String>[];
     final tagIdsToMark = <String>[];
     final taskTagIdsToMark = <String>[];
+    final subtaskIdsToMark = <String>[];
     final sessionIdsToMark = <String>[];
     for (final r in results) {
       final outcome = _parseApplyOutcome(r);
@@ -184,6 +196,7 @@ class SyncClient {
             'project' => projectIdsToMark,
             'tag' => tagIdsToMark,
             'task_tag' => taskTagIdsToMark,
+            'sub_task' => subtaskIdsToMark,
             _ => taskIdsToMark,
           })
               .add(entityId);
@@ -198,6 +211,7 @@ class SyncClient {
               'project' => projectIdsToMark,
               'tag' => tagIdsToMark,
               'task_tag' => taskTagIdsToMark,
+              'sub_task' => subtaskIdsToMark,
               _ => taskIdsToMark,
             })
                 .add(entityId);
@@ -218,6 +232,9 @@ class SyncClient {
     }
     if (taskTagIdsToMark.isNotEmpty) {
       await db.markTaskTagsSynced(taskTagIdsToMark);
+    }
+    if (subtaskIdsToMark.isNotEmpty) {
+      await db.markSubtasksSynced(subtaskIdsToMark);
     }
     if (sessionIdsToMark.isNotEmpty) {
       await db.markSessionsSynced(sessionIdsToMark);
@@ -258,6 +275,16 @@ class SyncClient {
     } else if (entity == 'task_tag') {
       await _applyRemoteTaskTag(db, entityId, payload as Map?, revision,
           updatedAtMs, originDevice, uid, payloadJson);
+    } else if (entity == 'sub_task') {
+      await db.applyRemoteSubtask(
+        id: entityId,
+        revision: revision,
+        updatedAtMs: updatedAtMs,
+        originDevice: originDevice,
+        userId: uid,
+        payload: payloadJson,
+        fields: subtaskFieldsFromCore(payload as Map?),
+      );
     } else if (entity == 'pomodoro_session') {
       await db.applyRemoteSession(
         id: entityId,
@@ -368,6 +395,20 @@ class SyncClient {
               (change['revision'] as int?) ?? 1, remote.updatedMs,
               remote.deviceId, uid, payloadJson);
           applied += 1;
+        case 'sub_task':
+          final remote = _extractChangeTimestamps(change);
+          final local = await db.localSubtaskCandidate(entityId);
+          if (local != null && _localWinsLww(local, remote)) continue;
+          await db.applyRemoteSubtask(
+            id: entityId,
+            revision: (change['revision'] as int?) ?? 1,
+            updatedAtMs: remote.updatedMs,
+            originDevice: remote.deviceId,
+            userId: uid,
+            payload: payloadJson,
+            fields: subtaskFieldsFromCore(change['payload'] as Map?),
+          );
+          applied += 1;
         case 'pomodoro_session':
           final remote = _extractChangeTimestamps(change);
           final local = await db.localSessionCandidate(entityId);
@@ -383,7 +424,7 @@ class SyncClient {
           );
           applied += 1;
         default:
-          // sub_task / motto / *_review:
+          // motto / *_review:
           // 范围外,跳过不崩(cursor 照常推进,不重拉)。
           break;
       }

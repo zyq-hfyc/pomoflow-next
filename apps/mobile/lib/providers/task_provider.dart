@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../data/database.dart';
 import '../models/session.dart';
+import '../models/subtask.dart';
 import '../models/task.dart';
 import '../services/sync_wire.dart';
 
@@ -332,6 +333,92 @@ class TaskProvider extends ChangeNotifier {
     if (db == null) return;
     await db.purgeTask(id);
     await reloadFromDb();
+  }
+
+  // === 子任务(P1 实体化;详情 sheet 按需读写)=================================
+
+  /// 任务的子任务(未删,position 升序);web demo 无 DB 返回空。
+  Future<List<PfSubTask>> subtasksFor(String taskId) async {
+    final db = _db;
+    if (db == null) return const [];
+    return db.listSubtasksForTask(taskId);
+  }
+
+  /// 添加子任务(直接以 pending 落行)。
+  Future<void> addSubtask(String taskId, String title) async {
+    final t = title.trim();
+    if (t.isEmpty) return;
+    final db = _db;
+    if (db == null) return;
+    final existing = await db.listSubtasksForTask(taskId);
+    final s = PfSubTask(
+      id: uuidV4(),
+      taskId: taskId,
+      title: t,
+      position: existing.isEmpty ? 0 : existing.last.position + 1,
+      syncMeta: PfSyncMeta(
+        syncState: 'pending',
+        updatedAt: DateTime.now(),
+        originDevice: _deviceIdProvider?.call() ?? '',
+        userId: _userIdProvider?.call() ?? '',
+      ),
+    );
+    await db.insertSubtask(s);
+    await _refreshSubtaskCnt(taskId);
+    notifyListeners();
+  }
+
+  /// 勾选/取消子任务。
+  Future<void> toggleSubtask(String subtaskId, {required String taskId}) async {
+    final db = _db;
+    if (db == null) return;
+    final rows = await db.raw.query(
+      'subtasks',
+      columns: ['is_completed'],
+      where: 'id = ?',
+      whereArgs: [subtaskId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return;
+    final next = ((rows.first['is_completed'] as int?) ?? 0) == 1 ? 0 : 1;
+    await db.markSubtaskPending(
+      id: subtaskId,
+      fields: {'is_completed': next},
+      originDevice: _deviceIdProvider?.call() ?? '',
+      userId: _userIdProvider?.call() ?? '',
+    );
+    notifyListeners();
+  }
+
+  /// 删除子任务(软删除墓碑,走 LWW 通道)。
+  Future<void> deleteSubtask(String subtaskId, {required String taskId}) async {
+    final db = _db;
+    if (db == null) return;
+    await db.softDeleteSubtask(
+      id: subtaskId,
+      originDevice: _deviceIdProvider?.call() ?? '',
+      userId: _userIdProvider?.call() ?? '',
+    );
+    await _refreshSubtaskCnt(taskId);
+    notifyListeners();
+  }
+
+  /// 同步 tasks.subtask_cnt 冗余列(本地显示用;core Task 无子任务数
+  /// 字段,子任务变化**不** bump 任务 revision —— 不产生任务伪推送)。
+  Future<void> _refreshSubtaskCnt(String taskId) async {
+    final db = _db;
+    if (db == null) return;
+    final n = await db.activeSubtaskCount(taskId);
+    await db.raw.update(
+      'tasks',
+      {'subtask_cnt': n},
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
+    final i = _tasks.indexWhere((t) => t.id == taskId);
+    if (i >= 0) {
+      _tasks[i] = _tasks[i].copyWith(subtaskCount: n);
+    }
   }
 
   /// 编辑任务(业务字段):内存替换 + DB 更新 + 标 pending(LWW 常规通道)。

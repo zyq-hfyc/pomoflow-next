@@ -6,6 +6,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../models/project.dart';
 import '../models/session.dart';
+import '../models/subtask.dart';
 import '../models/task.dart';
 import '../services/sync_wire.dart' show uuidV4;
 
@@ -49,7 +50,8 @@ class AppDatabase {
   /// schema v8 → v9:tasks 补 pomodoro_duration + repeat 列(任务级计时参数)。
   /// schema v9 → v10:新建 projects 表(project 实体化,任务项目归属跨端)。
   /// schema v10 → v11:新建 tags + task_tag_sync 表(标签跨端,对齐桌面表名)。
-  static const _schemaVersion = 11;
+  /// schema v11 → v12:新建 subtasks 表(子任务实体 + 详情勾选 UI)。
+  static const _schemaVersion = 12;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -106,6 +108,10 @@ class AppDatabase {
           if (oldVersion < 11) {
             await _v10ToV11(db);
           }
+          // v11 → v12:新建 subtasks 表。
+          if (oldVersion < 12) {
+            await _v11ToV12(db);
+          }
         },
       ),
     );
@@ -148,6 +154,7 @@ class AppDatabase {
     await _createProjectsTable(db);
     await _createTagsTable(db);
     await _createTaskTagSyncTable(db);
+    await _createSubtasksTable(db);
     await db.execute('''
       CREATE TABLE IF NOT EXISTS journals (
         id TEXT PRIMARY KEY,
@@ -287,10 +294,41 @@ class AppDatabase {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// v11 → v12 升级:新建 subtasks 表(子任务实体)。
+  static Future<void> _v11ToV12(Database db) async {
+    await _createSubtasksTable(db);
+    await db.insert('meta', {'k': 'schema_version', 'v': '12'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// subtasks:core::SubTask 对齐(N:1 Task;position 同 task 内升序)。
+  static Future<void> _createSubtasksTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS subtasks (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        is_completed INTEGER NOT NULL DEFAULT 0,
+        position INTEGER NOT NULL DEFAULT 0,
+        revision INTEGER NOT NULL DEFAULT 1,
+        sync_state TEXT NOT NULL DEFAULT 'synced',
+        updated_at_ms INTEGER NOT NULL DEFAULT 0,
+        deleted_at_ms INTEGER NOT NULL DEFAULT 0,
+        origin_device TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT ''
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id)',
+    );
+  }
+
   /// v10 → v11 升级:新建 tags + task_tag_sync 表(标签跨端)。
   static Future<void> _v10ToV11(Database db) async {
     await _createTagsTable(db);
     await _createTaskTagSyncTable(db);
+    await _createSubtasksTable(db);
     await db.insert('meta', {'k': 'schema_version', 'v': '11'},
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
@@ -1139,6 +1177,179 @@ class AppDatabase {
     );
     return rows.isEmpty ? null : rows.first;
   }
+
+  // === subtasks(P1 子任务实体)=================================================
+
+  /// 任务的子任务(未删,position 升序)。
+  Future<List<PfSubTask>> listSubtasksForTask(String taskId) async {
+    final rows = await _db.query(
+      'subtasks',
+      where: 'task_id = ? AND deleted_at_ms = 0',
+      whereArgs: [taskId],
+      orderBy: 'position ASC, id ASC',
+    );
+    return rows.map(_subtaskFromRow).toList();
+  }
+
+  Future<void> insertSubtask(PfSubTask s) async {
+    await _db.insert('subtasks', {
+      'id': s.id,
+      'task_id': s.taskId,
+      'title': s.title,
+      'is_completed': s.isCompleted ? 1 : 0,
+      'position': s.position,
+      'revision': s.syncMeta.revision,
+      'sync_state': s.syncMeta.syncState,
+      'updated_at_ms': s.syncMeta.updatedAt?.millisecondsSinceEpoch ?? 0,
+      'origin_device': s.syncMeta.originDevice,
+      'payload': '',
+      'user_id': s.syncMeta.userId,
+    });
+  }
+
+  /// 勾选/编辑统一入口:bump revision + 标 pending。
+  /// sqflite 无原生列自增更新,读 revision 再写(本地单写者,
+  /// 竞态窗口可忽略;与 markTaskPending 同模式)。
+  Future<void> markSubtaskPending({
+    required String id,
+    Map<String, Object?> fields = const {},
+    required String originDevice,
+    required String userId,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final rows = await _db.query('subtasks',
+        columns: ['revision'], where: 'id = ?', whereArgs: [id], limit: 1);
+    if (rows.isEmpty) return;
+    await _db.update(
+      'subtasks',
+      {
+        ...fields,
+        'revision': ((rows.first['revision'] as int?) ?? 1) + 1,
+        'sync_state': 'pending',
+        'updated_at_ms': nowMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// 软删除子任务(墓碑 + bump revision,与任务软删同通道)。
+  Future<void> softDeleteSubtask({
+    required String id,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final rows = await _db.query('subtasks',
+        columns: ['revision'], where: 'id = ?', whereArgs: [id], limit: 1);
+    await _db.update(
+      'subtasks',
+      {
+        'deleted_at_ms': nowMs,
+        'revision': ((rows.first['revision'] as int?) ?? 1) + 1,
+        'sync_state': 'pending',
+        'updated_at_ms': nowMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// 任务的未删子任务数(冗余列 tasks.subtask_cnt 的维护源)。
+  Future<int> activeSubtaskCount(String taskId) async {
+    final rows = await _db.rawQuery(
+      'SELECT COUNT(*) AS c FROM subtasks WHERE task_id = ? AND deleted_at_ms = 0',
+      [taskId],
+    );
+    return (rows.first['c'] as int?) ?? 0;
+  }
+
+  // --- ChangeLogStore ---
+
+  Future<List<Map<String, Object?>>> listPendingSubtasks(
+      {int limit = 200}) async {
+    return _db.rawQuery(
+      '''SELECT id, task_id, title, is_completed, position,
+                revision, updated_at_ms, deleted_at_ms,
+                origin_device, user_id, payload
+         FROM subtasks WHERE sync_state = 'pending'
+         ORDER BY updated_at_ms ASC LIMIT ?''',
+      [limit],
+    );
+  }
+
+  Future<void> applyRemoteSubtask({
+    required String id,
+    required int revision,
+    required int updatedAtMs,
+    required String originDevice,
+    required String userId,
+    required String payload,
+    required Map<String, Object?> fields,
+  }) async {
+    await _db.transaction((txn) async {
+      final exists = (await txn.query('subtasks',
+              where: 'id = ?', whereArgs: [id], limit: 1))
+          .isNotEmpty;
+      final row = <String, Object?>{
+        ...fields,
+        'revision': revision,
+        'updated_at_ms': updatedAtMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+        'payload': payload,
+        'sync_state': 'synced',
+      };
+      if (exists) {
+        await txn.update('subtasks', row, where: 'id = ?', whereArgs: [id]);
+      } else {
+        row['id'] = id;
+        await txn.insert('subtasks', row);
+      }
+    });
+  }
+
+  Future<void> markSubtasksSynced(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await _db.rawUpdate(
+      "UPDATE subtasks SET sync_state = 'synced' WHERE id IN ($placeholders)",
+      ids,
+    );
+  }
+
+  Future<Map<String, Object?>?> localSubtaskCandidate(String id) async {
+    final rows = await _db.query(
+      'subtasks',
+      columns: ['id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  PfSubTask _subtaskFromRow(Map<String, Object?> r) => PfSubTask(
+        id: r['id'] as String,
+        taskId: r['task_id'] as String,
+        title: (r['title'] as String?) ?? '',
+        isCompleted: ((r['is_completed'] as int?) ?? 0) == 1,
+        position: (r['position'] as int?) ?? 0,
+        syncMeta: PfSyncMeta(
+          revision: (r['revision'] as int?) ?? 1,
+          updatedAt: r['updated_at_ms'] != null &&
+                  (r['updated_at_ms'] as int) > 0
+              ? DateTime.fromMillisecondsSinceEpoch(r['updated_at_ms'] as int)
+              : null,
+          originDevice: (r['origin_device'] as String?) ?? '',
+          syncState: (r['sync_state'] as String?) ?? 'synced',
+          userId: (r['user_id'] as String?) ?? '',
+        ),
+      );
 
   // === journals ================================================================
   // PfJournal.id 字符串化已在 models/task.dart 完成;schema v3 不动 journals
