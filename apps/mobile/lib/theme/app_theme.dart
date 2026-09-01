@@ -82,6 +82,9 @@ ThemeData _build(Brightness b) {
         fontWeight: FontWeight.w500,
       ),
       behavior: SnackBarBehavior.floating,
+      // 底部避让悬浮胶囊 Dock(§1.5 nav-h 74 + 安全区 ≈ 100):
+      // floating 默认贴底(margin bottom 10)会压住 Dock,挡住导航操作。
+      insetPadding: const EdgeInsets.fromLTRB(16, 0, 16, 112),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(PfRadii.sm),
       ),
