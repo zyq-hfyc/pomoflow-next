@@ -217,6 +217,61 @@ void main() {
       expect(f['deleted_at_ms'], 0);
     });
 
+    test('description round-trip: no longer clobbered with empty string', () {
+      final p = coreTaskPayload(<String, Object?>{
+        'id': 'desc1', 'title': '带描述',
+        'description': '桌面写的验收标准',
+      }, 'u');
+      expect(p['description'], '桌面写的验收标准');
+      // 缺列(极老行)回退空串,不再有覆盖隐患的主路径。
+      final f = taskFieldsFromCore(<String, dynamic>{
+        'description': '远端描述',
+      });
+      expect(f['description'], '远端描述');
+    });
+
+    test('daily review payload round-trip', () {
+      final p = coreDailyReviewPayload(<String, Object?>{
+        'id': 'rrrrrrrr-rrrr-4rrr-8rrr-rrrrrrrrrr01',
+        'date': '2026-09-01',
+        'content': '今天完成三个番茄',
+        'revision': 2,
+        'updated_at_ms': 1746149400123,
+      }, 'u');
+      expect(p['date'], '2026-09-01');
+      expect(p['content'], '今天完成三个番茄');
+      expect(p['deleted_at'], isNull);
+
+      final f = dailyReviewFieldsFromCore(<String, dynamic>{
+        'content': '远端复盘内容',
+        'deleted_at': null,
+      });
+      expect(f['content'], '远端复盘内容');
+      expect(f['deleted_at_ms'], 0);
+    });
+
+    test('motto payload round-trip', () {
+      final p = coreMottoPayload(<String, Object?>{
+        'id': 'mmmmmmmm-mmmm-4mmm-8mmm-mmmmmmmmmm01',
+        'text': '种一棵树最好的时间是十年前',
+        'author': '谚语',
+        'revision': 1,
+        'updated_at_ms': 1746149400123,
+      }, 'u');
+      expect(p['text'], '种一棵树最好的时间是十年前');
+      expect(p['author'], '谚语');
+      final anon = coreMottoPayload(<String, Object?>{
+        'id': 'm2', 'text': '匿名格言', 'author': '',
+      }, 'u');
+      expect(anon['author'], isNull);
+
+      final f = mottoFieldsFromCore(<String, dynamic>{
+        'text': '远端格言', 'author': null,
+      });
+      expect(f['text'], '远端格言');
+      expect(f['author'], '');
+    });
+
     test('pomodoro_duration/repeat round-trip both ways', () {
       final p = coreTaskPayload(<String, Object?>{
         'id': 'd9', 'title': '带参数', 'completed': 0,

@@ -110,7 +110,8 @@ Map<String, Object?> coreTaskPayload(
     'id': row['id'],
     'user_id': userId,
     'title': row['title'] ?? '',
-    'description': '',
+    // P0 修复:此前恒发空串 —— 桌面写的描述被 mobile 编辑覆盖丢失。
+    'description': (row['description'] as String?) ?? '',
     'project_id': (projectId != null && projectId.isNotEmpty)
         ? projectId
         : null,
@@ -269,12 +270,73 @@ Map<String, Object?> subtaskFieldsFromCore(Map? p) {
   return out;
 }
 
+/// daily_reviews pending 行 → core::DailyReview JSON(push 方向)。
+Map<String, Object?> coreDailyReviewPayload(
+    Map<String, Object?> row, String userId) {
+  final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
+  final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
+  return {
+    'id': row['id'],
+    'user_id': userId,
+    'date': row['date'],
+    'content': row['content'] ?? '',
+    'revision': (row['revision'] as int?) ?? 1,
+    'deleted_at': deletedAtMs > 0 ? msToIso(deletedAtMs) : null,
+    'updated_at': msToIso(updatedAtMs),
+  };
+}
+
+/// core::DailyReview JSON → 行列(pull 方向;date 由 applyRemote 单独传)。
+Map<String, Object?> dailyReviewFieldsFromCore(Map? p) {
+  if (p == null) return const {};
+  final out = <String, Object?>{};
+  if (p['content'] is String) out['content'] = p['content'] as String;
+  if (p['deleted_at'] is String?) {
+    out['deleted_at_ms'] = isoToMs((p['deleted_at'] as String?) ?? '');
+  }
+  return out;
+}
+
+/// mottos pending 行 → core::Motto JSON(push 方向;mobile 只拉不发,
+/// 实现对称便于后续编辑入口)。
+Map<String, Object?> coreMottoPayload(Map<String, Object?> row, String userId) {
+  final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
+  final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
+  return {
+    'id': row['id'],
+    'user_id': userId,
+    'text': row['text'] ?? '',
+    'author': ((row['author'] as String?) ?? '').isNotEmpty
+        ? (row['author'] as String)
+        : null,
+    'created_at': msToIso(updatedAtMs),
+    'revision': (row['revision'] as int?) ?? 1,
+    'deleted_at': deletedAtMs > 0 ? msToIso(deletedAtMs) : null,
+    'updated_at': msToIso(updatedAtMs),
+  };
+}
+
+/// core::Motto JSON → 行列(pull 方向)。
+Map<String, Object?> mottoFieldsFromCore(Map? p) {
+  if (p == null) return const {};
+  final out = <String, Object?>{};
+  if (p['text'] is String) out['text'] = p['text'] as String;
+  if (p['author'] is String?) out['author'] = (p['author'] as String?) ?? '';
+  if (p['deleted_at'] is String?) {
+    out['deleted_at_ms'] = isoToMs((p['deleted_at'] as String?) ?? '');
+  }
+  return out;
+}
+
 /// core::Task JSON → tasks 行业务列(pull 方向)。
 /// 只放**确定**的字段;project/tags/subtask 在 core Task 无对应,不覆盖本地列。
 Map<String, Object?> taskFieldsFromCore(Map? p) {
   if (p == null) return const {};
   final out = <String, Object?>{};
   if (p['title'] is String) out['title'] = p['title'] as String;
+  if (p['description'] is String) {
+    out['description'] = p['description'] as String;
+  }
   if (p['priority'] is String) out['priority'] = p['priority'] as String;
   final st = p['status'];
   if (st is String) out['completed'] = st == 'completed' ? 1 : 0;

@@ -459,6 +459,11 @@ class _Motto extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // 座右铭池(桌面编辑,同步而来);空池保底静态文案。
+    final mottos = context.watch<TaskProvider>().mottos;
+    final motto = mottos.isEmpty
+        ? ('专注当下，方得始终。', '今日座右铭')
+        : mottos[DateTime.now().millisecond % mottos.length];
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
       padding: const EdgeInsets.all(16),
@@ -476,7 +481,7 @@ class _Motto extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              '专注当下，方得始终。—— 今日座右铭',
+              motto.$1 + (motto.$2.isEmpty ? '' : '—— ${motto.$2}'),
               style: PfType.secondary.copyWith(
                 fontSize: 14,
                 color: theme.colorScheme.onSurface,

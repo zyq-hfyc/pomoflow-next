@@ -51,7 +51,9 @@ class AppDatabase {
   /// schema v9 → v10:新建 projects 表(project 实体化,任务项目归属跨端)。
   /// schema v10 → v11:新建 tags + task_tag_sync 表(标签跨端,对齐桌面表名)。
   /// schema v11 → v12:新建 subtasks 表(子任务实体 + 详情勾选 UI)。
-  static const _schemaVersion = 12;
+  /// schema v12 → v13:tasks 补 description 列(P0 覆盖隐患修复)+
+  /// 新建 daily_reviews / mottos 表(复盘与座右铭跨端)。
+  static const _schemaVersion = 13;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -112,6 +114,10 @@ class AppDatabase {
           if (oldVersion < 12) {
             await _v11ToV12(db);
           }
+          // v12 → v13:tasks 补 description 列。
+          if (oldVersion < 13) {
+            await _v12ToV13(db);
+          }
         },
       ),
     );
@@ -146,7 +152,8 @@ class AppDatabase {
         deleted_at_ms INTEGER NOT NULL DEFAULT 0,
         completed_at_ms INTEGER NOT NULL DEFAULT 0,
         pomodoro_duration INTEGER NOT NULL DEFAULT 0,
-        repeat TEXT NOT NULL DEFAULT 'none'
+        repeat TEXT NOT NULL DEFAULT 'none',
+        description TEXT NOT NULL DEFAULT ''
       )
     ''');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)');
@@ -155,6 +162,8 @@ class AppDatabase {
     await _createTagsTable(db);
     await _createTaskTagSyncTable(db);
     await _createSubtasksTable(db);
+    await _createDailyReviewsTable(db);
+    await _createMottosTable(db);
     await db.execute('''
       CREATE TABLE IF NOT EXISTS journals (
         id TEXT PRIMARY KEY,
@@ -294,6 +303,58 @@ class AppDatabase {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// v12 → v13 升级:tasks 补 description 列(桌面写的任务描述此前被
+  /// mobile push 的空串覆盖 —— LWW 数据丢失隐患,P0 修复的存储侧)+
+  /// 新建 daily_reviews / mottos 两表。
+  static Future<void> _v12ToV13(Database db) async {
+    await _addColumnIfMissing(
+      db, 'tasks', "ALTER TABLE tasks ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+    await _createDailyReviewsTable(db);
+    await _createMottosTable(db);
+    await db.insert('meta', {'k': 'schema_version', 'v': '13'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// daily_reviews:core::DailyReview(date 为同步自然键;同日期两端各建
+  /// 行时本地按 date 取 LWW 胜者内容)。
+  static Future<void> _createDailyReviewsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS daily_reviews (
+        id TEXT PRIMARY KEY,
+        date TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 1,
+        sync_state TEXT NOT NULL DEFAULT 'synced',
+        updated_at_ms INTEGER NOT NULL DEFAULT 0,
+        deleted_at_ms INTEGER NOT NULL DEFAULT 0,
+        origin_device TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT ''
+      )
+    ''');
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_reviews_date ON daily_reviews(date)',
+    );
+  }
+
+  /// mottos:core::Motto(focus 页轮播)。
+  static Future<void> _createMottosTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS mottos (
+        id TEXT PRIMARY KEY,
+        text TEXT NOT NULL,
+        author TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 1,
+        sync_state TEXT NOT NULL DEFAULT 'synced',
+        updated_at_ms INTEGER NOT NULL DEFAULT 0,
+        deleted_at_ms INTEGER NOT NULL DEFAULT 0,
+        origin_device TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT ''
+      )
+    ''');
+  }
+
   /// v11 → v12 升级:新建 subtasks 表(子任务实体)。
   static Future<void> _v11ToV12(Database db) async {
     await _createSubtasksTable(db);
@@ -329,6 +390,8 @@ class AppDatabase {
     await _createTagsTable(db);
     await _createTaskTagSyncTable(db);
     await _createSubtasksTable(db);
+    await _createDailyReviewsTable(db);
+    await _createMottosTable(db);
     await db.insert('meta', {'k': 'schema_version', 'v': '11'},
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
@@ -571,7 +634,7 @@ class AppDatabase {
       '''SELECT id, title, priority, project, due_label, completed,
                 estimated, completed_cnt, subtask_cnt, tags_csv,
                 revision, updated_at_ms, deleted_at_ms, completed_at_ms,
-                pomodoro_duration, repeat,
+                pomodoro_duration, repeat, description,
                 origin_device, user_id, payload
          FROM tasks
          WHERE sync_state = 'pending'
@@ -1351,6 +1414,216 @@ class AppDatabase {
         ),
       );
 
+  // === daily_reviews + mottos(P1 复盘与座右铭跨端)============================
+
+  /// 某日期的复盘内容(null = 未写)。
+  Future<String?> dailyReviewContent(String date) async {
+    final rows = await _db.query(
+      'daily_reviews',
+      columns: ['content'],
+      where: 'date = ? AND deleted_at_ms = 0',
+      whereArgs: [date],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return (rows.first['content'] as String?) ?? '';
+  }
+
+  /// 保存(或更新)某日期复盘:按 date upsert + 标 pending。
+  /// 今日复盘 focus 页的「今日回顾」卡走这里(此前存 meta.today_review
+  /// 不同步 —— 桌面看不到)。
+  Future<void> upsertDailyReview({
+    required String date,
+    required String content,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final existing = await _db.query(
+      'daily_reviews',
+      where: 'date = ?',
+      whereArgs: [date],
+      limit: 1,
+    );
+    if (existing.isEmpty) {
+      await _db.insert('daily_reviews', {
+        'id': uuidV4(),
+        'date': date,
+        'content': content,
+        'revision': 1,
+        'sync_state': 'pending',
+        'updated_at_ms': nowMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+      });
+    } else {
+      await _db.update(
+        'daily_reviews',
+        {
+          'content': content,
+          'revision': ((existing.first['revision'] as int?) ?? 1) + 1,
+          'sync_state': 'pending',
+          'updated_at_ms': nowMs,
+          'origin_device': originDevice,
+          'user_id': userId,
+        },
+        where: 'date = ?',
+        whereArgs: [date],
+      );
+    }
+  }
+
+  Future<List<Map<String, Object?>>> listPendingDailyReviews(
+      {int limit = 50}) async {
+    return _db.rawQuery(
+      '''SELECT id, date, content, revision, updated_at_ms, deleted_at_ms,
+                origin_device, user_id, payload
+         FROM daily_reviews WHERE sync_state = 'pending'
+         ORDER BY updated_at_ms ASC LIMIT ?''',
+      [limit],
+    );
+  }
+
+  /// pull 收敛:按 date upsert(同日期两端各建行时,LWW 胜者内容落地,
+  /// 本地行 id 换成胜者 id,保证后续 push 不再分叉)。
+  Future<void> applyRemoteDailyReview({
+    required String id,
+    required String date,
+    required int revision,
+    required int updatedAtMs,
+    required String originDevice,
+    required String userId,
+    required String payload,
+    required Map<String, Object?> fields,
+  }) async {
+    await _db.transaction((txn) async {
+      final existing = await txn.query('daily_reviews',
+          where: 'date = ?', whereArgs: [date], limit: 1);
+      final row = <String, Object?>{
+        ...fields,
+        'id': id,
+        'date': date,
+        'revision': revision,
+        'updated_at_ms': updatedAtMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+        'payload': payload,
+        'sync_state': 'synced',
+      };
+      if (existing.isEmpty) {
+        await txn.insert('daily_reviews', row);
+      } else {
+        final rowId = existing.first['id'] as String;
+        if (rowId != id) {
+          // 同日期异 id(两端各建):删旧行,落胜者行 —— 消除自然键分叉。
+          await txn.delete('daily_reviews',
+              where: 'id = ?', whereArgs: [rowId]);
+          await txn.insert('daily_reviews', row);
+        } else {
+          await txn
+              .update('daily_reviews', row, where: 'id = ?', whereArgs: [id]);
+        }
+      }
+    });
+  }
+
+  Future<void> markDailyReviewsSynced(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await _db.rawUpdate(
+      "UPDATE daily_reviews SET sync_state = 'synced' WHERE id IN ($placeholders)",
+      ids,
+    );
+  }
+
+  Future<Map<String, Object?>?> localDailyReviewCandidate(String id) async {
+    final rows = await _db.query(
+      'daily_reviews',
+      columns: ['id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  // --- mottos ---
+
+  /// 未删除的座右铭(focus 页轮播;编辑入口在桌面,mobile P0 只读)。
+  Future<List<(String, String)>> listMottos() async {
+    final rows = await _db.query(
+      'mottos',
+      columns: ['text', 'author'],
+      where: 'deleted_at_ms = 0',
+      orderBy: 'id ASC',
+    );
+    return [
+      for (final r in rows)
+        ((r['text'] as String?) ?? '', (r['author'] as String?) ?? ''),
+    ];
+  }
+
+  Future<List<Map<String, Object?>>> listPendingMottos({int limit = 200}) async {
+    return _db.rawQuery(
+      '''SELECT id, text, author, revision, updated_at_ms, deleted_at_ms,
+                origin_device, user_id, payload
+         FROM mottos WHERE sync_state = 'pending'
+         ORDER BY updated_at_ms ASC LIMIT ?''',
+      [limit],
+    );
+  }
+
+  Future<void> applyRemoteMotto({
+    required String id,
+    required int revision,
+    required int updatedAtMs,
+    required String originDevice,
+    required String userId,
+    required String payload,
+    required Map<String, Object?> fields,
+  }) async {
+    await _db.transaction((txn) async {
+      final exists = (await txn.query('mottos',
+              where: 'id = ?', whereArgs: [id], limit: 1))
+          .isNotEmpty;
+      final row = <String, Object?>{
+        ...fields,
+        'revision': revision,
+        'updated_at_ms': updatedAtMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+        'payload': payload,
+        'sync_state': 'synced',
+      };
+      if (exists) {
+        await txn.update('mottos', row, where: 'id = ?', whereArgs: [id]);
+      } else {
+        row['id'] = id;
+        await txn.insert('mottos', row);
+      }
+    });
+  }
+
+  Future<void> markMottosSynced(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await _db.rawUpdate(
+      "UPDATE mottos SET sync_state = 'synced' WHERE id IN ($placeholders)",
+      ids,
+    );
+  }
+
+  Future<Map<String, Object?>?> localMottoCandidate(String id) async {
+    final rows = await _db.query(
+      'mottos',
+      columns: ['id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
   // === journals ================================================================
   // PfJournal.id 字符串化已在 models/task.dart 完成;schema v3 不动 journals
   // 表,等 P1 Journal 同步批一次性 ALTER(避免本批 commit 3 UI 调用点爆炸)。
@@ -1421,6 +1694,7 @@ class AppDatabase {
     'completed_at_ms': t.completedAt?.millisecondsSinceEpoch ?? 0,
     'pomodoro_duration': t.pomodoroDuration,
     'repeat': t.repeat,
+    'description': t.description,
   };
 
   PfTask _taskFromRow(Map<String, Object?> r) => PfTask(
@@ -1443,6 +1717,7 @@ class AppDatabase {
             : null,
     pomodoroDuration: (r['pomodoro_duration'] as int?) ?? 0,
     repeat: (r['repeat'] as String?) ?? 'none',
+    description: (r['description'] as String?) ?? '',
     syncMeta: PfSyncMeta(
       revision: (r['revision'] as int?) ?? 1,
       updatedAt: r['updated_at_ms'] != null && (r['updated_at_ms'] as int) > 0

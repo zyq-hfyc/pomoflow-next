@@ -138,7 +138,11 @@ class TaskProvider extends ChangeNotifier {
 
     // 首次启动 seed:meta.seed_done 缺失时插入 demo 5 task + 2 journal。
     final seeded = await db.getMeta('seed_done');
-    String todayReview = (await db.getMeta('today_review')) ?? '';
+    // 今日复盘:实体表优先,老库回退 meta(P0 迁移语义:下次保存即入实体)。
+    final today = _localDay(DateTime.now());
+    String todayReview = (await db.dailyReviewContent(today)) ??
+        (await db.getMeta('today_review')) ??
+        '';
 
     final p = TaskProvider._mem();
     // 装配修复(真机 E2E 抓出):必须把 db 挂回 provider —— 此前漏了这一行,
@@ -147,6 +151,7 @@ class TaskProvider extends ChangeNotifier {
     p._tasks.addAll(tasks);
     p._journals.addAll(journals);
     p._sessions.addAll(sessions);
+    p._mottos = await db.listMottos();
     // todayPomos 权威 = sessions 表按本地日派生(P1);sessions 为空的老库回退
     // v4 时代的 meta.today_pomos 计数。
     final todayCount = sessions
@@ -206,12 +211,16 @@ class TaskProvider extends ChangeNotifier {
   final List<PfTask> _tasks = [];
   final List<PfJournal> _journals = [];
   final List<PfSession> _sessions = [];
+  List<(String, String)> _mottos = const []; // (text, author)
 
   List<PfTask> get tasks => List.unmodifiable(_tasks);
   List<PfJournal> get journals => List.unmodifiable(_journals);
 
   /// 全量番茄会话(P1 起为统计权威源;append-only)。
   List<PfSession> get sessions => List.unmodifiable(_sessions);
+
+  /// 座右铭池((text, author));桌面编辑,mobile 轮播只读。
+  List<(String, String)> get mottos => List.unmodifiable(_mottos);
 
   // === 专注屏共享状态 ==========================================================
 
@@ -563,11 +572,22 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 保存今日复盘:走 daily_reviews 实体(按日期 upsert + pending,
+  /// 跨端同步 —— 桌面端看得到;此前存 meta.today_review 不同步)。
   Future<void> saveReview(String text) async {
     todayReview = text;
     final db = _db;
     if (db != null) {
-      await db.setMeta('today_review', text);
+      try {
+        await db.upsertDailyReview(
+          date: _localDay(DateTime.now()),
+          content: text,
+          originDevice: _deviceIdProvider?.call() ?? '',
+          userId: _userIdProvider?.call() ?? '',
+        );
+      } on Exception catch (e) {
+        debugPrint('upsertDailyReview failed: $e');
+      }
     }
     notifyListeners();
   }
@@ -649,6 +669,10 @@ class TaskProvider extends ChangeNotifier {
     if (db == null) return;
     final tasks = await db.listTasks();
     final sessions = await db.listSessions();
+    _mottos = await db.listMottos();
+    todayReview = (await db.dailyReviewContent(
+            _localDay(DateTime.now()))) ??
+        todayReview;
     _tasks
       ..clear()
       ..addAll(tasks);

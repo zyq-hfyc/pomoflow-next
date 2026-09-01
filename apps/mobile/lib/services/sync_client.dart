@@ -152,6 +152,28 @@ class SyncClient {
         'payload': coreSubtaskPayload(row, uid),
       });
     }
+    for (final row in await db.listPendingDailyReviews()) {
+      changes.add({
+        'id': _uuidChangeId(),
+        'device_id': deviceId,
+        'entity': 'daily_review',
+        'entity_id': row['id'] as String,
+        'revision': (row['revision'] as int?) ?? 1,
+        'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
+        'payload': coreDailyReviewPayload(row, uid),
+      });
+    }
+    for (final row in await db.listPendingMottos()) {
+      changes.add({
+        'id': _uuidChangeId(),
+        'device_id': deviceId,
+        'entity': 'motto',
+        'entity_id': row['id'] as String,
+        'revision': (row['revision'] as int?) ?? 1,
+        'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
+        'payload': coreMottoPayload(row, uid),
+      });
+    }
     for (final row in await db.listPendingSessions()) {
       changes.add({
         'id': _uuidChangeId(),
@@ -182,6 +204,8 @@ class SyncClient {
     final tagIdsToMark = <String>[];
     final taskTagIdsToMark = <String>[];
     final subtaskIdsToMark = <String>[];
+    final reviewIdsToMark = <String>[];
+    final mottoIdsToMark = <String>[];
     final sessionIdsToMark = <String>[];
     for (final r in results) {
       final outcome = _parseApplyOutcome(r);
@@ -197,6 +221,8 @@ class SyncClient {
             'tag' => tagIdsToMark,
             'task_tag' => taskTagIdsToMark,
             'sub_task' => subtaskIdsToMark,
+            'daily_review' => reviewIdsToMark,
+            'motto' => mottoIdsToMark,
             _ => taskIdsToMark,
           })
               .add(entityId);
@@ -212,6 +238,8 @@ class SyncClient {
               'tag' => tagIdsToMark,
               'task_tag' => taskTagIdsToMark,
               'sub_task' => subtaskIdsToMark,
+              'daily_review' => reviewIdsToMark,
+              'motto' => mottoIdsToMark,
               _ => taskIdsToMark,
             })
                 .add(entityId);
@@ -235,6 +263,12 @@ class SyncClient {
     }
     if (subtaskIdsToMark.isNotEmpty) {
       await db.markSubtasksSynced(subtaskIdsToMark);
+    }
+    if (reviewIdsToMark.isNotEmpty) {
+      await db.markDailyReviewsSynced(reviewIdsToMark);
+    }
+    if (mottoIdsToMark.isNotEmpty) {
+      await db.markMottosSynced(mottoIdsToMark);
     }
     if (sessionIdsToMark.isNotEmpty) {
       await db.markSessionsSynced(sessionIdsToMark);
@@ -284,6 +318,30 @@ class SyncClient {
         userId: uid,
         payload: payloadJson,
         fields: subtaskFieldsFromCore(payload as Map?),
+      );
+    } else if (entity == 'daily_review') {
+      final date = (payload as Map?)?['date'] as String?;
+      if (date != null && date.isNotEmpty) {
+        await db.applyRemoteDailyReview(
+          id: entityId,
+          date: date,
+          revision: revision,
+          updatedAtMs: updatedAtMs,
+          originDevice: originDevice,
+          userId: uid,
+          payload: payloadJson,
+          fields: dailyReviewFieldsFromCore(payload),
+        );
+      }
+    } else if (entity == 'motto') {
+      await db.applyRemoteMotto(
+        id: entityId,
+        revision: revision,
+        updatedAtMs: updatedAtMs,
+        originDevice: originDevice,
+        userId: uid,
+        payload: payloadJson,
+        fields: mottoFieldsFromCore(payload as Map?),
       );
     } else if (entity == 'pomodoro_session') {
       await db.applyRemoteSession(
@@ -409,6 +467,38 @@ class SyncClient {
             fields: subtaskFieldsFromCore(change['payload'] as Map?),
           );
           applied += 1;
+        case 'daily_review':
+          final remote = _extractChangeTimestamps(change);
+          final local = await db.localDailyReviewCandidate(entityId);
+          if (local != null && _localWinsLww(local, remote)) continue;
+          final date = (change['payload'] as Map?)?['date'] as String?;
+          if (date != null && date.isNotEmpty) {
+            await db.applyRemoteDailyReview(
+              id: entityId,
+              date: date,
+              revision: (change['revision'] as int?) ?? 1,
+              updatedAtMs: remote.updatedMs,
+              originDevice: remote.deviceId,
+              userId: uid,
+              payload: payloadJson,
+              fields: dailyReviewFieldsFromCore(change['payload'] as Map?),
+            );
+            applied += 1;
+          }
+        case 'motto':
+          final remote = _extractChangeTimestamps(change);
+          final local = await db.localMottoCandidate(entityId);
+          if (local != null && _localWinsLww(local, remote)) continue;
+          await db.applyRemoteMotto(
+            id: entityId,
+            revision: (change['revision'] as int?) ?? 1,
+            updatedAtMs: remote.updatedMs,
+            originDevice: remote.deviceId,
+            userId: uid,
+            payload: payloadJson,
+            fields: mottoFieldsFromCore(change['payload'] as Map?),
+          );
+          applied += 1;
         case 'pomodoro_session':
           final remote = _extractChangeTimestamps(change);
           final local = await db.localSessionCandidate(entityId);
@@ -424,8 +514,8 @@ class SyncClient {
           );
           applied += 1;
         default:
-          // motto / *_review:
-          // 范围外,跳过不崩(cursor 照常推进,不重拉)。
+          // weekly/monthly review 范围外(mobile 只有日复盘),
+          // 跳过不崩(cursor 照常推进,不重拉)。
           break;
       }
     }

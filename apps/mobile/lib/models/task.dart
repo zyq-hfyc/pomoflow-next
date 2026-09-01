@@ -60,6 +60,7 @@ class PfTask {
     this.tags = const [],
     this.estimatedPomos = 0,
     this.completedPomos = 0,
+    this.description = '',
     this.pomodoroDuration = 0,
     this.repeat = 'none',
     this.subtaskCount = 0,
@@ -80,6 +81,10 @@ class PfTask {
   final List<String> tags;
   final int estimatedPomos;
   final int completedPomos;
+
+  /// 任务描述(多行;core `description` 对齐)。P0 修复:此前 push 恒发
+  /// 空串,桌面写的描述会被 mobile 的任意一次编辑覆盖丢失。
+  final String description;
 
   /// 单番茄时长(分钟,0 = 未设 → 用全局设置;对齐 core
   /// `pomodoro_duration: Option<u32>` 的「覆盖全局」语义)。
@@ -119,6 +124,7 @@ class PfTask {
     List<String>? tags,
     int? estimatedPomos,
     int? completedPomos,
+    String? description,
     int? pomodoroDuration,
     String? repeat,
     int? subtaskCount,
@@ -136,6 +142,7 @@ class PfTask {
     tags: tags ?? this.tags,
     estimatedPomos: estimatedPomos ?? this.estimatedPomos,
     completedPomos: completedPomos ?? this.completedPomos,
+    description: description ?? this.description,
     pomodoroDuration: pomodoroDuration ?? this.pomodoroDuration,
     repeat: repeat ?? this.repeat,
     subtaskCount: subtaskCount ?? this.subtaskCount,

@@ -39,6 +39,9 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
   late final TextEditingController _tagsCtrl = TextEditingController(
     text: widget.initial?.tags.join(',') ?? '',
   );
+  late final TextEditingController _descCtrl = TextEditingController(
+    text: widget.initial?.description ?? '',
+  );
   late String _project =
       _projects.contains(widget.initial?.project) && widget.initial != null
           ? widget.initial!.project
@@ -64,6 +67,7 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
   void dispose() {
     _titleCtrl.dispose();
     _tagsCtrl.dispose();
+    _descCtrl.dispose();
     super.dispose();
   }
 
@@ -91,6 +95,7 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
         PfTask(
           id: id,
           title: title,
+          description: _descCtrl.text.trim(),
           priority: _priority,
           project: _project,
           dueLabel: dueLabel,
@@ -105,6 +110,7 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
       await provider.editTask(
         initial.copyWith(
           title: title,
+          description: _descCtrl.text.trim(),
           priority: _priority,
           project: _project,
           dueLabel: dueLabel,
@@ -130,6 +136,13 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
         PfFormField(
           label: '标题',
           child: PfSheetTextField(controller: _titleCtrl, hint: '要做什么？'),
+        ),
+        PfFormField(
+          label: '描述(可选)',
+          child: _MultilineField(
+            controller: _descCtrl,
+            hint: '补充细节、验收标准…(与桌面端互通)',
+          ),
         ),
         PfFormField(
           label: '所属项目',
@@ -215,6 +228,46 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
   }
 }
 
+/// 多行描述输入(surface-2 底,3 行高)。
+class _MultilineField extends StatelessWidget {
+  const _MultilineField({required this.controller, required this.hint});
+
+  final TextEditingController controller;
+  final String hint;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return TextField(
+      controller: controller,
+      maxLines: 3,
+      minLines: 2,
+      style: const TextStyle(fontSize: 14),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(fontSize: 13, color: theme.pfMuted),
+        isDense: true,
+        filled: true,
+        fillColor: theme.pfSurface2,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: BorderSide(color: theme.pfLine),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: BorderSide(color: theme.pfLine),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: BorderSide(color: theme.pfBrand),
+        ),
+      ),
+    );
+  }
+}
+
 // repeat:UI 选项 ↔ core Repeat snake 名(none/daily/weekly/weekdays)。
 // mobile 只存储与同步;实例生成是桌面 repeat 引擎职责。
 const _repeatUiToCore = {
@@ -290,6 +343,8 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _kv('标题', task.title, theme),
+        if (task.description.isNotEmpty)
+          _kv('描述', task.description, theme),
         _kv(
           '优先级',
           task.priority.label,

@@ -25,7 +25,17 @@ void main() {
       expect(names, containsAll([
         'id', 'revision', 'sync_state', 'origin_device', 'payload',
         'user_id', 'updated_at_ms', 'deleted_at_ms', 'completed_at_ms',
+        'description',
       ]));
+      for (final tbl in ['daily_reviews', 'mottos']) {
+        final cols = await db.raw.rawQuery('PRAGMA table_info($tbl)');
+        expect(
+          cols.map((r) => r['name']),
+          containsAll(['id', 'revision', 'sync_state', 'updated_at_ms',
+                       'deleted_at_ms', 'origin_device', 'payload', 'user_id']),
+          reason: tbl,
+        );
+      }
       final subtaskCols = await db.raw
           .rawQuery('PRAGMA table_info(subtasks)');
       expect(
@@ -50,7 +60,7 @@ void main() {
         'ended_at_ms', 'is_completed', 'created_at_ms', 'revision',
         'sync_state', 'updated_at_ms', 'origin_device', 'payload', 'user_id',
       ]));
-      expect(await db.getMeta('schema_version'), '12');
+      expect(await db.getMeta('schema_version'), '13');
     } finally {
       await db.close();
     }
@@ -163,7 +173,7 @@ void main() {
           .rawQuery('PRAGMA table_info(pomodoro_sessions)');
       final v6cols = await db.raw.rawQuery('PRAGMA table_info(tasks)');
       expect(v6cols.map((r) => r['name']), contains('deleted_at_ms'));
-      expect(await db.getMeta('schema_version'), '12');
+      expect(await db.getMeta('schema_version'), '13');
     } finally {
       await db.close();
       await tmp.delete(recursive: true);
