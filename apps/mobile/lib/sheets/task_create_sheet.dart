@@ -391,7 +391,9 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
                 height: 50,
                 onTap: () {
                   Navigator.pop(context);
-                  context.read<TaskProvider>().setFocusTask(task.id);
+                  context
+                      .read<TaskProvider>()
+                      .setFocusTask(task.id, autoStart: true);
                   context.read<NavProvider>().select(0);
                 },
               ),

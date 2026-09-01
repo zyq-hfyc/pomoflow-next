@@ -549,7 +549,10 @@ class _TaskCard extends StatelessWidget {
             // ▶ 快捷专注(.start-mini):设为专注任务并切到专注 Tab
             GestureDetector(
               onTap: () {
-                context.read<TaskProvider>().setFocusTask(task.id);
+                // autoStart:跳转后自动开表(桌面 autostart 语义;修圆环不倒计时)
+                context
+                    .read<TaskProvider>()
+                    .setFocusTask(task.id, autoStart: true);
                 _goFocus(context);
               },
               child: Container(

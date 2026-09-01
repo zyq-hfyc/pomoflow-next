@@ -82,16 +82,26 @@ class _FocusPageState extends State<FocusPage> {
     });
   }
 
+  /// 开始计时(_toggle 的启动分支,供 autoStart 消费复用)。
+  void _start() {
+    setState(() {
+      _running = true;
+      _started = true;
+    });
+    _armTimer();
+  }
+
   void _toggle() {
     if (_running) {
       _timer?.cancel();
       setState(() => _running = false);
     } else {
-      setState(() {
-        _running = true;
-        _started = true;
-      });
-      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _start();
+    }
+  }
+
+  void _armTimer() {
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (_left > 0) {
           setState(() => _left--);
         } else {
@@ -110,7 +120,6 @@ class _FocusPageState extends State<FocusPage> {
           }
         }
       });
-    }
   }
 
   void _skip() {
@@ -151,6 +160,21 @@ class _FocusPageState extends State<FocusPage> {
     final tasks = context.watch<TaskProvider>();
     final focusTask = tasks.focusTask;
     final cfg = (label: _modeLabel[_mode]!, showPomo: _mode == _TimerMode.focus);
+
+    // 任务卡「▶ 开始」的自动开始(桌面 autostart 语义):未计时 → 切回
+    // 专注模式(修 Bug:休息模式 5 分钟残留)+ 启动;计时中只切任务不打断。
+    if (tasks.autoStartArms) {
+      tasks.autoStartArms = false;
+      if (!_running && mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() => _mode = _TimerMode.focus);
+          _total = _secondsFor(_TimerMode.focus);
+          _left = _total;
+          _start();
+        });
+      }
+    }
 
     return Container(
       color: theme.pfBg,

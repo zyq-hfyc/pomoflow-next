@@ -162,6 +162,20 @@ class TaskProvider extends ChangeNotifier {
         : int.tryParse((await db.getMeta('today_pomos')) ?? '0') ?? 0;
     p.todayReview = todayReview;
 
+    // 老库种子子任务兜底:种子任务的 subtask_cnt 是计数展示,但 v12 前
+    // 没有子任务行(详情 sheet 拉不到)。种子任务存在且无行 → 一次性补齐
+    // (幂等:行存在即跳过)。真机反馈修复。
+    final seedDemo = TaskProvider.demo();
+    final seedTask = seedDemo._tasks.first;
+    if (p._tasks.any((t) => t.id == seedTask.id)) {
+      final existing = await db.listSubtasksForTask(seedTask.id);
+      if (existing.isEmpty) {
+        for (final sub in demoSubtasks(seedDemo)) {
+          await db.insertSubtask(sub);
+        }
+      }
+    }
+
     if (seeded == null) {
       final demo = TaskProvider.demo();
       for (final t in demo._tasks) {
@@ -169,6 +183,11 @@ class TaskProvider extends ChangeNotifier {
       }
       for (final j in demo._journals) {
         await db.insertJournal(j);
+      }
+      // 种子子任务行(与 subtaskCount 对齐 —— 此前计数是假的,
+      // 详情 sheet 子任务区拉不到行;真机反馈修复)。
+      for (final sub in demoSubtasks(demo)) {
+        await db.insertSubtask(sub);
       }
       await db.setMeta('seed_done', '1');
       await db.setMeta('today_pomos', '${demo.todayPomos}');
@@ -223,6 +242,11 @@ class TaskProvider extends ChangeNotifier {
   List<(String, String)> get mottos => List.unmodifiable(_mottos);
 
   // === 专注屏共享状态 ==========================================================
+
+  /// 任务卡「▶ 开始」预置的自动开始标志(桌面端 v1 autostart 语义):
+  /// FocusPage build 检测并消费 —— 未在计时则切回专注模式并启动倒计时,
+  /// 计时中只切换任务不打断。
+  bool autoStartArms = false;
 
   String? _focusTaskId;
   PfTask? get focusTask {
@@ -464,8 +488,9 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setFocusTask(String? id) async {
+  Future<void> setFocusTask(String? id, {bool autoStart = false}) async {
     _focusTaskId = id;
+    if (autoStart) autoStartArms = true;
     final db = _db;
     if (db != null) {
       await db.setFocus(id);
@@ -728,6 +753,29 @@ class TaskProvider extends ChangeNotifier {
     };
   }
 }
+
+/// 种子任务的子任务(id 固定常量跨重启稳定;syncState synced 与任务
+/// 种子一致 —— 种子数据不上云)。
+List<PfSubTask> demoSubtasks(TaskProvider demo) => [
+      PfSubTask(
+        id: 'cccccccc-cccc-4ccc-8ccc-cccccccccc11',
+        taskId: demo._tasks.first.id,
+        title: '梳理产品需求范围',
+        position: 0,
+      ),
+      PfSubTask(
+        id: 'cccccccc-cccc-4ccc-8ccc-cccccccccc12',
+        taskId: demo._tasks.first.id,
+        title: '输出初版需求文档',
+        position: 1,
+      ),
+      PfSubTask(
+        id: 'cccccccc-cccc-4ccc-8ccc-cccccccccc13',
+        taskId: demo._tasks[3].id,
+        title: '通读第 3 章并做笔记',
+        position: 0,
+      ),
+    ];
 
 /// 14 字符串 uuid 给 demo() 取稳定 seed id(固定字符串常量,跨重启不变)。
 class _DemoIds {
