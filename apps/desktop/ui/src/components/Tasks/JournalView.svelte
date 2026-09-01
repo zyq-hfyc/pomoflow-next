@@ -24,6 +24,7 @@
   import { getDict, fmt } from "../../lib/i18n.svelte";
   import { datePart } from "../../lib/dueDate";
   import { getMondays, toISO } from "../../lib/calendar";
+  import { syncState } from "../../lib/syncState.svelte";
   import TaskCheckbox from "./TaskCheckbox.svelte";
   import ReviewTextarea from "../Timer/ReviewTextarea.svelte";
 
@@ -64,8 +65,17 @@
 
   // === 数据加载 ===
   async function load(y: number, m: number) {
-    const start = toISO(new Date(y, m - 1, 1));
-    const end = toISO(new Date(y, m, 0)); // 该月最后一天
+    // 查询区间 = 月视图**渲染范围**(首周一 ~ 末日周周日):月视图含跨月补位格
+    // (如 9 月视图首行有 8 月末、8 月视图末行有 9 月初),只查自然月会漏掉
+    // 跨月格的日复盘 —— 真机反馈"0901 日格为空"的根因(9/1 是 8 月视图第 5
+    // 周的跨月格,区间 8-01~8-31 不含 9-01)。
+    const mondays = getMondays(y, m);
+    const first = mondays[0];
+    const last = mondays[mondays.length - 1];
+    const lastSunday = new Date(last);
+    lastSunday.setDate(lastSunday.getDate() + 6);
+    const start = toISO(first);
+    const end = toISO(lastSunday);
     try {
       const [w, d] = await Promise.all([
         api.listWeeklyReviews(y, m),
