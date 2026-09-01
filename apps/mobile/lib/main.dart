@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:workmanager/workmanager.dart';
 
 import 'providers/auth_provider.dart';
+import 'providers/conflict_provider.dart';
 import 'providers/nav_provider.dart';
 import 'providers/settings_provider.dart';
 import 'providers/task_provider.dart';
@@ -77,6 +78,11 @@ class PomoFlowApp extends StatelessWidget {
         // 这里直接 value 注入已 hydrate 的实例。
         ChangeNotifierProvider<TaskProvider>.value(value: taskProvider),
         ChangeNotifierProvider<SettingsProvider>.value(value: settingsProvider),
+        // P2 冲突可视化:仅当 DB 可用时注册(demo 模式 db == null)。
+        if (taskProvider.db != null)
+          ChangeNotifierProvider<ConflictProvider>(
+            create: (_) => ConflictProvider(taskProvider.db!)..refresh(),
+          ),
       ],
       child: Builder(
         builder: (context) {

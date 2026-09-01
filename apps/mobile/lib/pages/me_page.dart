@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/auth_provider.dart';
+import '../providers/conflict_provider.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/api_client.dart';
@@ -12,6 +13,7 @@ import '../services/sync_client.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_sheet.dart';
 import 'account_page.dart';
+import 'conflict_log_page.dart';
 import 'settings_page.dart';
 
 /// 我的屏(§4.4):渐变资料头 + 账号管理菜单卡 + 数据同步行 + 设置/帮助 + 退出。
@@ -83,6 +85,14 @@ class _MePageState extends State<MePage> {
       // 才进统计页与今日番茄(审查发现的根因修复)。
       if (!mounted) return;
       await context.read<TaskProvider>().reloadFromDb();
+      if (!mounted) return;
+      // 冲突可视化:runOnce 内可能落 conflict_log 新行 → 重新拉一次。
+      // ConflictProvider 可能为 null(demo 模式或尚未注入),用 try/catch 兜底。
+      try {
+        await context.read<ConflictProvider>().refresh();
+      } on ProviderNotFoundException {
+        // 无 DB(demo 模式)时跳过;不影响主同步流程。
+      }
       setState(() {
         _syncLabel = msg;
         _syncing = false;
@@ -127,6 +137,11 @@ class _MePageState extends State<MePage> {
               onAutoSyncChanged: _toggleAutoSync,
             ),
           ),
+          const SliverToBoxAdapter(child: SizedBox(height: 12)),
+          // P2 冲突可视化:展示 conflict_log 条数 → 点击进 ConflictLogPage。
+          // demo 模式 / 旧版本无 provider 时透明退化(卡片不显示)。
+          const SliverToBoxAdapter(child: SizedBox(height: 12)),
+          SliverToBoxAdapter(child: _ConflictRow(onHint: _hint)),
           const SliverToBoxAdapter(child: SizedBox(height: 12)),
           SliverToBoxAdapter(child: _OtherMenuCard(onHint: _hint)),
           SliverToBoxAdapter(child: _LogoutButton(onHint: _hint)),
@@ -394,6 +409,147 @@ class _SyncRow extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// P2 冲突可视化:展示 conflict_log 当前条数 + 最新一条预览 → 点击进
+/// ConflictLogPage 看完整列表。无 ConflictProvider(demo 模式)→ 整体不渲染。
+class _ConflictRow extends StatelessWidget {
+  const _ConflictRow({required this.onHint});
+
+  final void Function(String) onHint;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    ConflictProvider provider;
+    try {
+      provider = context.watch<ConflictProvider>();
+    } on ProviderNotFoundException {
+      return const SizedBox.shrink();
+    }
+    if (provider.count == 0) {
+      return const SizedBox.shrink();
+    }
+    final latest = provider.conflicts.first;
+    final entity = (latest['entity'] as String?) ?? '';
+    final title = (latest['entity_title'] as String?) ?? '';
+    final direction = (latest['direction'] as String?) ?? '';
+    final device = (latest['remote_device'] as String?) ?? '';
+    final summary = direction == 'lost'
+        ? '我方输给了设备 ${_shortDevice(device)}'
+        : '被设备 ${_shortDevice(device)} 覆盖';
+    final entityLabel = _entityLabel(entity);
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
+      decoration: BoxDecoration(
+        color: theme.pfSurface,
+        borderRadius: BorderRadius.circular(PfRadii.lg),
+        border: Border.all(color: theme.pfLine),
+        boxShadow: theme.pfShadowSm,
+      ),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _openConflictLog(context),
+        child: Row(
+          children: [
+            _IconBlock(emoji: '⚠'),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text(
+                        '同步记录',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.error.withValues(alpha: .12),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '${provider.count} 条冲突',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: theme.colorScheme.error,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '$entityLabel「$title」$summary',
+                    style: TextStyle(fontSize: 12, color: theme.pfMuted),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 18, color: theme.pfMuted),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _shortDevice(String device) {
+    if (device.isEmpty) return '未知设备';
+    return device.length > 14 ? '${device.substring(0, 14)}…' : device;
+  }
+
+  static String _entityLabel(String entity) {
+    switch (entity) {
+      case 'task':
+        return '任务';
+      case 'project':
+        return '项目';
+      case 'tag':
+        return '标签';
+      case 'sub_task':
+        return '子任务';
+      case 'daily_review':
+        return '日复盘';
+      case 'motto':
+        return '座右铭';
+      case 'pomodoro_session':
+        return '番茄';
+      case 'task_tag':
+        return '任务标签';
+      default:
+        return entity;
+    }
+  }
+
+  void _openConflictLog(BuildContext context) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (_, _, _) => const ConflictLogPage(),
+        transitionsBuilder: (_, anim, _, child) => SlideTransition(
+          position: Tween(
+            begin: const Offset(1, 0),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
+          child: child,
+        ),
+        transitionDuration: const Duration(milliseconds: 300),
       ),
     );
   }

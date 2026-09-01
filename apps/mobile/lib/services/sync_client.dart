@@ -286,6 +286,9 @@ class SyncClient {
     final updatedAtMs = isoToMs((winner['updated_at'] as String?) ?? '');
     final originDevice = (winner['device_id'] as String?) ?? '';
     final payloadJson = jsonEncode(payload);
+    // 冲突可视化:push 时本地被服务端「判定输」→ 落 conflict_log 一条
+    // direction='lost',remoteDevice 用 winner.device_id(胜出方设备)。
+    await _recordPushConflict(db, entity, entityId, winner);
     if (entity == 'project') {
       await db.applyRemoteProject(
         id: entityId,
@@ -366,6 +369,90 @@ class SyncClient {
     }
   }
 
+  /// push 阶段被服务端判定输 → 落 conflict_log 一条 'lost' 记录。
+  /// title 来源:被覆盖前的本地视图(payload 列里就是上一版同步进来的 JSON,
+  /// 包含 name/title/content/date 之一);remote_updated_ms 来自 winner,
+  /// local_updated_ms 从同行的 updated_at_ms 取(避免对每个实体类型写单独查)。
+  Future<void> _recordPushConflict(
+    AppDatabase db,
+    String? entity,
+    String entityId,
+    Map<String, dynamic> winner,
+  ) async {
+    final remoteMs = isoToMs((winner['updated_at'] as String?) ?? '');
+    final remoteDevice = (winner['device_id'] as String?) ?? '';
+    try {
+      final row = await _loadLocalForConflict(db, entity, entityId);
+      if (row == null) return; // 本地已被删除(罕见),无 title 可落
+      final title = _extractEntityTitle(entity, row['payload']);
+      final localMs = (row['updated_at_ms'] as int?) ?? 0;
+      await db.insertConflict(
+        entity: entity ?? '',
+        entityId: entityId,
+        entityTitle: title,
+        direction: 'lost',
+        remoteDevice: remoteDevice,
+        localUpdatedMs: localMs,
+        remoteUpdatedMs: remoteMs,
+      );
+    } catch (e, st) {
+      // 落库失败不阻塞同步主路径 —— 与其它 try/catch 一致的最弱保证。
+      debugPrint('[sync] record push conflict failed: $e\n$st');
+    }
+  }
+
+  /// 拉被覆盖方本地当前视图(payload 列是 JSON 字符串);按 entity 分流到对应表。
+  /// 没命中任何表(task_tag / 未知实体)返 null,caller 直接跳过。
+  Future<Map<String, Object?>?> _loadLocalForConflict(
+      AppDatabase db, String? entity, String id) async {
+    switch (entity) {
+      case 'task':
+        return db.localTaskCandidate(id);
+      case 'project':
+        return db.localProjectCandidate(id);
+      case 'tag':
+        return db.localTagCandidate(id);
+      case 'sub_task':
+        return db.localSubtaskCandidate(id);
+      case 'daily_review':
+        return db.localDailyReviewCandidate(id);
+      case 'motto':
+        return db.localMottoCandidate(id);
+      case 'pomodoro_session':
+        return db.localSessionCandidate(id);
+      case 'task_tag':
+        return db.localTaskTagCandidate(id);
+      default:
+        return null;
+    }
+  }
+
+  /// payload JSON 字符串 → 该实体用于 UI 展示的标题字段(title/name/content/date)。
+  /// payload 解析失败 / 字段缺失 → 留空字符串(caller 已有兜底)。
+  String _extractEntityTitle(String? entity, Object? payloadStr) {
+    if (payloadStr is! String || payloadStr.isEmpty) return '';
+    try {
+      final json = jsonDecode(payloadStr);
+      if (json is! Map) return '';
+      switch (entity) {
+        case 'task':
+        case 'sub_task':
+          return (json['title'] as String?) ?? '';
+        case 'project':
+        case 'tag':
+          return (json['name'] as String?) ?? '';
+        case 'motto':
+          return (json['content'] as String?) ?? '';
+        case 'daily_review':
+          return (json['date'] as String?) ?? '';
+        default:
+          return '';
+      }
+    } on FormatException {
+      return '';
+    }
+  }
+
   /// 拉服务端 `seq > since`(首次 = 0)的变更,与本地 LWW 比较。
   /// **逐行隔离**:一行 applyRemote* 抛错(DB 锁/磁盘满/字段漂移)只跳过本行,
   /// 不影响后续变更与 cursor 推进 —— 服务端已下发数据,跳过一行的代价只是
@@ -431,6 +518,20 @@ class SyncClient {
         final remote = _extractChangeTimestamps(change);
         final local = await db.localTaskCandidate(entityId);
         if (local != null && _localWinsLww(local, remote)) return false;
+        // 冲突可视化:本地有数据且将被远端覆盖 → 落 conflict_log 一条
+        // (UI 在「我的」→「同步记录」展示「任务 X 刚被设备 Y 覆盖」)。
+        // title 从 payload 列里取(local candidate 只返 [id/revision/.../payload])。
+        if (local != null) {
+          await db.insertConflict(
+            entity: entity,
+            entityId: entityId,
+            entityTitle: _extractEntityTitle(entity, local['payload']),
+            direction: 'overrode',
+            remoteDevice: remote.deviceId,
+            localUpdatedMs: (local['updated_at_ms'] as int?) ?? 0,
+            remoteUpdatedMs: remote.updatedMs,
+          );
+        }
         final fields = taskFieldsFromCore(change['payload'] as Map?);
         // project_id → 本地项目名(实体一般先于/同批到达;查不到留空,
         // 后续该任务任一次同步更新会自愈补上)。
@@ -455,6 +556,17 @@ class SyncClient {
         final remote = _extractChangeTimestamps(change);
         final local = await db.localProjectCandidate(entityId);
         if (local != null && _localWinsLww(local, remote)) return false;
+        if (local != null) {
+          await db.insertConflict(
+            entity: entity,
+            entityId: entityId,
+            entityTitle: _extractEntityTitle(entity, local['payload']),
+            direction: 'overrode',
+            remoteDevice: remote.deviceId,
+            localUpdatedMs: (local['updated_at_ms'] as int?) ?? 0,
+            remoteUpdatedMs: remote.updatedMs,
+          );
+        }
         await db.applyRemoteProject(
           id: entityId,
           revision: (change['revision'] as int?) ?? 1,
@@ -469,6 +581,17 @@ class SyncClient {
         final remote = _extractChangeTimestamps(change);
         final local = await db.localTagCandidate(entityId);
         if (local != null && _localWinsLww(local, remote)) return false;
+        if (local != null) {
+          await db.insertConflict(
+            entity: entity,
+            entityId: entityId,
+            entityTitle: _extractEntityTitle(entity, local['payload']),
+            direction: 'overrode',
+            remoteDevice: remote.deviceId,
+            localUpdatedMs: (local['updated_at_ms'] as int?) ?? 0,
+            remoteUpdatedMs: remote.updatedMs,
+          );
+        }
         await db.applyRemoteTag(
           id: entityId,
           revision: (change['revision'] as int?) ?? 1,
@@ -491,6 +614,17 @@ class SyncClient {
         final remote = _extractChangeTimestamps(change);
         final local = await db.localSubtaskCandidate(entityId);
         if (local != null && _localWinsLww(local, remote)) return false;
+        if (local != null) {
+          await db.insertConflict(
+            entity: entity,
+            entityId: entityId,
+            entityTitle: _extractEntityTitle(entity, local['payload']),
+            direction: 'overrode',
+            remoteDevice: remote.deviceId,
+            localUpdatedMs: (local['updated_at_ms'] as int?) ?? 0,
+            remoteUpdatedMs: remote.updatedMs,
+          );
+        }
         await db.applyRemoteSubtask(
           id: entityId,
           revision: (change['revision'] as int?) ?? 1,
@@ -505,6 +639,17 @@ class SyncClient {
         final remote = _extractChangeTimestamps(change);
         final local = await db.localDailyReviewCandidate(entityId);
         if (local != null && _localWinsLww(local, remote)) return false;
+        if (local != null) {
+          await db.insertConflict(
+            entity: entity,
+            entityId: entityId,
+            entityTitle: _extractEntityTitle(entity, local['payload']),
+            direction: 'overrode',
+            remoteDevice: remote.deviceId,
+            localUpdatedMs: (local['updated_at_ms'] as int?) ?? 0,
+            remoteUpdatedMs: remote.updatedMs,
+          );
+        }
         final date = (change['payload'] as Map?)?['date'] as String?;
         if (date == null || date.isEmpty) return false;
         await db.applyRemoteDailyReview(
@@ -522,6 +667,17 @@ class SyncClient {
         final remote = _extractChangeTimestamps(change);
         final local = await db.localMottoCandidate(entityId);
         if (local != null && _localWinsLww(local, remote)) return false;
+        if (local != null) {
+          await db.insertConflict(
+            entity: entity,
+            entityId: entityId,
+            entityTitle: _extractEntityTitle(entity, local['payload']),
+            direction: 'overrode',
+            remoteDevice: remote.deviceId,
+            localUpdatedMs: (local['updated_at_ms'] as int?) ?? 0,
+            remoteUpdatedMs: remote.updatedMs,
+          );
+        }
         await db.applyRemoteMotto(
           id: entityId,
           revision: (change['revision'] as int?) ?? 1,

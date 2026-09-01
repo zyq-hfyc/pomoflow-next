@@ -60,7 +60,15 @@ void main() {
         'ended_at_ms', 'is_completed', 'created_at_ms', 'revision',
         'sync_state', 'updated_at_ms', 'origin_device', 'payload', 'user_id',
       ]));
-      expect(await db.getMeta('schema_version'), '13');
+      // schema v14 加 conflict_log 表(P2 冲突可视化)
+      final conflictCols = await db.raw
+          .rawQuery('PRAGMA table_info(conflict_log)');
+      expect(conflictCols.map((r) => r['name']), containsAll([
+        'entity', 'entity_id', 'entity_title', 'direction',
+        'remote_device', 'local_updated_ms', 'remote_updated_ms',
+        'occurred_at_ms',
+      ]));
+      expect(await db.getMeta('schema_version'), '14');
     } finally {
       await db.close();
     }
@@ -173,7 +181,11 @@ void main() {
           .rawQuery('PRAGMA table_info(pomodoro_sessions)');
       final v6cols = await db.raw.rawQuery('PRAGMA table_info(tasks)');
       expect(v6cols.map((r) => r['name']), contains('deleted_at_ms'));
-      expect(await db.getMeta('schema_version'), '13');
+      // v13 → v14 升级也应执行(legacy v4 库走整条链,新增 conflict_log)
+      final conflictCols = await db.raw
+          .rawQuery('PRAGMA table_info(conflict_log)');
+      expect(conflictCols.map((r) => r['name']), contains('direction'));
+      expect(await db.getMeta('schema_version'), '14');
     } finally {
       await db.close();
       await tmp.delete(recursive: true);

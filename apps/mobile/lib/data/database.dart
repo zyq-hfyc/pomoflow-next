@@ -53,7 +53,9 @@ class AppDatabase {
   /// schema v11 → v12:新建 subtasks 表(子任务实体 + 详情勾选 UI)。
   /// schema v12 → v13:tasks 补 description 列(P0 覆盖隐患修复)+
   /// 新建 daily_reviews / mottos 表(复盘与座右铭跨端)。
-  static const _schemaVersion = 13;
+  /// schema v13 → v14:新建 conflict_log 表(P2 冲突可视化 —— pull/push
+  /// 探测到 LWW 另一方胜出时落行,UI 列表展示「刚被覆盖的字段」)。
+  static const _schemaVersion = 14;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -118,6 +120,10 @@ class AppDatabase {
           if (oldVersion < 13) {
             await _v12ToV13(db);
           }
+          // v13 → v14:新建 conflict_log 表(LWW 另一方胜出记录)。
+          if (oldVersion < 14) {
+            await _v13ToV14(db);
+          }
         },
       ),
     );
@@ -164,6 +170,7 @@ class AppDatabase {
     await _createSubtasksTable(db);
     await _createDailyReviewsTable(db);
     await _createMottosTable(db);
+    await _createConflictLogTable(db);
     await db.execute('''
       CREATE TABLE IF NOT EXISTS journals (
         id TEXT PRIMARY KEY,
@@ -315,6 +322,27 @@ class AppDatabase {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// conflict_log 表(同 _v13ToV14 内 SQL;抽出供 _createSchema 用)。
+  static Future<void> _createConflictLogTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS conflict_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        entity_title TEXT NOT NULL DEFAULT '',
+        direction TEXT NOT NULL,
+        remote_device TEXT NOT NULL DEFAULT '',
+        local_updated_ms INTEGER NOT NULL DEFAULT 0,
+        remote_updated_ms INTEGER NOT NULL DEFAULT 0,
+        occurred_at_ms INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_conflict_log_occurred '
+      'ON conflict_log(occurred_at_ms DESC)',
+    );
+  }
+
   /// daily_reviews:core::DailyReview(date 为同步自然键;同日期两端各建
   /// 行时本地按 date 取 LWW 胜者内容)。
   static Future<void> _createDailyReviewsTable(Database db) async {
@@ -353,6 +381,39 @@ class AppDatabase {
         user_id TEXT NOT NULL DEFAULT ''
       )
     ''');
+  }
+
+  /// v13 → v14 升级:新建 conflict_log 表(LWW 另一方胜出记录,P2 冲突可视化)。
+  /// 表结构:
+  ///   id INTEGER PK —— 单调递增,UI 列表去重用
+  ///   entity / entity_id —— 哪个实体的哪一行
+  ///   entity_title —— 落库时的标题快照(任务改名后仍能显示原标题供辨认)
+  ///   direction —— 'overrode' = pull 时本地被远端覆盖;'lost' = push 时
+  ///               服务端 Conflicted 告知本地胜出方非我
+  ///   remote_device —— 胜出方所在设备 ID(短码,UI 提示用)
+  ///   local_updated_ms / remote_updated_ms —— LWW 三层仲裁的时间维度,
+  ///                                          帮助调试「我刚改的为啥被覆盖」
+  ///   occurred_at_ms —— 本次落库时刻(不是变更时刻)
+  static Future<void> _v13ToV14(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS conflict_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        entity_title TEXT NOT NULL DEFAULT '',
+        direction TEXT NOT NULL,
+        remote_device TEXT NOT NULL DEFAULT '',
+        local_updated_ms INTEGER NOT NULL DEFAULT 0,
+        remote_updated_ms INTEGER NOT NULL DEFAULT 0,
+        occurred_at_ms INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_conflict_log_occurred '
+      'ON conflict_log(occurred_at_ms DESC)',
+    );
+    await db.insert('meta', {'k': 'schema_version', 'v': '14'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// v11 → v12 升级:新建 subtasks 表(子任务实体)。
@@ -551,6 +612,50 @@ class AppDatabase {
     final nx = cur + 1;
     await setMeta('next_id', '$nx');
     return cur;
+  }
+
+  // === conflict_log(P2 冲突可视化)==========================================
+
+  /// 落一条冲突记录。direction='overrode' = pull 时本地被远端覆盖;
+  /// 'lost' = push 时服务端 Conflicted 告知本地不是胜出方。
+  Future<void> insertConflict({
+    required String entity,
+    required String entityId,
+    required String entityTitle,
+    required String direction,
+    required String remoteDevice,
+    required int localUpdatedMs,
+    required int remoteUpdatedMs,
+  }) async {
+    await _db.insert('conflict_log', {
+      'entity': entity,
+      'entity_id': entityId,
+      'entity_title': entityTitle,
+      'direction': direction,
+      'remote_device': remoteDevice,
+      'local_updated_ms': localUpdatedMs,
+      'remote_updated_ms': remoteUpdatedMs,
+      'occurred_at_ms': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  /// 最近 N 条冲突记录(按 occurred_at_ms DESC),UI 列表展示。
+  Future<List<Map<String, Object?>>> listRecentConflicts({int limit = 50}) async {
+    final rows = await _db.query(
+      'conflict_log',
+      orderBy: 'occurred_at_ms DESC',
+      limit: limit,
+    );
+    return rows;
+  }
+
+  /// 清空冲突记录(UI 「全部已读」按钮)。
+  Future<void> clearConflicts() => _db.delete('conflict_log');
+
+  /// 未读冲突条数(用作小红点)。
+  Future<int> countConflicts() async {
+    final r = await _db.rawQuery('SELECT COUNT(*) AS c FROM conflict_log');
+    return (r.first['c'] as int?) ?? 0;
   }
 
   // === tasks ===================================================================
