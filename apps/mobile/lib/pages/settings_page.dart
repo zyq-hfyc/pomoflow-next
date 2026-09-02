@@ -249,9 +249,9 @@ class _NotificationTemplateBodyState extends State<_NotificationTemplateBody> {
                     final preset = NotificationTemplateProvider.presetFor(
                       entry.key,
                     );
-                    await context
-                        .read<NotificationTemplateProvider>()
-                        .setStyle(entry.key);
+                    await context.read<NotificationTemplateProvider>().setStyle(
+                      entry.key,
+                    );
                     // 切换预设时整套替换,让用户能立刻看到效果
                     setState(() {
                       _focusTitle.text = preset.focusTitle;
@@ -267,25 +267,21 @@ class _NotificationTemplateBodyState extends State<_NotificationTemplateBody> {
             ],
           ),
         ),
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.only(bottom: 12),
-            children: [
-              _label('专注完成', theme),
-              _field(_focusTitle, '标题', theme),
-              _field(_focusBody, '正文(支持 {task_title})', theme, maxLines: 2),
-              const SizedBox(height: 12),
-              _label('短休息结束', theme),
-              _field(_shortTitle, '标题', theme),
-              _field(_shortBody, '正文', theme),
-              const SizedBox(height: 12),
-              _label('长休息结束', theme),
-              _field(_longTitle, '标题', theme),
-              _field(_longBody, '正文', theme),
-            ],
-          ),
-        ),
-        const SizedBox(height: 4),
+        // 不用 Expanded/ListView:pfSheet 的 body 在 SingleChildScrollView
+        // (无界高度)里,flex 子项会抛 unbounded 异常 → sheet 内容渲染失败
+        // 只剩蒙层(真机 Bug)。平铺靠外层滚动。
+        _label('专注完成', theme),
+        _field(_focusTitle, '标题', theme),
+        _field(_focusBody, '正文(支持 {task_title})', theme, maxLines: 2),
+        const SizedBox(height: 12),
+        _label('短休息结束', theme),
+        _field(_shortTitle, '标题', theme),
+        _field(_shortBody, '正文', theme),
+        const SizedBox(height: 12),
+        _label('长休息结束', theme),
+        _field(_longTitle, '标题', theme),
+        _field(_longBody, '正文', theme),
+        const SizedBox(height: 14),
         PfPrimaryButton(
           label: '保存',
           onTap: () async {
@@ -306,48 +302,53 @@ class _NotificationTemplateBodyState extends State<_NotificationTemplateBody> {
   }
 
   Widget _label(String text, ThemeData theme) => Padding(
-        padding: const EdgeInsets.only(bottom: 4, top: 4),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            color: theme.pfMuted,
-          ),
-        ),
-      );
+    padding: const EdgeInsets.only(bottom: 4, top: 4),
+    child: Text(
+      text,
+      style: TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w700,
+        color: theme.pfMuted,
+      ),
+    ),
+  );
 
-  Widget _field(TextEditingController ctrl, String hint, ThemeData theme,
-          {int maxLines = 1}) =>
-      Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: TextField(
-          controller: ctrl,
-          maxLines: maxLines,
-          minLines: 1,
-          style: const TextStyle(fontSize: 14),
-          decoration: InputDecoration(
-            hintText: hint,
-            isDense: true,
-            filled: true,
-            fillColor: theme.pfSurface2,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(11),
-              borderSide: BorderSide(color: theme.pfLine),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(11),
-              borderSide: BorderSide(color: theme.pfLine),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(11),
-              borderSide: BorderSide(color: theme.pfBrand),
-            ),
-          ),
+  Widget _field(
+    TextEditingController ctrl,
+    String hint,
+    ThemeData theme, {
+    int maxLines = 1,
+  }) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: TextField(
+      controller: ctrl,
+      maxLines: maxLines,
+      minLines: 1,
+      style: const TextStyle(fontSize: 14),
+      decoration: InputDecoration(
+        hintText: hint,
+        isDense: true,
+        filled: true,
+        fillColor: theme.pfSurface2,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 10,
         ),
-      );
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: BorderSide(color: theme.pfLine),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: BorderSide(color: theme.pfLine),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: BorderSide(color: theme.pfBrand),
+        ),
+      ),
+    ),
+  );
 }
 
 class _Card extends StatelessWidget {
@@ -401,9 +402,7 @@ class _RowStepper extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          Expanded(
-            child: Text(label, style: const TextStyle(fontSize: 15)),
-          ),
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 15))),
           _btn(Icons.remove, value > min, () => onChanged(value - 1), theme),
           SizedBox(
             width: 44,
