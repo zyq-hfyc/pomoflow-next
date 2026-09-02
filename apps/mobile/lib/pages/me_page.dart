@@ -14,6 +14,7 @@ import '../theme/tokens.dart';
 import '../widgets/pf_sheet.dart';
 import 'account_page.dart';
 import 'conflict_log_page.dart';
+import 'help_page.dart';
 import 'review_page.dart';
 import 'settings_page.dart';
 
@@ -556,7 +557,7 @@ class _ConflictRow extends StatelessWidget {
   }
 }
 
-/// 设置/帮助/注销菜单卡(设置与帮助 P3c 展开,先占位)。
+/// 设置/帮助/注销菜单卡。
 class _OtherMenuCard extends StatelessWidget {
   const _OtherMenuCard({required this.onHint});
 
@@ -577,7 +578,11 @@ class _OtherMenuCard extends StatelessWidget {
           label: '设置',
           onTap: () => _openSettings(context),
         ),
-        _MenuItem(emoji: '❓', label: '帮助与反馈', onTap: () => onHint('帮助中心建设中')),
+        _MenuItem(
+          emoji: '❓',
+          label: '帮助与反馈',
+          onTap: () => _openHelp(context),
+        ),
         _MenuItem(
           emoji: '⚠',
           label: '账号注销',
@@ -610,6 +615,23 @@ class _OtherMenuCard extends StatelessWidget {
       context,
       PageRouteBuilder(
         pageBuilder: (_, _, _) => const SettingsPage(),
+        transitionsBuilder: (_, anim, _, child) => SlideTransition(
+          position: Tween(
+            begin: const Offset(1, 0),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
+          child: child,
+        ),
+        transitionDuration: const Duration(milliseconds: 300),
+      ),
+    );
+  }
+
+  void _openHelp(BuildContext context) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (_, _, _) => const HelpPage(),
         transitionsBuilder: (_, anim, _, child) => SlideTransition(
           position: Tween(
             begin: const Offset(1, 0),
