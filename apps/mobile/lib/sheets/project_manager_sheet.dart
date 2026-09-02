@@ -45,20 +45,21 @@ class _ProjectManagerBodyState extends State<_ProjectManagerBody> {
         parentName: parentId == null || parentId.isEmpty
             ? null
             : context
-                .read<TaskProvider>()
-                .projects
-                .where((p) => p.id == parentId)
-                .map((p) => p.name)
-                .firstOrNull,
+                  .read<TaskProvider>()
+                  .projects
+                  .where((p) => p.id == parentId)
+                  .map((p) => p.name)
+                  .firstOrNull,
       ),
     );
     if (name == null || !mounted) return;
     final provider = context.read<TaskProvider>();
     await provider.upsertProject(
-      id: existing?.id ??
+      id:
+          existing?.id ??
           (parentId == null || parentId.isEmpty
               ? 'proj-${DateTime.now().millisecondsSinceEpoch}'
-              : 'proj-${parentId}-${DateTime.now().millisecondsSinceEpoch}'),
+              : 'proj-$parentId-${DateTime.now().millisecondsSinceEpoch}'),
       name: name,
       parentId: parentId ?? existing?.parentId ?? '',
     );
@@ -101,10 +102,7 @@ class _ProjectManagerBodyState extends State<_ProjectManagerBody> {
         Expanded(
           child: tree.isEmpty
               ? Center(
-                  child: Text(
-                    '暂无项目',
-                    style: TextStyle(color: theme.pfMuted),
-                  ),
+                  child: Text('暂无项目', style: TextStyle(color: theme.pfMuted)),
                 )
               : ListView.builder(
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
@@ -112,10 +110,8 @@ class _ProjectManagerBodyState extends State<_ProjectManagerBody> {
                   itemBuilder: (ctx, i) => _ProjectRow(
                     node: tree[i],
                     onEdit: () => _editProject(tree[i].project),
-                    onAddChild: () => _editProject(
-                      null,
-                      parentId: tree[i].project.id,
-                    ),
+                    onAddChild: () =>
+                        _editProject(null, parentId: tree[i].project.id),
                     onDelete: () => _confirmDelete(tree[i].project),
                     onReparent: () => _reparent(tree[i].project),
                   ),
@@ -172,17 +168,16 @@ class _ProjectManagerBodyState extends State<_ProjectManagerBody> {
     // 重设 display_order 到目标父级末尾
     final siblings = projects.where((q) => q.parentId == newParent).length;
     await context.read<TaskProvider>().upsertProject(
-          id: p.id,
-          name: p.name,
-          color: p.color,
-          parentId: newParent,
-        );
+      id: p.id,
+      name: p.name,
+      color: p.color,
+      parentId: newParent,
+    );
     // 单独再更新 display_order 因为 upsertProject 自动追加末尾
     // (上面 upsert 已重排,这里不再需要二次写)
-    if (siblings > 0 && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已将「${p.name}」改父')),
-      );
+    if (siblings > 0 && mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('已将「${p.name}」改父')));
     }
   }
 
@@ -318,8 +313,9 @@ class _EditProjectDialog extends StatefulWidget {
 }
 
 class _EditProjectDialogState extends State<_EditProjectDialog> {
-  late final TextEditingController _ctrl =
-      TextEditingController(text: widget.existing?.name ?? '');
+  late final TextEditingController _ctrl = TextEditingController(
+    text: widget.existing?.name ?? '',
+  );
 
   @override
   void dispose() {
