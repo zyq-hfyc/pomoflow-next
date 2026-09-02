@@ -59,7 +59,9 @@ class AppDatabase {
   /// 与桌面端同步;日复盘已存在,这里补全另外两种周期)。
   /// schema v15 → v16:projects 补 parent_id / display_order 列(P3 项目层级
   /// 与桌面端同步对齐,3 级嵌套 + 拖拽改父)。
-  static const _schemaVersion = 17;
+  /// schema v17 → v18:tasks 补 repeat_parent_id / repeat_end_date_ms 列
+  /// (重复实例引擎:实例指向模板 + 模板终止时间;''/0 = 非实例/未设)。
+  static const _schemaVersion = 18;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -141,6 +143,11 @@ class AppDatabase {
           if (oldVersion < 17) {
             await _v16ToV17(db);
           }
+          // v17 → v18:tasks 补 repeat_parent_id / repeat_end_date_ms
+          //(重复实例引擎,对齐桌面 core::Task 同名字段)。
+          if (oldVersion < 18) {
+            await _v17ToV18(db);
+          }
         },
       ),
     );
@@ -179,7 +186,9 @@ class AppDatabase {
         description TEXT NOT NULL DEFAULT '',
         due_at_ms INTEGER NOT NULL DEFAULT 0,
         reminder TEXT NOT NULL DEFAULT 'none',
-        repeat_config TEXT NOT NULL DEFAULT ''
+        repeat_config TEXT NOT NULL DEFAULT '',
+        repeat_parent_id TEXT NOT NULL DEFAULT '',
+        repeat_end_date_ms INTEGER NOT NULL DEFAULT 0
       )
     ''');
     await db.execute(
@@ -472,6 +481,25 @@ class AppDatabase {
     await db.insert('meta', {
       'k': 'schema_version',
       'v': '17',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// v17 → v18 升级:tasks 补 repeat_parent_id / repeat_end_date_ms
+  /// (重复实例引擎;老行 '' / 0 = 模板或普通任务 / 未设,无需回填)。
+  static Future<void> _v17ToV18(Database db) async {
+    await _addColumnIfMissing(
+      db,
+      'tasks',
+      "ALTER TABLE tasks ADD COLUMN repeat_parent_id TEXT NOT NULL DEFAULT ''",
+    );
+    await _addColumnIfMissing(
+      db,
+      'tasks',
+      'ALTER TABLE tasks ADD COLUMN repeat_end_date_ms INTEGER NOT NULL DEFAULT 0',
+    );
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '18',
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -941,8 +969,16 @@ class AppDatabase {
 
   /// 彻底删除:硬删本地行。服务端快照已是墓碑(revision 最新),
   /// 其他端/新设备拉到的是墓碑照样隐藏 —— 无需服务端操作。
+  /// 硬删(从 DB 物理删除,不可恢复)。同时清掉模板名下的实例行
+  /// (桌面 purge_task 级联 delete_all_instances),但只删**已同步**的行
+  /// (sync_state != 'pending')—— 未推送的墓碑被硬删后,服务端的活实例
+  /// 会在 pull 时整行拉回复活。
   Future<void> purgeTask(String id) async {
-    await _db.delete('tasks', where: 'id = ?', whereArgs: [id]);
+    await _db.delete(
+      'tasks',
+      where: "id = ? OR (repeat_parent_id = ? AND sync_state != 'pending')",
+      whereArgs: [id, id],
+    );
   }
 
   Future<int> insertTask(PfTask t) async {
@@ -987,6 +1023,7 @@ class AppDatabase {
                 revision, updated_at_ms, deleted_at_ms, completed_at_ms,
                 pomodoro_duration, repeat, description,
                 due_at_ms, reminder, repeat_config,
+                repeat_parent_id, repeat_end_date_ms,
                 origin_device, user_id, payload
          FROM tasks
          WHERE sync_state = 'pending'
@@ -1099,6 +1136,24 @@ class AppDatabase {
          WHERE id = ? AND deleted_at_ms = 0''',
       [nowMs, nowMs, originDevice, userId, id],
     );
+  }
+
+  /// 模板名下的实例 id 列表(repeat_service 编排用)。
+  /// [activeOnly] = true 只取未完成未删(重排前的清理,完成的保留);
+  /// false 取全部未删(模板删除的级联,含已完成)。
+  Future<List<String>> repeatInstanceIds(
+    String parentId, {
+    bool activeOnly = true,
+  }) async {
+    final rows = await _db.query(
+      'tasks',
+      columns: ['id'],
+      where: activeOnly
+          ? "repeat_parent_id = ? AND deleted_at_ms = 0 AND completed = 0"
+          : "repeat_parent_id = ? AND deleted_at_ms = 0",
+      whereArgs: [parentId],
+    );
+    return rows.map((r) => r['id'] as String).toList();
   }
 
   // === pomodoro_sessions(P1 多实体同步)======================================
@@ -2477,6 +2532,8 @@ class AppDatabase {
     'due_at_ms': t.dueAt?.millisecondsSinceEpoch ?? 0,
     'reminder': t.reminder,
     'repeat_config': t.repeatConfig,
+    'repeat_parent_id': t.repeatParentId,
+    'repeat_end_date_ms': t.repeatEndDate?.millisecondsSinceEpoch ?? 0,
   };
 
   PfTask _taskFromRow(Map<String, Object?> r) => PfTask(
@@ -2505,6 +2562,11 @@ class AppDatabase {
         : null,
     reminder: (r['reminder'] as String?) ?? 'none',
     repeatConfig: (r['repeat_config'] as String?) ?? '',
+    repeatParentId: (r['repeat_parent_id'] as String?) ?? '',
+    repeatEndDate:
+        r['repeat_end_date_ms'] != null && (r['repeat_end_date_ms'] as int) > 0
+        ? DateTime.fromMillisecondsSinceEpoch(r['repeat_end_date_ms'] as int)
+        : null,
     syncMeta: PfSyncMeta(
       revision: (r['revision'] as int?) ?? 1,
       updatedAt: r['updated_at_ms'] != null && (r['updated_at_ms'] as int) > 0

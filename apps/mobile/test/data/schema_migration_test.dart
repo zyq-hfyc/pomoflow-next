@@ -31,6 +31,8 @@ void main() {
             'description',
             // schema v17:到期日真值 + 提醒 + 自定义重复配置
             'due_at_ms', 'reminder', 'repeat_config',
+            // schema v18:重复实例引擎两列
+            'repeat_parent_id', 'repeat_end_date_ms',
           ]),
         );
         for (final tbl in ['daily_reviews', 'mottos']) {
@@ -148,7 +150,11 @@ void main() {
         expect(v17cols.map((r) => r['name']), contains('due_at_ms'));
         expect(v17cols.map((r) => r['name']), contains('reminder'));
         expect(v17cols.map((r) => r['name']), contains('repeat_config'));
-        expect(await db.getMeta('schema_version'), '17');
+        // schema v18 加 tasks.repeat_parent_id / repeat_end_date_ms(重复
+        // 实例引擎:模板-实例链接 + 重复终止时间)
+        expect(v17cols.map((r) => r['name']), contains('repeat_parent_id'));
+        expect(v17cols.map((r) => r['name']), contains('repeat_end_date_ms'));
+        expect(await db.getMeta('schema_version'), '18');
       } finally {
         await db.close();
       }
@@ -298,10 +304,13 @@ void main() {
       expect(v17cols.map((r) => r['name']), contains('due_at_ms'));
       expect(v17cols.map((r) => r['name']), contains('reminder'));
       expect(v17cols.map((r) => r['name']), contains('repeat_config'));
+      // v17 → v18 升级:legacy 库也补 repeat_parent_id / repeat_end_date_ms
+      expect(v17cols.map((r) => r['name']), contains('repeat_parent_id'));
+      expect(v17cols.map((r) => r['name']), contains('repeat_end_date_ms'));
       final legacyRow = (await db.raw.query('tasks')).first;
       expect(legacyRow['due_label'], '今天');
       expect((legacyRow['due_at_ms'] as int), greaterThan(0));
-      expect(await db.getMeta('schema_version'), '17');
+      expect(await db.getMeta('schema_version'), '18');
     } finally {
       await db.close();
       await tmp.delete(recursive: true);

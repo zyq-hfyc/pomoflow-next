@@ -5,6 +5,8 @@ import '../models/project.dart';
 import '../models/session.dart';
 import '../models/subtask.dart';
 import '../models/task.dart';
+import '../services/repeat_engine.dart';
+import '../services/repeat_service.dart';
 import '../services/sync_wire.dart';
 
 /// 任务/手账数据仓库 —— P3d-Phase-1 落 sqflite 持久化(支持 web 内存兜底)。
@@ -395,7 +397,7 @@ class TaskProvider extends ChangeNotifier {
 
   Future<void> addTask(PfTask task) async {
     final id = task.id.isEmpty ? await _allocateId() : task.id;
-    final t = id == task.id
+    var t = id == task.id
         ? task
         : PfTask(
             id: id,
@@ -412,10 +414,24 @@ class TaskProvider extends ChangeNotifier {
             pomodoroDuration: task.pomodoroDuration,
             repeat: task.repeat,
             repeatConfig: task.repeatConfig,
+            repeatParentId: task.repeatParentId,
+            repeatEndDate: task.repeatEndDate,
             subtaskCount: task.subtaskCount,
             completed: task.completed,
             syncMeta: task.syncMeta,
           );
+    // 新建模板 → 落库前算好重复终止时间(桌面 upsert_task 同构)。
+    if (t.isRepeatTemplate) {
+      final end = computeRepeatEndDate(
+        rule: t.repeat,
+        dueAt: t.dueAt,
+        repeatConfig: t.repeatConfig,
+        tzOffsetMin: _tzOffsetMin,
+      );
+      t = end == null
+          ? t.copyWith(clearRepeatEndDate: true)
+          : t.copyWith(repeatEndDate: end);
+    }
     _tasks.insert(0, t);
     final db = _db;
     if (db != null) {
@@ -423,6 +439,18 @@ class TaskProvider extends ChangeNotifier {
       // repeat/pomodoro_duration 等列,新任务落库即丢)。
       await db.insertTask(t);
       await _markPending(db, t.id);
+      // 模板首建 → 生成实例(桌面 commands.rs 同构;只在创建端生成,
+      // 其余设备靠同步收实例,见 RepeatService 类注释)。
+      if (t.isRepeatTemplate) {
+        await RepeatService.generateInstances(
+          db,
+          t,
+          tzOffsetMin: _tzOffsetMin,
+          originDevice: _deviceIdProvider?.call() ?? '',
+          userId: _userIdProvider?.call() ?? '',
+        );
+        await reloadFromDb();
+      }
     }
     notifyListeners();
   }
@@ -583,21 +611,90 @@ class TaskProvider extends ChangeNotifier {
 
   /// 编辑任务(业务字段):内存替换 + DB 更新 + 标 pending(LWW 常规通道)。
   /// id / syncMeta / completed / completedPomos 由 copyWith 语义保留。
+  ///
+  /// 重复编排(桌面 upsert_task 同构;实例编辑不触发):规则/到期日/自定义
+  /// 配置任一变化且新旧至少一方带规则 → 清未完成实例(已完成保留)+ 按
+  /// 新规则重生成;模板编辑一律重算 repeat_end_date。
   Future<void> editTask(PfTask task) async {
     final i = _tasks.indexWhere((t) => t.id == task.id);
     if (i < 0) return;
-    _tasks[i] = task;
+    final old = _tasks[i];
+    var next = task;
+    // 完成态保护(桌面 upsert_task 同构):编辑面板不携带完成态,旧值
+    // 一律保留 —— 防止过期快照把已完成/番茄进度冲回去。
+    next = old.completedAt == null
+        ? next.copyWith(
+            completed: old.completed,
+            completedPomos: old.completedPomos,
+            clearCompletedAt: true,
+          )
+        : next.copyWith(
+            completed: old.completed,
+            completedPomos: old.completedPomos,
+            completedAt: old.completedAt,
+          );
+    if (next.repeatParentId.isEmpty) {
+      final end = next.repeat != 'none'
+          ? computeRepeatEndDate(
+              rule: next.repeat,
+              dueAt: next.dueAt,
+              repeatConfig: next.repeatConfig,
+              tzOffsetMin: _tzOffsetMin,
+            )
+          : null;
+      next = end == null
+          ? next.copyWith(clearRepeatEndDate: true)
+          : next.copyWith(repeatEndDate: end);
+    }
+    _tasks[i] = next;
     final db = _db;
     if (db != null) {
-      await db.updateTask(task);
-      await _markPending(db, task.id);
+      await db.updateTask(next);
+      await _markPending(db, next.id);
+      if (next.repeatParentId.isEmpty) {
+        // dueAt 比较用 epoch ms —— DateTime == 连时区标签一起比,本地/UTC
+        // 标签不同的同一时刻会误判为「变了」。
+        final sameDue =
+            old.dueAt?.millisecondsSinceEpoch ==
+            next.dueAt?.millisecondsSinceEpoch;
+        final regen =
+            (old.repeat != next.repeat ||
+                !sameDue ||
+                old.repeatConfig != next.repeatConfig) &&
+            (old.repeat != 'none' || next.repeat != 'none');
+        if (regen) {
+          final originDevice = _deviceIdProvider?.call() ?? '';
+          final userId = _userIdProvider?.call() ?? '';
+          await RepeatService.deleteActiveInstances(
+            db,
+            next.id,
+            originDevice: originDevice,
+            userId: userId,
+          );
+          if (next.isRepeatTemplate) {
+            await RepeatService.generateInstances(
+              db,
+              next,
+              tzOffsetMin: _tzOffsetMin,
+              originDevice: originDevice,
+              userId: userId,
+            );
+          }
+          await reloadFromDb();
+          return; // reloadFromDb 已 notifyListeners
+        }
+      }
     }
     notifyListeners();
   }
 
   /// 软删除任务:内存移除 + DB 盖墓碑标 pending(行保留,否则对端/服务端
   /// 旧快照会在 pull 时复活)。若删的是当前专注任务,一并解除专注。
+  /// 删的是重复模板时级联删除全部实例(含已完成 —— 桌面 delete_task
+  /// 同构;purgeTask 的本地硬删在 trash 里兜底清行)。
   Future<void> deleteTask(String id) async {
+    final idx = _tasks.indexWhere((t) => t.id == id);
+    final victim = idx >= 0 ? _tasks[idx] : null;
     _tasks.removeWhere((t) => t.id == id);
     if (_focusTaskId == id) _focusTaskId = null;
     final db = _db;
@@ -608,6 +705,14 @@ class TaskProvider extends ChangeNotifier {
           originDevice: _deviceIdProvider?.call() ?? '',
           userId: _userIdProvider?.call() ?? '',
         );
+        if (victim != null && victim.isRepeatTemplate) {
+          await RepeatService.deleteAllInstances(
+            db,
+            id,
+            originDevice: _deviceIdProvider?.call() ?? '',
+            userId: _userIdProvider?.call() ?? '',
+          );
+        }
       } on Exception catch (e) {
         debugPrint('softDeleteTask failed for $id: $e');
       }
@@ -821,6 +926,10 @@ class TaskProvider extends ChangeNotifier {
   Future<String> nextId() async => await _allocateId();
 
   Future<String> _allocateId() async => uuidV4();
+
+  /// 本机时区偏移分钟(东正西负;与 core/desktop 的 tz 约定一致)——
+  /// 重复引擎的墙钟算术用。
+  static int get _tzOffsetMin => DateTime.now().timeZoneOffset.inMinutes;
 
   // id 必须是标准 UUID v4:桌面端 `Id::parse`(uuid::Uuid 校验)拒收
   // 其他格式,一行毒数据会把桌面任务页整页炸掉(真机 E2E 抓出 —— 14 字符

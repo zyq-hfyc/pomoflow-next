@@ -64,6 +64,8 @@ class PfTask {
     this.pomodoroDuration = 0,
     this.repeat = 'none',
     this.repeatConfig = '',
+    this.repeatParentId = '',
+    this.repeatEndDate,
     this.reminder = 'none',
     this.dueAt,
     this.subtaskCount = 0,
@@ -94,12 +96,20 @@ class PfTask {
   final int pomodoroDuration;
 
   /// 重复(none/daily/weekdays/weekly/monthly/yearly/custom,对齐 core
-  /// Repeat snake 名)。mobile 只存储与同步;实例生成是桌面 repeat 引擎职责。
+  /// Repeat snake 名)。模板 = 带规则且非实例;实例生成见 repeat_service。
   final String repeat;
 
   /// 自定义重复规则 JSON(repeat == 'custom' 时有值;键名与桌面/v1 的
   /// camelCase 同构:{interval, type, startDate, endDate, weekdays?, monthDays?})。
   final String repeatConfig;
+
+  /// 重复模板 id('' = 模板本身 / 普通任务;对齐 core
+  /// `repeat_parent_id: Option<Id>`,实例指向模板)。
+  final String repeatParentId;
+
+  /// 重复终止时间(null = 未设;对齐 core `repeat_end_date`,模板上由
+  /// computeRepeatEndDate 按规则算出)。
+  final DateTime? repeatEndDate;
 
   /// 提醒(none/on_time/minutes5/minutes30/hour1/day1/days2,core Reminder
   /// serde 值;桌面同款 7 档)。触发引擎(到点弹通知)后续独立批次。
@@ -121,6 +131,13 @@ class PfTask {
   final DateTime? deletedAt;
 
   bool get isDeleted => deletedAt != null;
+
+  /// 重复实例判定(桌面 repeat_service `is_template` 同构):
+  /// 带规则且非实例 = 模板(实例生成/重排的载体)。
+  bool get isRepeatTemplate => repeat != 'none' && repeatParentId.isEmpty;
+
+  /// 重复实例(指向模板;编辑/完成只动这一条,不触发重排)。
+  bool get isRepeatInstance => repeatParentId.isNotEmpty;
 
   /// Phase-2 同步元信息。`copyWith` 业务字段时 syncMeta 默认保留不变;
   /// provider 在 mutator 末尾手动覆写(revision + 1 / syncState='pending' /
@@ -144,6 +161,9 @@ class PfTask {
     int? pomodoroDuration,
     String? repeat,
     String? repeatConfig,
+    String? repeatParentId,
+    DateTime? repeatEndDate,
+    bool clearRepeatEndDate = false,
     String? reminder,
     DateTime? dueAt,
     bool clearDueAt = false,
@@ -166,6 +186,10 @@ class PfTask {
     pomodoroDuration: pomodoroDuration ?? this.pomodoroDuration,
     repeat: repeat ?? this.repeat,
     repeatConfig: repeatConfig ?? this.repeatConfig,
+    repeatParentId: repeatParentId ?? this.repeatParentId,
+    repeatEndDate: clearRepeatEndDate
+        ? null
+        : (repeatEndDate ?? this.repeatEndDate),
     reminder: reminder ?? this.reminder,
     dueAt: clearDueAt ? null : (dueAt ?? this.dueAt),
     subtaskCount: subtaskCount ?? this.subtaskCount,
