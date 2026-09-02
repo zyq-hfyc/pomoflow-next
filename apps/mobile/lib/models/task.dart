@@ -63,6 +63,9 @@ class PfTask {
     this.description = '',
     this.pomodoroDuration = 0,
     this.repeat = 'none',
+    this.repeatConfig = '',
+    this.reminder = 'none',
+    this.dueAt,
     this.subtaskCount = 0,
     this.completed = false,
     this.completedAt,
@@ -90,9 +93,21 @@ class PfTask {
   /// `pomodoro_duration: Option<u32>` 的「覆盖全局」语义)。
   final int pomodoroDuration;
 
-  /// 重复(none/daily/weekdays/weekly/monthly/yearly,对齐 core Repeat snake 名)。
-  /// mobile 只存储与同步;实例生成是桌面 repeat 引擎职责。
+  /// 重复(none/daily/weekdays/weekly/monthly/yearly/custom,对齐 core
+  /// Repeat snake 名)。mobile 只存储与同步;实例生成是桌面 repeat 引擎职责。
   final String repeat;
+
+  /// 自定义重复规则 JSON(repeat == 'custom' 时有值;键名与桌面/v1 的
+  /// camelCase 同构:{interval, type, startDate, endDate, weekdays?, monthDays?})。
+  final String repeatConfig;
+
+  /// 提醒(none/on_time/minutes5/minutes30/hour1/day1/days2,core Reminder
+  /// serde 值;桌面同款 7 档)。触发引擎(到点弹通知)后续独立批次。
+  final String reminder;
+
+  /// 到期日(含时分;null = 无)。桌面对齐 core `due_date: Option<DateTime<Utc>>`
+  /// 的完整 datetime 语义 —— 此前 dueLabel 只有「今天/明天」标签粒度。
+  final DateTime? dueAt;
 
   final int subtaskCount;
   final bool completed;
@@ -115,7 +130,8 @@ class PfTask {
   String get pomoLabel => '$completedPomos/$estimatedPomos';
 
   /// 业务字段 copy。**id 与 syncMeta 不可变**(由 SyncClient / provider 决定)。
-  /// [clearCompletedAt]:copyWith 的 null 会被 `??` 吞,取消完成要显式清。
+  /// [clearCompletedAt]/[clearDueAt]:copyWith 的 null 会被 `??` 吞,
+  /// 清空要显式传。
   PfTask copyWith({
     String? title,
     PfPriority? priority,
@@ -127,6 +143,10 @@ class PfTask {
     String? description,
     int? pomodoroDuration,
     String? repeat,
+    String? repeatConfig,
+    String? reminder,
+    DateTime? dueAt,
+    bool clearDueAt = false,
     int? subtaskCount,
     bool? completed,
     DateTime? completedAt,
@@ -145,12 +165,45 @@ class PfTask {
     description: description ?? this.description,
     pomodoroDuration: pomodoroDuration ?? this.pomodoroDuration,
     repeat: repeat ?? this.repeat,
+    repeatConfig: repeatConfig ?? this.repeatConfig,
+    reminder: reminder ?? this.reminder,
+    dueAt: clearDueAt ? null : (dueAt ?? this.dueAt),
     subtaskCount: subtaskCount ?? this.subtaskCount,
     completed: completed ?? this.completed,
     completedAt: clearCompletedAt ? null : (completedAt ?? this.completedAt),
     deletedAt: deletedAt ?? this.deletedAt,
     syncMeta: syncMeta ?? this.syncMeta,
   );
+
+  /// 到期日本地格式化(yyyy-MM-dd HH:mm);无到期日返回空串。
+  String get dueAtLabel {
+    final d = dueAt;
+    if (d == null) return '';
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${d.year}-${two(d.month)}-${two(d.day)} ${two(d.hour)}:${two(d.minute)}';
+  }
+
+  /// 提醒中文标签(core serde 值 → 展示;与桌面词典同文案)。
+  String get reminderLabel => switch (reminder) {
+    'on_time' => '准时',
+    'minutes5' => '提前 5 分钟',
+    'minutes30' => '提前 30 分钟',
+    'hour1' => '提前 1 小时',
+    'day1' => '提前 1 天',
+    'days2' => '提前 2 天',
+    _ => '不提醒',
+  };
+
+  /// 重复中文标签(custom 显示「自定义」;具体规则在 repeatConfig)。
+  String get repeatLabel => switch (repeat) {
+    'daily' => '每天',
+    'weekdays' => '工作日',
+    'weekly' => '每周',
+    'monthly' => '每月',
+    'yearly' => '每年',
+    'custom' => '自定义',
+    _ => '不重复',
+  };
 }
 
 /// 手账条目类型(§5.4 快速新建 5 类中的 4 类轻量项 + 小记)。

@@ -16,9 +16,8 @@ import 'dart:math' as math;
 
 /// epoch 毫秒 → RFC3339 UTC(毫秒 3 位 + Z;不依赖 toIso8601String,
 /// 它会输出 +02:00 偏移形,server chrono 解析虽兼容但对拍噪音大)。
-String msToIso(int ms) => _formatServerIso(
-      DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true),
-    );
+String msToIso(int ms) =>
+    _formatServerIso(DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true));
 
 /// 标准 UUID v4 字符串(8-4-4-4-12,version/variant 位按 RFC 4122)。
 /// 服务端 `Change.id: uuid::Uuid` 只认这种格式 —— base64Url 短码会被
@@ -79,7 +78,9 @@ String? dueLabelToIso(String label, {DateTime? now}) {
 /// (mobile due_label 是自由文本列,UI 按精确匹配分流视图,未识别的进「计划」)。
 String dueDateToLabel(String? iso, {DateTime? now}) {
   if (iso == null || iso.isEmpty) return '';
-  final due = DateTime.tryParse(iso);
+  // core 发的是 UTC(Z 结尾)RFC3339;不 toLocal 会拿 UTC 年月日和本地
+  // 「今天」比,东八区凌晨时段会差一天。
+  final due = DateTime.tryParse(iso)?.toLocal();
   if (due == null) return '';
   final base = now ?? DateTime.now();
   final dueDay = DateTime(due.year, due.month, due.day);
@@ -106,6 +107,9 @@ Map<String, Object?> coreTaskPayload(
   final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
   final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
   final completedAtMs = (row['completed_at_ms'] as int?) ?? 0;
+  final dueAtMs = (row['due_at_ms'] as int?) ?? 0;
+  final repeat = (row['repeat'] as String?) ?? 'none';
+  final repeatConfig = (row['repeat_config'] as String?) ?? '';
   return {
     'id': row['id'],
     'user_id': userId,
@@ -117,16 +121,21 @@ Map<String, Object?> coreTaskPayload(
         : null,
     'priority': row['priority'] ?? 'none',
     'status': ((row['completed'] as int?) ?? 0) == 1 ? 'completed' : 'active',
-    'due_date': dueLabelToIso((row['due_label'] as String?) ?? ''),
+    // 到期日完整 datetime(v17 起真值;此前由 due_label 标签近似)。
+    'due_date': dueAtMs > 0 ? msToIso(dueAtMs) : null,
     'estimated_pomodoros': (row['estimated'] as int?) ?? 0,
     'completed_pomodoros': (row['completed_cnt'] as int?) ?? 0,
     // 任务级单番茄时长(0 → null = 用全局设置;此前硬编码 null,表单选了也不上云)。
     'pomodoro_duration': ((row['pomodoro_duration'] as int?) ?? 0) > 0
         ? (row['pomodoro_duration'] as int)
         : null,
-    'reminder': 'none',
-    'repeat': (row['repeat'] as String?) ?? 'none',
-    'repeat_config': null,
+    // 提醒 7 档(此前硬编码 'none',mobile 选了也不上云)。
+    'reminder': (row['reminder'] as String?) ?? 'none',
+    'repeat': repeat,
+    // 自定义重复规则 JSON(repeat=custom 且配置非空才发;桌面同语义)。
+    'repeat_config': repeat == 'custom' && repeatConfig.isNotEmpty
+        ? repeatConfig
+        : null,
     'repeat_parent_id': null,
     'repeat_end_date': null,
     // 完成时刻(此前硬编码 null —— mobile 勾完成的任务推上去,桌面区间
@@ -143,9 +152,10 @@ Map<String, Object?> coreTaskPayload(
 
 /// pomodoro_sessions pending 行 → core::PomodoroSession JSON(push 方向)。
 Map<String, Object?> coreSessionPayload(
-    Map<String, Object?> row, String userId) {
-  String? orNull(Object? v) =>
-      v is String && v.isNotEmpty ? v : null;
+  Map<String, Object?> row,
+  String userId,
+) {
+  String? orNull(Object? v) => v is String && v.isNotEmpty ? v : null;
   return {
     'id': row['id'],
     'user_id': userId,
@@ -165,7 +175,9 @@ Map<String, Object?> coreSessionPayload(
 /// projects pending 行 → core::Project JSON(push 方向)。
 /// mobile 平铺子集:parent_id 恒 null(层级是桌面 UI 概念)。
 Map<String, Object?> coreProjectPayload(
-    Map<String, Object?> row, String userId) {
+  Map<String, Object?> row,
+  String userId,
+) {
   final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
   return {
     'id': row['id'],
@@ -217,16 +229,19 @@ Map<String, Object?> tagFieldsFromCore(Map? p) {
 /// task_tag_sync pending 行 → core::TaskTagLink JSON(push 方向)。
 /// entity_id = task_id(sync key);tag_ids 排序去重后发(消除顺序伪冲突)。
 Map<String, Object?> coreTaskTagPayload(
-    Map<String, Object?> row, String userId) {
+  Map<String, Object?> row,
+  String userId,
+) {
   final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
   final csv = (row['tag_ids'] as String?) ?? '';
-  final ids = csv
-      .split(',')
-      .map((e) => e.trim())
-      .where((e) => e.isNotEmpty)
-      .toSet()
-      .toList()
-    ..sort();
+  final ids =
+      csv
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
   return {
     'task_id': row['task_id'],
     'tag_ids': ids,
@@ -238,7 +253,9 @@ Map<String, Object?> coreTaskTagPayload(
 
 /// subtasks pending 行 → core::SubTask JSON(push 方向)。
 Map<String, Object?> coreSubtaskPayload(
-    Map<String, Object?> row, String userId) {
+  Map<String, Object?> row,
+  String userId,
+) {
   final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
   final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
   return {
@@ -272,7 +289,9 @@ Map<String, Object?> subtaskFieldsFromCore(Map? p) {
 
 /// daily_reviews pending 行 → core::DailyReview JSON(push 方向)。
 Map<String, Object?> coreDailyReviewPayload(
-    Map<String, Object?> row, String userId) {
+  Map<String, Object?> row,
+  String userId,
+) {
   final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
   final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
   return {
@@ -299,7 +318,9 @@ Map<String, Object?> dailyReviewFieldsFromCore(Map? p) {
 
 /// weekly_reviews pending 行 → core::WeeklyReview JSON(push 方向)。
 Map<String, Object?> coreWeeklyReviewPayload(
-    Map<String, Object?> row, String userId) {
+  Map<String, Object?> row,
+  String userId,
+) {
   final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
   final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
   return {
@@ -326,7 +347,9 @@ Map<String, Object?> weeklyReviewFieldsFromCore(Map? p) {
 
 /// monthly_reviews pending 行 → core::MonthlyReview JSON(push 方向)。
 Map<String, Object?> coreMonthlyReviewPayload(
-    Map<String, Object?> row, String userId) {
+  Map<String, Object?> row,
+  String userId,
+) {
   final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
   final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
   return {
@@ -405,9 +428,16 @@ Map<String, Object?> taskFieldsFromCore(Map? p) {
     out['completed_cnt'] = p['completed_pomodoros'] as int;
   }
   if (p['due_date'] is String?) {
-    out['due_label'] = dueDateToLabel(p['due_date'] as String?);
+    final iso = p['due_date'] as String?;
+    out['due_at_ms'] = isoToMs(iso ?? '');
+    // due_label 保留为显示派生标签(视图兜底 + 老逻辑兼容)。
+    out['due_label'] = dueDateToLabel(iso);
   }
+  if (p['reminder'] is String) out['reminder'] = p['reminder'] as String;
   if (p['repeat'] is String) out['repeat'] = p['repeat'] as String;
+  if (p['repeat_config'] is String?) {
+    out['repeat_config'] = (p['repeat_config'] as String?) ?? '';
+  }
   if (p['pomodoro_duration'] is int) {
     out['pomodoro_duration'] = p['pomodoro_duration'] as int;
   }

@@ -8,7 +8,9 @@
 //! 关键约定:无 `#[serde(default)]` 的必填字段(`project_id` / `due_date` /
 //! `completed_at` / `id` / `user_id` / `title`)必须**显式出现**,哪怕是 null。
 
-use pomoflow_core::model::{PomodoroSession, Task};
+use chrono::{DateTime, Utc};
+use pomoflow_core::model::{PomodoroSession, Reminder, Repeat, Task};
+use pomoflow_core::repeat::compute_repeat_dates;
 
 /// `sync_wire.dart coreTaskPayload` 的合法产物样例。
 const TASK_JSON: &str = r#"{
@@ -62,6 +64,61 @@ fn mobile_task_payload_deserializes() {
     assert!(t.completed_at.is_none());
     assert_eq!(t.revision, 2);
     assert!(t.deleted_at.is_none());
+}
+
+#[test]
+fn mobile_due_at_reminder_custom_repeat_payload_deserializes() {
+    // v17 起变体:due_at_ms 真值到期日 + 非 none 提醒 + 自定义重复配置
+    // (mobile 编辑器产出的 camelCase JSON,startDate/endDate 为
+    // "yyyy-MM-ddTHH:mm" 墙钟格式 —— 与桌面 datetime-local 一致)。
+    let mut obj = serde_json::from_str::<serde_json::Value>(TASK_JSON)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+    obj.insert("due_date".into(), serde_json::json!("2026-09-02T10:00:00.000Z"));
+    obj.insert("reminder".into(), serde_json::json!("minutes30"));
+    obj.insert("repeat".into(), serde_json::json!("custom"));
+    obj.insert(
+        "repeat_config".into(),
+        serde_json::json!(
+            "{\"interval\":0,\"type\":\"week\",\"startDate\":\"2026-09-02T18:00\",\
+             \"endDate\":\"2026-12-31T23:59\",\"weekdays\":[1,3,5]}"
+        ),
+    );
+    let t: Task = serde_json::from_value(serde_json::Value::Object(obj))
+        .expect("due/reminder/custom repeat payload 必须能反序列化");
+    assert_eq!(t.reminder, Reminder::Minutes30);
+    assert_eq!(t.repeat, Repeat::Custom);
+    assert!(t.repeat_config.is_some());
+    assert!(t.due_date.is_some());
+
+    // repeat_config 必须能被 repeat 引擎消费并产出实例(东八区墙钟)。
+    let due: DateTime<Utc> = "2026-09-02T10:00:00Z".parse().unwrap();
+    let dates = compute_repeat_dates(
+        t.repeat,
+        Some(due),
+        t.repeat_config.as_deref(),
+        8 * 60,
+    );
+    assert!(!dates.is_empty(), "weekdays 1/3/5 自定义规则应生成实例");
+}
+
+#[test]
+fn mobile_reminder_all_variants_deserialize() {
+    // Reminder serde 名无下划线前缀数字(minutes5/hour1/days2 …),
+    // mobile `_reminderOptions` 的 key 必须逐个能收。
+    for name in ["none", "on_time", "minutes5", "minutes30", "hour1", "day1", "days2"] {
+        let mut obj = serde_json::from_str::<serde_json::Value>(TASK_JSON)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone();
+        obj.insert("reminder".into(), serde_json::json!(name));
+        let t: Task = serde_json::from_value(serde_json::Value::Object(obj))
+            .unwrap_or_else(|e| panic!("reminder={name} 应可反序列化: {e}"));
+        assert_eq!(serde_json::to_string(&t.reminder).unwrap(), format!("\"{name}\""));
+    }
 }
 
 #[test]

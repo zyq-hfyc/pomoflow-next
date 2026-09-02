@@ -59,7 +59,7 @@ class AppDatabase {
   /// 与桌面端同步;日复盘已存在,这里补全另外两种周期)。
   /// schema v15 → v16:projects 补 parent_id / display_order 列(P3 项目层级
   /// 与桌面端同步对齐,3 级嵌套 + 拖拽改父)。
-  static const _schemaVersion = 16;
+  static const _schemaVersion = 17;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -136,6 +136,11 @@ class AppDatabase {
           if (oldVersion < 16) {
             await _v15ToV16(db);
           }
+          // v16 → v17:tasks 补 due_at_ms / reminder / repeat_config
+          //(到期日完整 datetime + 提醒 + 自定义重复,对齐桌面 core::Task)。
+          if (oldVersion < 17) {
+            await _v16ToV17(db);
+          }
         },
       ),
     );
@@ -171,10 +176,15 @@ class AppDatabase {
         completed_at_ms INTEGER NOT NULL DEFAULT 0,
         pomodoro_duration INTEGER NOT NULL DEFAULT 0,
         repeat TEXT NOT NULL DEFAULT 'none',
-        description TEXT NOT NULL DEFAULT ''
+        description TEXT NOT NULL DEFAULT '',
+        due_at_ms INTEGER NOT NULL DEFAULT 0,
+        reminder TEXT NOT NULL DEFAULT 'none',
+        repeat_config TEXT NOT NULL DEFAULT ''
       )
     ''');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)',
+    );
     await _createSessionsTable(db);
     await _createProjectsTable(db);
     // P3 项目层级:新建空库自动种 5 个默认顶级项目(平铺,display_order 1-5)
@@ -210,25 +220,41 @@ class AppDatabase {
   /// v1 → v2 升级:为已存在的 tasks 表补 5 列(meta v1 没 last_seq 行也补一下)。
   static Future<void> _v1ToV2(Database db) async {
     await _addColumnIfMissing(
-      db, 'tasks', 'ALTER TABLE tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 1');
+      db,
+      'tasks',
+      'ALTER TABLE tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 1',
+    );
     await _addColumnIfMissing(
-      db, 'tasks', "ALTER TABLE tasks ADD COLUMN sync_state TEXT NOT NULL DEFAULT 'synced'");
+      db,
+      'tasks',
+      "ALTER TABLE tasks ADD COLUMN sync_state TEXT NOT NULL DEFAULT 'synced'",
+    );
     await _addColumnIfMissing(
-      db, 'tasks', "ALTER TABLE tasks ADD COLUMN origin_device TEXT NOT NULL DEFAULT ''");
+      db,
+      'tasks',
+      "ALTER TABLE tasks ADD COLUMN origin_device TEXT NOT NULL DEFAULT ''",
+    );
     await _addColumnIfMissing(
-      db, 'tasks', "ALTER TABLE tasks ADD COLUMN payload TEXT NOT NULL DEFAULT ''");
+      db,
+      'tasks',
+      "ALTER TABLE tasks ADD COLUMN payload TEXT NOT NULL DEFAULT ''",
+    );
     await _addColumnIfMissing(
-      db, 'tasks', "ALTER TABLE tasks ADD COLUMN user_id TEXT NOT NULL DEFAULT ''");
+      db,
+      'tasks',
+      "ALTER TABLE tasks ADD COLUMN user_id TEXT NOT NULL DEFAULT ''",
+    );
 
     // meta.last_seq 兜底插入(只是 INSERT OR IGNORE 语义,冲突算法用 replace 保证幂等)。
-    await db.insert(
-      'meta',
-      {'k': 'last_seq', 'v': '0'},
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
+    await db.insert('meta', {
+      'k': 'last_seq',
+      'v': '0',
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
     // 既然是 v1→v2 迁移,把 schema_version 顶到 2。
-    await db.insert('meta', {'k': 'schema_version', 'v': '2'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '2',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// v2 → v3 升级:`tasks.id INTEGER → TEXT` 类型整体迁移。
@@ -268,17 +294,24 @@ class AppDatabase {
     ''');
     await db.execute('DROP TABLE tasks');
     await db.execute('ALTER TABLE tasks_v3 RENAME TO tasks');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)',
+    );
     // bump schema_version → 3
-    await db.insert('meta', {'k': 'schema_version', 'v': '3'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '3',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// sqflite 的 ALTER ADD COLUMN 没原生 IF NOT EXISTS,先探测列再补(幂等)。
   /// PRAGMA table_info 返回 cid / name / type / notnull / dflt_value / pk,
   /// 这里仅取 name 列。
   static Future<void> _addColumnIfMissing(
-      Database db, String table, String sql) async {
+    Database db,
+    String table,
+    String sql,
+  ) async {
     final cols = await db.rawQuery('PRAGMA table_info($table)');
     final names = cols.map((r) => r['name'] as String).toSet();
     final match = RegExp(r'ADD COLUMN\s+(\w+)').firstMatch(sql);
@@ -292,18 +325,28 @@ class AppDatabase {
   /// + 新建 pomodoro_sessions 表。
   static Future<void> _v4ToV5(Database db) async {
     await _addColumnIfMissing(
-      db, 'tasks', 'ALTER TABLE tasks ADD COLUMN updated_at_ms INTEGER NOT NULL DEFAULT 0');
+      db,
+      'tasks',
+      'ALTER TABLE tasks ADD COLUMN updated_at_ms INTEGER NOT NULL DEFAULT 0',
+    );
     await _createSessionsTable(db);
-    await db.insert('meta', {'k': 'schema_version', 'v': '5'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '5',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// v5 → v6 升级:tasks 补 `deleted_at_ms` 软删除列(0 = 未删,对齐桌面 store)。
   static Future<void> _v5ToV6(Database db) async {
     await _addColumnIfMissing(
-      db, 'tasks', 'ALTER TABLE tasks ADD COLUMN deleted_at_ms INTEGER NOT NULL DEFAULT 0');
-    await db.insert('meta', {'k': 'schema_version', 'v': '6'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+      db,
+      'tasks',
+      'ALTER TABLE tasks ADD COLUMN deleted_at_ms INTEGER NOT NULL DEFAULT 0',
+    );
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '6',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// v6 → v7 升级:**清毒**——id 全面切标准 UUID v4 的配套迁移。
@@ -314,17 +357,24 @@ class AppDatabase {
     await db.execute('DELETE FROM tasks WHERE LENGTH(id) != 36');
     await db.execute('DELETE FROM pomodoro_sessions WHERE LENGTH(id) != 36');
     await db.delete('meta', where: "k = 'seed_done'");
-    await db.insert('meta', {'k': 'schema_version', 'v': '7'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '7',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// v7 → v8 升级:tasks 补 `completed_at_ms` 完成时刻列(0 = 未完成/未知)。
   /// 老库里已完成的行没有历史时刻,回填 0(区间口径下不计,保守可接受)。
   static Future<void> _v7ToV8(Database db) async {
     await _addColumnIfMissing(
-      db, 'tasks', 'ALTER TABLE tasks ADD COLUMN completed_at_ms INTEGER NOT NULL DEFAULT 0');
-    await db.insert('meta', {'k': 'schema_version', 'v': '8'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+      db,
+      'tasks',
+      'ALTER TABLE tasks ADD COLUMN completed_at_ms INTEGER NOT NULL DEFAULT 0',
+    );
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '8',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// v12 → v13 升级:tasks 补 description 列(桌面写的任务描述此前被
@@ -332,19 +382,26 @@ class AppDatabase {
   /// 新建 daily_reviews / mottos 两表。
   static Future<void> _v12ToV13(Database db) async {
     await _addColumnIfMissing(
-      db, 'tasks', "ALTER TABLE tasks ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+      db,
+      'tasks',
+      "ALTER TABLE tasks ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+    );
     await _createDailyReviewsTable(db);
     await _createMottosTable(db);
-    await db.insert('meta', {'k': 'schema_version', 'v': '13'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '13',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// v14 → v15 升级:新建 weekly_reviews / monthly_reviews 表。
   static Future<void> _v14ToV15(Database db) async {
     await _createWeeklyReviewsTable(db);
     await _createMonthlyReviewsTable(db);
-    await db.insert('meta', {'k': 'schema_version', 'v': '15'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '15',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// v15 → v16 升级:projects 加 parent_id / display_order(对齐 core)。
@@ -352,17 +409,70 @@ class AppDatabase {
   /// 老库若无 5 个默认项目,顺手种一次(对齐新装体验)。
   static Future<void> _v15ToV16(Database db) async {
     await _addColumnIfMissing(
-      db, 'projects', "ALTER TABLE projects ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''");
+      db,
+      'projects',
+      "ALTER TABLE projects ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''",
+    );
     await _addColumnIfMissing(
-      db, 'projects', "ALTER TABLE projects ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0");
+      db,
+      'projects',
+      "ALTER TABLE projects ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0",
+    );
     await db.rawUpdate('''
       UPDATE projects
       SET display_order = (
         SELECT COUNT(*) FROM projects AS p2 WHERE p2.name <= projects.name
       )''');
     await _seedDefaultProjects(db);
-    await db.insert('meta', {'k': 'schema_version', 'v': '16'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '16',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// v16 → v17 升级:到期日 datetime + 提醒 + 自定义重复(core::Task 对齐)。
+  ///
+  /// 老数据回填 due_at_ms:「今天/明天/后天」标签 → 对应本地日 12:00
+  /// (与旧 wire `dueLabelToIso` 同近似;「每天/本周/空」= 无到期,保持 0)。
+  static Future<void> _v16ToV17(Database db) async {
+    await _addColumnIfMissing(
+      db,
+      'tasks',
+      'ALTER TABLE tasks ADD COLUMN due_at_ms INTEGER NOT NULL DEFAULT 0',
+    );
+    await _addColumnIfMissing(
+      db,
+      'tasks',
+      "ALTER TABLE tasks ADD COLUMN reminder TEXT NOT NULL DEFAULT 'none'",
+    );
+    await _addColumnIfMissing(
+      db,
+      'tasks',
+      "ALTER TABLE tasks ADD COLUMN repeat_config TEXT NOT NULL DEFAULT ''",
+    );
+    final now = DateTime.now();
+    DateTime? dayFor(String label) => switch (label) {
+      '今天' => now,
+      '明天' => now.add(const Duration(days: 1)),
+      '后天' => now.add(const Duration(days: 2)),
+      _ => null,
+    };
+    final rows = await db.query('tasks', columns: ['id', 'due_label']);
+    for (final r in rows) {
+      final day = dayFor((r['due_label'] as String?) ?? '');
+      if (day == null) continue;
+      final noon = DateTime(day.year, day.month, day.day, 12);
+      await db.update(
+        'tasks',
+        {'due_at_ms': noon.millisecondsSinceEpoch},
+        where: 'id = ?',
+        whereArgs: [r['id']],
+      );
+    }
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '17',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// conflict_log 表(同 _v13ToV14 内 SQL;抽出供 _createSchema 用)。
@@ -497,15 +607,19 @@ class AppDatabase {
       'CREATE INDEX IF NOT EXISTS idx_conflict_log_occurred '
       'ON conflict_log(occurred_at_ms DESC)',
     );
-    await db.insert('meta', {'k': 'schema_version', 'v': '14'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '14',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// v11 → v12 升级:新建 subtasks 表(子任务实体)。
   static Future<void> _v11ToV12(Database db) async {
     await _createSubtasksTable(db);
-    await db.insert('meta', {'k': 'schema_version', 'v': '12'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '12',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// subtasks:core::SubTask 对齐(N:1 Task;position 同 task 内升序)。
@@ -538,8 +652,10 @@ class AppDatabase {
     await _createSubtasksTable(db);
     await _createDailyReviewsTable(db);
     await _createMottosTable(db);
-    await db.insert('meta', {'k': 'schema_version', 'v': '11'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '11',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// tags:core::Tag 平铺子集(名字 + 颜色)。
@@ -579,8 +695,10 @@ class AppDatabase {
   /// v9 → v10 升级:新建 projects 表(project 实体化)。
   static Future<void> _v9ToV10(Database db) async {
     await _createProjectsTable(db);
-    await db.insert('meta', {'k': 'schema_version', 'v': '10'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '10',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// projects(P1 实体化):core::Project 平铺子集(name/color,无层级 ——
@@ -619,11 +737,19 @@ class AppDatabase {
   /// v8 → v9 升级:任务级计时参数(单番茄时长覆盖全局 + 重复标记)。
   static Future<void> _v8ToV9(Database db) async {
     await _addColumnIfMissing(
-      db, 'tasks', 'ALTER TABLE tasks ADD COLUMN pomodoro_duration INTEGER NOT NULL DEFAULT 0');
+      db,
+      'tasks',
+      'ALTER TABLE tasks ADD COLUMN pomodoro_duration INTEGER NOT NULL DEFAULT 0',
+    );
     await _addColumnIfMissing(
-      db, 'tasks', "ALTER TABLE tasks ADD COLUMN repeat TEXT NOT NULL DEFAULT 'none'");
-    await db.insert('meta', {'k': 'schema_version', 'v': '9'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+      db,
+      'tasks',
+      "ALTER TABLE tasks ADD COLUMN repeat TEXT NOT NULL DEFAULT 'none'",
+    );
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '9',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// pomodoro_sessions(P1 多实体同步):core::PomodoroSession 对齐。
@@ -670,8 +796,10 @@ class AppDatabase {
     ''');
     await db.execute('DROP TABLE journals');
     await db.execute('ALTER TABLE journals_v4 RENAME TO journals');
-    await db.insert('meta', {'k': 'schema_version', 'v': '4'},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '4',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Database get raw => _db;
@@ -681,13 +809,21 @@ class AppDatabase {
   // === meta ===================================================================
 
   Future<String?> getMeta(String k) async {
-    final rows = await _db.query('meta', where: 'k = ?', whereArgs: [k], limit: 1);
+    final rows = await _db.query(
+      'meta',
+      where: 'k = ?',
+      whereArgs: [k],
+      limit: 1,
+    );
     if (rows.isEmpty) return null;
     return rows.first['v'] as String?;
   }
 
   Future<void> setMeta(String k, String v) async {
-    await _db.insert('meta', {'k': k, 'v': v}, conflictAlgorithm: ConflictAlgorithm.replace);
+    await _db.insert('meta', {
+      'k': k,
+      'v': v,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// LWW 同步 cursor:服务端 `SyncCursor{ last_seq: u64 }`。
@@ -740,7 +876,9 @@ class AppDatabase {
   }
 
   /// 最近 N 条冲突记录(按 occurred_at_ms DESC),UI 列表展示。
-  Future<List<Map<String, Object?>>> listRecentConflicts({int limit = 50}) async {
+  Future<List<Map<String, Object?>>> listRecentConflicts({
+    int limit = 50,
+  }) async {
     final rows = await _db.query(
       'conflict_log',
       orderBy: 'occurred_at_ms DESC',
@@ -848,6 +986,7 @@ class AppDatabase {
                 estimated, completed_cnt, subtask_cnt, tags_csv,
                 revision, updated_at_ms, deleted_at_ms, completed_at_ms,
                 pomodoro_duration, repeat, description,
+                due_at_ms, reminder, repeat_config,
                 origin_device, user_id, payload
          FROM tasks
          WHERE sync_state = 'pending'
@@ -873,8 +1012,12 @@ class AppDatabase {
     required Map<String, Object?> fields,
   }) async {
     await _db.transaction((txn) async {
-      final exists = (await txn.query('tasks',
-              where: 'id = ?', whereArgs: [id], limit: 1)).isNotEmpty;
+      final exists = (await txn.query(
+        'tasks',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      )).isNotEmpty;
       final row = <String, Object?>{
         ...fields,
         'revision': revision,
@@ -961,7 +1104,10 @@ class AppDatabase {
   // === pomodoro_sessions(P1 多实体同步)======================================
 
   Future<List<PfSession>> listSessions() async {
-    final rows = await _db.query('pomodoro_sessions', orderBy: 'started_at_ms ASC');
+    final rows = await _db.query(
+      'pomodoro_sessions',
+      orderBy: 'started_at_ms ASC',
+    );
     return rows.map(_sessionFromRow).toList();
   }
 
@@ -971,7 +1117,8 @@ class AppDatabase {
   Future<List<PfSession>> sessionsOnDay(String localDay) async {
     final rows = await _db.query(
       'pomodoro_sessions',
-      where: "strftime('%Y-%m-%d', started_at_ms / 1000, 'unixepoch', 'localtime') = ?"
+      where:
+          "strftime('%Y-%m-%d', started_at_ms / 1000, 'unixepoch', 'localtime') = ?"
           " AND is_completed = 1 AND task_id != ''",
       whereArgs: [localDay],
       orderBy: 'started_at_ms ASC',
@@ -985,7 +1132,9 @@ class AppDatabase {
 
   /// === ChangeLogStore:session 实体(与 tasks 四方法同形,LWW 复用)===
 
-  Future<List<Map<String, Object?>>> listPendingSessions({int limit = 200}) async {
+  Future<List<Map<String, Object?>>> listPendingSessions({
+    int limit = 200,
+  }) async {
     final rows = await _db.rawQuery(
       '''SELECT id, task_id, project_id, duration, started_at_ms, ended_at_ms,
                 is_completed, created_at_ms, revision, updated_at_ms,
@@ -1009,9 +1158,12 @@ class AppDatabase {
     required Map<String, Object?> fields,
   }) async {
     await _db.transaction((txn) async {
-      final exists = (await txn.query('pomodoro_sessions',
-              where: 'id = ?', whereArgs: [id], limit: 1))
-          .isNotEmpty;
+      final exists = (await txn.query(
+        'pomodoro_sessions',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      )).isNotEmpty;
       final row = <String, Object?>{
         ...fields,
         'revision': revision,
@@ -1022,7 +1174,12 @@ class AppDatabase {
         'sync_state': 'synced',
       };
       if (exists) {
-        await txn.update('pomodoro_sessions', row, where: 'id = ?', whereArgs: [id]);
+        await txn.update(
+          'pomodoro_sessions',
+          row,
+          where: 'id = ?',
+          whereArgs: [id],
+        );
       } else {
         row['id'] = id;
         await txn.insert('pomodoro_sessions', row);
@@ -1078,23 +1235,26 @@ class AppDatabase {
       orderBy: 'display_order ASC, name ASC',
     );
     return rows
-        .map((r) => PfProject(
-              id: r['id'] as String,
-              name: r['name'] as String,
-              color: (r['color'] as String?) ?? '',
-              parentId: (r['parent_id'] as String?) ?? '',
-              displayOrder: (r['display_order'] as int?) ?? 0,
-              syncMeta: PfSyncMeta(
-                revision: (r['revision'] as int?) ?? 1,
-                updatedAt: (r['updated_at_ms'] as int? ?? 0) > 0
-                    ? DateTime.fromMillisecondsSinceEpoch(
-                        r['updated_at_ms'] as int)
-                    : null,
-                originDevice: (r['origin_device'] as String?) ?? '',
-                syncState: (r['sync_state'] as String?) ?? 'synced',
-                userId: (r['user_id'] as String?) ?? '',
-              ),
-            ))
+        .map(
+          (r) => PfProject(
+            id: r['id'] as String,
+            name: r['name'] as String,
+            color: (r['color'] as String?) ?? '',
+            parentId: (r['parent_id'] as String?) ?? '',
+            displayOrder: (r['display_order'] as int?) ?? 0,
+            syncMeta: PfSyncMeta(
+              revision: (r['revision'] as int?) ?? 1,
+              updatedAt: (r['updated_at_ms'] as int? ?? 0) > 0
+                  ? DateTime.fromMillisecondsSinceEpoch(
+                      r['updated_at_ms'] as int,
+                    )
+                  : null,
+              originDevice: (r['origin_device'] as String?) ?? '',
+              syncState: (r['sync_state'] as String?) ?? 'synced',
+              userId: (r['user_id'] as String?) ?? '',
+            ),
+          ),
+        )
         .toList();
   }
 
@@ -1220,7 +1380,9 @@ class AppDatabase {
     });
   }
 
-  Future<List<Map<String, Object?>>> listPendingProjects({int limit = 100}) async {
+  Future<List<Map<String, Object?>>> listPendingProjects({
+    int limit = 100,
+  }) async {
     return _db.rawQuery(
       '''SELECT id, name, color, revision, updated_at_ms,
                 origin_device, user_id, payload
@@ -1242,9 +1404,12 @@ class AppDatabase {
     required Map<String, Object?> fields,
   }) async {
     await _db.transaction((txn) async {
-      final exists = (await txn.query('projects',
-              where: 'id = ?', whereArgs: [id], limit: 1))
-          .isNotEmpty;
+      final exists = (await txn.query(
+        'projects',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      )).isNotEmpty;
       final row = <String, Object?>{
         ...fields,
         'revision': revision,
@@ -1355,9 +1520,12 @@ class AppDatabase {
     required Map<String, Object?> fields,
   }) async {
     await _db.transaction((txn) async {
-      final exists = (await txn.query('tags',
-              where: 'id = ?', whereArgs: [id], limit: 1))
-          .isNotEmpty;
+      final exists = (await txn.query(
+        'tags',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      )).isNotEmpty;
       final row = <String, Object?>{
         ...fields,
         'revision': revision,
@@ -1409,11 +1577,9 @@ class AppDatabase {
     final ids = <String>[];
     for (final name in tagNames) {
       if (name.isEmpty) continue;
-      ids.add(await ensureTag(
-        name: name,
-        originDevice: originDevice,
-        userId: userId,
-      ));
+      ids.add(
+        await ensureTag(name: name, originDevice: originDevice, userId: userId),
+      );
     }
     ids.sort();
     final csv = ids.join(',');
@@ -1455,8 +1621,9 @@ class AppDatabase {
     }
   }
 
-  Future<List<Map<String, Object?>>> listPendingTaskTags(
-      {int limit = 200}) async {
+  Future<List<Map<String, Object?>>> listPendingTaskTags({
+    int limit = 200,
+  }) async {
     return _db.rawQuery(
       '''SELECT task_id, tag_ids, revision, updated_at_ms,
                 origin_device, user_id, payload
@@ -1489,8 +1656,12 @@ class AppDatabase {
         where: 'id = ?',
         whereArgs: [taskId],
       );
-      final existing = await txn.query('task_tag_sync',
-          where: 'task_id = ?', whereArgs: [taskId], limit: 1);
+      final existing = await txn.query(
+        'task_tag_sync',
+        where: 'task_id = ?',
+        whereArgs: [taskId],
+        limit: 1,
+      );
       final row = {
         'tag_ids': tagIds.join(','),
         'revision': revision,
@@ -1503,8 +1674,12 @@ class AppDatabase {
       if (existing.isEmpty) {
         await txn.insert('task_tag_sync', {'task_id': taskId, ...row});
       } else {
-        await txn
-            .update('task_tag_sync', row, where: 'task_id = ?', whereArgs: [taskId]);
+        await txn.update(
+          'task_tag_sync',
+          row,
+          where: 'task_id = ?',
+          whereArgs: [taskId],
+        );
       }
     });
   }
@@ -1521,7 +1696,13 @@ class AppDatabase {
   Future<Map<String, Object?>?> localTaskTagCandidate(String taskId) async {
     final rows = await _db.query(
       'task_tag_sync',
-      columns: ['task_id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
+      columns: [
+        'task_id',
+        'revision',
+        'updated_at_ms',
+        'origin_device',
+        'payload',
+      ],
       where: 'task_id = ?',
       whereArgs: [taskId],
       limit: 1,
@@ -1568,8 +1749,13 @@ class AppDatabase {
     required String userId,
   }) async {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
-    final rows = await _db.query('subtasks',
-        columns: ['revision'], where: 'id = ?', whereArgs: [id], limit: 1);
+    final rows = await _db.query(
+      'subtasks',
+      columns: ['revision'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
     if (rows.isEmpty) return;
     await _db.update(
       'subtasks',
@@ -1593,8 +1779,13 @@ class AppDatabase {
     required String userId,
   }) async {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
-    final rows = await _db.query('subtasks',
-        columns: ['revision'], where: 'id = ?', whereArgs: [id], limit: 1);
+    final rows = await _db.query(
+      'subtasks',
+      columns: ['revision'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
     await _db.update(
       'subtasks',
       {
@@ -1621,8 +1812,9 @@ class AppDatabase {
 
   // --- ChangeLogStore ---
 
-  Future<List<Map<String, Object?>>> listPendingSubtasks(
-      {int limit = 200}) async {
+  Future<List<Map<String, Object?>>> listPendingSubtasks({
+    int limit = 200,
+  }) async {
     return _db.rawQuery(
       '''SELECT id, task_id, title, is_completed, position,
                 revision, updated_at_ms, deleted_at_ms,
@@ -1643,9 +1835,12 @@ class AppDatabase {
     required Map<String, Object?> fields,
   }) async {
     await _db.transaction((txn) async {
-      final exists = (await txn.query('subtasks',
-              where: 'id = ?', whereArgs: [id], limit: 1))
-          .isNotEmpty;
+      final exists = (await txn.query(
+        'subtasks',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      )).isNotEmpty;
       final row = <String, Object?>{
         ...fields,
         'revision': revision,
@@ -1685,22 +1880,21 @@ class AppDatabase {
   }
 
   PfSubTask _subtaskFromRow(Map<String, Object?> r) => PfSubTask(
-        id: r['id'] as String,
-        taskId: r['task_id'] as String,
-        title: (r['title'] as String?) ?? '',
-        isCompleted: ((r['is_completed'] as int?) ?? 0) == 1,
-        position: (r['position'] as int?) ?? 0,
-        syncMeta: PfSyncMeta(
-          revision: (r['revision'] as int?) ?? 1,
-          updatedAt: r['updated_at_ms'] != null &&
-                  (r['updated_at_ms'] as int) > 0
-              ? DateTime.fromMillisecondsSinceEpoch(r['updated_at_ms'] as int)
-              : null,
-          originDevice: (r['origin_device'] as String?) ?? '',
-          syncState: (r['sync_state'] as String?) ?? 'synced',
-          userId: (r['user_id'] as String?) ?? '',
-        ),
-      );
+    id: r['id'] as String,
+    taskId: r['task_id'] as String,
+    title: (r['title'] as String?) ?? '',
+    isCompleted: ((r['is_completed'] as int?) ?? 0) == 1,
+    position: (r['position'] as int?) ?? 0,
+    syncMeta: PfSyncMeta(
+      revision: (r['revision'] as int?) ?? 1,
+      updatedAt: r['updated_at_ms'] != null && (r['updated_at_ms'] as int) > 0
+          ? DateTime.fromMillisecondsSinceEpoch(r['updated_at_ms'] as int)
+          : null,
+      originDevice: (r['origin_device'] as String?) ?? '',
+      syncState: (r['sync_state'] as String?) ?? 'synced',
+      userId: (r['user_id'] as String?) ?? '',
+    ),
+  );
 
   // === daily_reviews + mottos(P1 复盘与座右铭跨端)============================
 
@@ -1761,8 +1955,9 @@ class AppDatabase {
     }
   }
 
-  Future<List<Map<String, Object?>>> listPendingDailyReviews(
-      {int limit = 50}) async {
+  Future<List<Map<String, Object?>>> listPendingDailyReviews({
+    int limit = 50,
+  }) async {
     return _db.rawQuery(
       '''SELECT id, date, content, revision, updated_at_ms, deleted_at_ms,
                 origin_device, user_id, payload
@@ -1785,8 +1980,12 @@ class AppDatabase {
     required Map<String, Object?> fields,
   }) async {
     await _db.transaction((txn) async {
-      final existing = await txn.query('daily_reviews',
-          where: 'date = ?', whereArgs: [date], limit: 1);
+      final existing = await txn.query(
+        'daily_reviews',
+        where: 'date = ?',
+        whereArgs: [date],
+        limit: 1,
+      );
       final row = <String, Object?>{
         ...fields,
         'id': id,
@@ -1804,12 +2003,19 @@ class AppDatabase {
         final rowId = existing.first['id'] as String;
         if (rowId != id) {
           // 同日期异 id(两端各建):删旧行,落胜者行 —— 消除自然键分叉。
-          await txn.delete('daily_reviews',
-              where: 'id = ?', whereArgs: [rowId]);
+          await txn.delete(
+            'daily_reviews',
+            where: 'id = ?',
+            whereArgs: [rowId],
+          );
           await txn.insert('daily_reviews', row);
         } else {
-          await txn
-              .update('daily_reviews', row, where: 'id = ?', whereArgs: [id]);
+          await txn.update(
+            'daily_reviews',
+            row,
+            where: 'id = ?',
+            whereArgs: [id],
+          );
         }
       }
     });
@@ -1892,8 +2098,9 @@ class AppDatabase {
     }
   }
 
-  Future<List<Map<String, Object?>>> listPendingWeeklyReviews(
-      {int limit = 50}) async {
+  Future<List<Map<String, Object?>>> listPendingWeeklyReviews({
+    int limit = 50,
+  }) async {
     return _db.rawQuery(
       '''SELECT id, week_start, content, revision, updated_at_ms, deleted_at_ms,
                 origin_device, user_id, payload
@@ -1914,8 +2121,12 @@ class AppDatabase {
     required Map<String, Object?> fields,
   }) async {
     await _db.transaction((txn) async {
-      final existing = await txn.query('weekly_reviews',
-          where: 'week_start = ?', whereArgs: [weekStart], limit: 1);
+      final existing = await txn.query(
+        'weekly_reviews',
+        where: 'week_start = ?',
+        whereArgs: [weekStart],
+        limit: 1,
+      );
       final row = <String, Object?>{
         ...fields,
         'id': id,
@@ -1932,12 +2143,19 @@ class AppDatabase {
       } else {
         final rowId = existing.first['id'] as String;
         if (rowId != id) {
-          await txn.delete('weekly_reviews',
-              where: 'id = ?', whereArgs: [rowId]);
+          await txn.delete(
+            'weekly_reviews',
+            where: 'id = ?',
+            whereArgs: [rowId],
+          );
           await txn.insert('weekly_reviews', row);
         } else {
-          await txn
-              .update('weekly_reviews', row, where: 'id = ?', whereArgs: [id]);
+          await txn.update(
+            'weekly_reviews',
+            row,
+            where: 'id = ?',
+            whereArgs: [id],
+          );
         }
       }
     });
@@ -2020,8 +2238,9 @@ class AppDatabase {
     }
   }
 
-  Future<List<Map<String, Object?>>> listPendingMonthlyReviews(
-      {int limit = 50}) async {
+  Future<List<Map<String, Object?>>> listPendingMonthlyReviews({
+    int limit = 50,
+  }) async {
     return _db.rawQuery(
       '''SELECT id, year_month, content, revision, updated_at_ms, deleted_at_ms,
                 origin_device, user_id, payload
@@ -2042,8 +2261,12 @@ class AppDatabase {
     required Map<String, Object?> fields,
   }) async {
     await _db.transaction((txn) async {
-      final existing = await txn.query('monthly_reviews',
-          where: 'year_month = ?', whereArgs: [yearMonth], limit: 1);
+      final existing = await txn.query(
+        'monthly_reviews',
+        where: 'year_month = ?',
+        whereArgs: [yearMonth],
+        limit: 1,
+      );
       final row = <String, Object?>{
         ...fields,
         'id': id,
@@ -2060,12 +2283,19 @@ class AppDatabase {
       } else {
         final rowId = existing.first['id'] as String;
         if (rowId != id) {
-          await txn.delete('monthly_reviews',
-              where: 'id = ?', whereArgs: [rowId]);
+          await txn.delete(
+            'monthly_reviews',
+            where: 'id = ?',
+            whereArgs: [rowId],
+          );
           await txn.insert('monthly_reviews', row);
         } else {
-          await txn
-              .update('monthly_reviews', row, where: 'id = ?', whereArgs: [id]);
+          await txn.update(
+            'monthly_reviews',
+            row,
+            where: 'id = ?',
+            whereArgs: [id],
+          );
         }
       }
     });
@@ -2107,7 +2337,9 @@ class AppDatabase {
     ];
   }
 
-  Future<List<Map<String, Object?>>> listPendingMottos({int limit = 200}) async {
+  Future<List<Map<String, Object?>>> listPendingMottos({
+    int limit = 200,
+  }) async {
     return _db.rawQuery(
       '''SELECT id, text, author, revision, updated_at_ms, deleted_at_ms,
                 origin_device, user_id, payload
@@ -2127,9 +2359,12 @@ class AppDatabase {
     required Map<String, Object?> fields,
   }) async {
     await _db.transaction((txn) async {
-      final exists = (await txn.query('mottos',
-              where: 'id = ?', whereArgs: [id], limit: 1))
-          .isNotEmpty;
+      final exists = (await txn.query(
+        'mottos',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      )).isNotEmpty;
       final row = <String, Object?>{
         ...fields,
         'revision': revision,
@@ -2239,6 +2474,9 @@ class AppDatabase {
     'pomodoro_duration': t.pomodoroDuration,
     'repeat': t.repeat,
     'description': t.description,
+    'due_at_ms': t.dueAt?.millisecondsSinceEpoch ?? 0,
+    'reminder': t.reminder,
+    'repeat_config': t.repeatConfig,
   };
 
   PfTask _taskFromRow(Map<String, Object?> r) => PfTask(
@@ -2257,11 +2495,16 @@ class AppDatabase {
         : null,
     completedAt:
         r['completed_at_ms'] != null && (r['completed_at_ms'] as int) > 0
-            ? DateTime.fromMillisecondsSinceEpoch(r['completed_at_ms'] as int)
-            : null,
+        ? DateTime.fromMillisecondsSinceEpoch(r['completed_at_ms'] as int)
+        : null,
     pomodoroDuration: (r['pomodoro_duration'] as int?) ?? 0,
     repeat: (r['repeat'] as String?) ?? 'none',
     description: (r['description'] as String?) ?? '',
+    dueAt: r['due_at_ms'] != null && (r['due_at_ms'] as int) > 0
+        ? DateTime.fromMillisecondsSinceEpoch(r['due_at_ms'] as int)
+        : null,
+    reminder: (r['reminder'] as String?) ?? 'none',
+    repeatConfig: (r['repeat_config'] as String?) ?? '',
     syncMeta: PfSyncMeta(
       revision: (r['revision'] as int?) ?? 1,
       updatedAt: r['updated_at_ms'] != null && (r['updated_at_ms'] as int) > 0
@@ -2303,8 +2546,12 @@ class AppDatabase {
     taskId: (r['task_id'] as String?) ?? '',
     projectId: (r['project_id'] as String?) ?? '',
     durationMinutes: (r['duration'] as int?) ?? 25,
-    startedAt: DateTime.fromMillisecondsSinceEpoch((r['started_at_ms'] as int?) ?? 0),
-    endedAt: DateTime.fromMillisecondsSinceEpoch((r['ended_at_ms'] as int?) ?? 0),
+    startedAt: DateTime.fromMillisecondsSinceEpoch(
+      (r['started_at_ms'] as int?) ?? 0,
+    ),
+    endedAt: DateTime.fromMillisecondsSinceEpoch(
+      (r['ended_at_ms'] as int?) ?? 0,
+    ),
     isCompleted: ((r['is_completed'] as int?) ?? 1) == 1,
     syncMeta: PfSyncMeta(
       revision: (r['revision'] as int?) ?? 1,

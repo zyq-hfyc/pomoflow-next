@@ -39,10 +39,14 @@ class _TasksPageState extends State<TasksPage> {
     int minutesPer(PfTask t) =>
         t.pomodoroDuration > 0 ? t.pomodoroDuration : 25;
     final estMinutes = filtered.fold<int>(
-        0, (a, t) => a + t.estimatedPomos * minutesPer(t));
+      0,
+      (a, t) => a + t.estimatedPomos * minutesPer(t),
+    );
     final doing = filtered.where((t) => !t.completed).length;
     final focusedMinutes = filtered.fold<int>(
-        0, (a, t) => a + t.completedPomos * minutesPer(t));
+      0,
+      (a, t) => a + t.completedPomos * minutesPer(t),
+    );
     final done = filtered.where((t) => t.completed).length;
 
     return Container(
@@ -193,12 +197,13 @@ class _TasksPageState extends State<TasksPage> {
   }
 
   Future<void> _pickProject(TaskProvider tasks) async {
-    final projects = tasks.tasks
-        .map((t) => t.project)
-        .where((p) => p.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort();
+    final projects =
+        tasks.tasks
+            .map((t) => t.project)
+            .where((p) => p.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
     final picked = await _pickSheet<String?>(
       title: '按项目筛选',
       options: [null, ...projects],
@@ -247,7 +252,7 @@ class _TasksPageState extends State<TasksPage> {
   /// body 用 Column + for(TaskPickerSheet 同款)—— pfSheet 的 body 在
   /// _SheetScaffold 的 Column 里,ListView 无有界高度会渲染塌陷
   /// (真机表现为只有蒙层没有内容)。
-  Future<(T, )?> _pickSheet<T>({
+  Future<(T,)?> _pickSheet<T>({
     required String title,
     required List<T> options,
     required T selected,
@@ -263,8 +268,11 @@ class _TasksPageState extends State<TasksPage> {
             ListTile(
               title: Text(labelOf(o), style: const TextStyle(fontSize: 15)),
               trailing: o == selected
-                  ? Icon(Icons.check_circle,
-                      size: 20, color: Theme.of(ctx).pfBrand)
+                  ? Icon(
+                      Icons.check_circle,
+                      size: 20,
+                      color: Theme.of(ctx).pfBrand,
+                    )
                   : null,
               onTap: () => Navigator.pop(ctx, (o,)),
             ),
@@ -389,9 +397,7 @@ class _FilterChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: active ? theme.pfBrand50 : theme.pfSurface,
           borderRadius: BorderRadius.circular(PfRadii.pill),
-          border: Border.all(
-            color: active ? theme.pfBrand100 : theme.pfLine,
-          ),
+          border: Border.all(color: active ? theme.pfBrand100 : theme.pfLine),
         ),
         child: Text(
           label,
@@ -516,9 +522,11 @@ class _TaskCard extends StatelessWidget {
                             ),
                           ),
                         ),
-                      if (task.dueLabel.isNotEmpty)
+                      // 到期日展示优先完整 yyyy-MM-dd HH:mm(P3d 起真实
+                      // datetime);无 dueAt 的老数据回退 due_label 文本。
+                      if (task.dueAt != null || task.dueLabel.isNotEmpty)
                         Text(
-                          '📅 ${task.dueLabel}',
+                          '📅 ${task.dueAtLabel.isNotEmpty ? task.dueAtLabel : task.dueLabel}',
                           style: TextStyle(
                             fontSize: 11.5,
                             color: theme.pfMuted,
@@ -550,9 +558,10 @@ class _TaskCard extends StatelessWidget {
             GestureDetector(
               onTap: () {
                 // autoStart:跳转后自动开表(桌面 autostart 语义;修圆环不倒计时)
-                context
-                    .read<TaskProvider>()
-                    .setFocusTask(task.id, autoStart: true);
+                context.read<TaskProvider>().setFocusTask(
+                  task.id,
+                  autoStart: true,
+                );
                 _goFocus(context);
               },
               child: Container(

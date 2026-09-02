@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,13 +8,15 @@ import '../models/subtask.dart';
 import '../models/task.dart';
 import '../providers/nav_provider.dart';
 import '../providers/task_provider.dart';
+import '../services/sync_wire.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_controls.dart';
 import '../widgets/pf_sheet.dart';
 import 'project_manager_sheet.dart';
 
-/// 新建/编辑任务 Sheet(§5.5 任务类全字段):标题/项目/优先级/截止/预计番茄/
-/// 单番茄时长/重复/标签。传 [editTask] 即编辑模式(预填 + 保存修改)。
+/// 新建/编辑任务 Sheet(§5.5 任务类全字段):标题/项目/优先级/到期日/提醒/
+/// 预计番茄/单番茄时长/重复(含自定义)/标签。传 [editTask] 即编辑模式
+/// (预填 + 保存修改)。到期日/提醒/自定义重复与桌面端 core::Task 语义一致。
 void showTaskCreateSheet(BuildContext context, {PfTask? editTask}) {
   pfSheet(
     context,
@@ -32,16 +36,65 @@ class _TaskCreateForm extends StatefulWidget {
 }
 
 class _TaskCreateFormState extends State<_TaskCreateForm> {
-  // 6 条预设(对齐 v1 + core Repeat:none/daily/weekdays/weekly/monthly/yearly)。
-  // 自定义规则(JSON)走桌面 repeat 自定义对话框,mobile P0 不展开。
-  static const _repeatOptions = [
-    '不重复',
-    '每天',
-    '工作日',
-    '每周',
-    '每月',
-    '每年',
+  // 7 条规则(对齐桌面 + core Repeat:none/daily/weekdays/weekly/monthly/
+  // yearly/custom;custom 的具体配置在 [repeat_config] JSON)。
+  static const _repeatOptions = ['不重复', '每天', '工作日', '每周', '每月', '每年', '自定义'];
+
+  // 提醒 7 档(core Reminder serde 值;桌面同款)。
+  static const _reminderOptions = <(String, String)>[
+    ('none', '不提醒'),
+    ('on_time', '准时'),
+    ('minutes5', '提前 5 分钟'),
+    ('minutes30', '提前 30 分钟'),
+    ('hour1', '提前 1 小时'),
+    ('day1', '提前 1 天'),
+    ('days2', '提前 2 天'),
   ];
+
+  /// 自定义重复编辑器状态(选「自定义」时展开)。
+  late DateTime _rcStart = _initRcStart();
+  late DateTime _rcEnd = _initRcEnd();
+  late int _rcInterval = _initRcField('interval', 1);
+  late String _rcType = _initRcField('type', 'week');
+  late final Set<int> _rcWeekdays = _initRcSet('weekdays');
+  late final Set<int> _rcMonthDays = _initRcSet('monthDays');
+
+  DateTime _initRcStart() => _parseRcDate('startDate') ?? DateTime.now();
+  DateTime _initRcEnd() =>
+      _parseRcDate('endDate') ?? DateTime(DateTime.now().year, 12, 31, 23, 59);
+
+  DateTime? _parseRcDate(String key) {
+    final v = _initRcMap()?[key];
+    if (v is! String) return null;
+    return DateTime.tryParse(v);
+  }
+
+  T _initRcField<T>(String key, T fallback) {
+    final v = _initRcMap()?[key];
+    return v is T ? v : fallback;
+  }
+
+  Set<int> _initRcSet(String key) {
+    final v = _initRcMap()?[key];
+    if (v is! List) return <int>{};
+    return v.whereType<num>().map((n) => n.toInt()).toSet();
+  }
+
+  Map? _rcCache;
+  bool _rcCacheLoaded = false;
+
+  /// 编辑模式的 repeat_config JSON(新建/解析失败 → null 走默认值)。
+  Map? _initRcMap() {
+    if (_rcCacheLoaded) return _rcCache;
+    _rcCacheLoaded = true;
+    final cfg = widget.initial?.repeatConfig ?? '';
+    if (cfg.isEmpty) return _rcCache = null;
+    try {
+      return _rcCache = jsonDecode(cfg) as Map;
+    } on FormatException {
+      return _rcCache = null;
+    }
+  }
 
   late final TextEditingController _titleCtrl = TextEditingController(
     text: widget.initial?.title ?? '',
@@ -67,25 +120,27 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
   /// —— 拉新/删项目后从 ProjectManagerSheet 回来时会自动反映。
   List<PfProject> _projectList() => context.read<TaskProvider>().projects;
   late PfPriority _priority = widget.initial?.priority ?? PfPriority.medium;
-  late String _due =
-      widget.initial != null && widget.initial!.dueLabel.isNotEmpty
-          ? widget.initial!.dueLabel
-          : '今天';
-  late int _pomos =
-      widget.initial != null && widget.initial!.estimatedPomos > 0
-          ? widget.initial!.estimatedPomos
-          : 2;
-  late int _duration = widget.initial != null &&
-          widget.initial!.pomodoroDuration > 0
+
+  /// 到期日(含时分;null = 无)。桌面同语义:datetime 而非「今天/明天」标签。
+  DateTime? _dueAt;
+
+  late int _pomos = widget.initial != null && widget.initial!.estimatedPomos > 0
+      ? widget.initial!.estimatedPomos
+      : 2;
+  late int _duration =
+      widget.initial != null && widget.initial!.pomodoroDuration > 0
       ? widget.initial!.pomodoroDuration
       : 25;
   late String _repeat = _coreToRepeatLabel(
-      widget.initial != null ? widget.initial!.repeat : 'none',
+    widget.initial != null ? widget.initial!.repeat : 'none',
   );
+  late String _reminder = widget.initial?.reminder ?? 'none';
 
   @override
   void initState() {
     super.initState();
+    // 编辑模式预填到期日(late 字段不能引用 this,这里补)。
+    _dueAt = widget.initial?.dueAt;
     // 兜底:第一次进 sheet 时若 provider 还没 load 出项目列表,
     // 异步拉一次(常见于 demo → 真 DB 切换 或 首次冷启动)。
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -116,6 +171,76 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
   /// 当前 UI 选项 → core Repeat snake 名。
   String _repeatCore() => _repeatUiToCore[_repeat] ?? 'none';
 
+  String get _reminderLabel => _reminderOptions
+      .firstWhere(
+        (o) => o.$1 == _reminder,
+        orElse: () => _reminderOptions.first,
+      )
+      .$2;
+
+  String _labelToReminder(String label) => _reminderOptions
+      .firstWhere((o) => o.$2 == label, orElse: () => _reminderOptions.first)
+      .$1;
+
+  /// 到期日选择:先日期再时间(桌面 datetime-local 一步等价)。
+  /// 未选过日期时默认今天;时间默认当前时刻(桌面同款默认)。
+  Future<void> _pickDueAt() async {
+    final now = DateTime.now();
+    final base = _dueAt ?? now;
+    final date = await showDatePicker(
+      context: context,
+      initialDate: base,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 5),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: base.hour, minute: base.minute),
+    );
+    if (time == null) return; // 只选了日期 → 保留原值不动
+    if (!mounted) return;
+    setState(() {
+      _dueAt = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        time.hour,
+        time.minute,
+      );
+    });
+  }
+
+  /// CustomConfig JSON(camelCase 键,core serde 同构)。weekdays/monthDays
+  /// 只在对应 type 下携带;interval 0-99(0 = 每 1)。
+  String _rcJson() => jsonEncode({
+    'interval': _rcInterval,
+    'type': _rcType,
+    'startDate': _rcFmt(_rcStart),
+    'endDate': _rcFmt(_rcEnd),
+    if (_rcType == 'week' && _rcWeekdays.isNotEmpty)
+      'weekdays': _rcWeekdays.toList()..sort(),
+    if (_rcType == 'month' && _rcMonthDays.isNotEmpty)
+      'monthDays': _rcMonthDays.toList()..sort(),
+  });
+
+  /// 提交前校验(桌面 RepeatCustomDialog needPick 同规则)。
+  /// 返回 null = 通过,否则返回错误文案。
+  String? _rcValidate() {
+    if (_rcType == 'week' && _rcWeekdays.isEmpty) return '请选择自定义重复的星期几';
+    if (_rcType == 'month' && _rcMonthDays.isEmpty) return '请选择自定义重复的每月几号';
+    if (!_rcEnd.isAfter(_rcStart)) return '自定义重复的结束时间需晚于开始时间';
+    return null;
+  }
+
+  /// 到期日 → 视图路由标签(今天/明天/后天/昨天/yyyy-mm-dd)。
+  /// due_label 列降级为派生展示字段,真正语义在 dueAt。
+  String _deriveDueLabel() {
+    final d = _dueAt;
+    if (d == null) return '';
+    return dueDateToLabel(msToIso(d.millisecondsSinceEpoch));
+  }
+
   Future<void> _submit() async {
     final title = _titleCtrl.text.trim();
     if (title.isEmpty) {
@@ -128,7 +253,24 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
         .map((t) => t.trim())
         .where((t) => t.isNotEmpty)
         .toList();
-    final dueLabel = _repeat != '不重复' ? '每天' : _due;
+    // 桌面同款联动校验:设了提醒就必须有到期日(picker 出来的日期必然
+    // 带时分,桌面「必须含时间」的校验在此天然满足)。
+    if (_reminder != 'none' && _dueAt == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('设置了提醒,请先选择到期日')));
+      return;
+    }
+    final isCustomRepeat = _repeatCore() == 'custom';
+    if (isCustomRepeat) {
+      final rcErr = _rcValidate();
+      if (rcErr != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(rcErr)));
+        return;
+      }
+    }
+    final dueLabel = _deriveDueLabel();
+    final repeatConfig = isCustomRepeat ? _rcJson() : '';
     final provider = context.read<TaskProvider>();
     final initial = widget.initial;
     if (initial == null) {
@@ -141,10 +283,13 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
           priority: _priority,
           project: _project,
           dueLabel: dueLabel,
+          dueAt: _dueAt,
+          reminder: _reminder,
           tags: tags,
           estimatedPomos: _pomos,
           pomodoroDuration: _duration,
           repeat: _repeatCore(),
+          repeatConfig: repeatConfig,
         ),
       );
     } else {
@@ -156,10 +301,14 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
           priority: _priority,
           project: _project,
           dueLabel: dueLabel,
+          dueAt: _dueAt,
+          clearDueAt: _dueAt == null,
+          reminder: _reminder,
           tags: tags,
           estimatedPomos: _pomos,
           pomodoroDuration: _duration,
           repeat: _repeatCore(),
+          repeatConfig: repeatConfig,
         ),
       );
     }
@@ -223,16 +372,21 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
           ),
         ),
         PfFormField(
-          label: '截止日期',
-          child: PfSegmented.soft(
-            options: const [
-              ('今天', '今天'),
-              ('明天', '明天'),
-              ('本周', '本周'),
-              ('每天', '每天'),
-            ],
-            selected: _due,
-            onSelect: (v) => setState(() => _due = v),
+          label: '到期日',
+          child: _DueAtField(
+            dueAt: _dueAt,
+            onPick: _pickDueAt,
+            onClear: _dueAt == null
+                ? null
+                : () => setState(() => _dueAt = null),
+          ),
+        ),
+        PfFormField(
+          label: '提醒',
+          child: _DropdownField(
+            value: _reminderLabel,
+            options: [for (final o in _reminderOptions) o.$2],
+            onChanged: (v) => setState(() => _reminder = _labelToReminder(v)),
           ),
         ),
         Row(
@@ -265,10 +419,44 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
         ),
         PfFormField(
           label: '重复',
-          child: _DropdownField(
-            value: _repeat,
-            options: _repeatOptions,
-            onChanged: (v) => setState(() => _repeat = v),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _DropdownField(
+                value: _repeat,
+                options: _repeatOptions,
+                onChanged: (v) => setState(() => _repeat = v),
+              ),
+              if (_repeat == '自定义') ...[
+                const SizedBox(height: 8),
+                _RepeatCustomEditor(
+                  start: _rcStart,
+                  end: _rcEnd,
+                  interval: _rcInterval,
+                  type: _rcType,
+                  weekdays: _rcWeekdays,
+                  monthDays: _rcMonthDays,
+                  onStart: (d) => setState(() => _rcStart = d),
+                  onEnd: (d) => setState(() => _rcEnd = d),
+                  onInterval: (n) => setState(() => _rcInterval = n),
+                  onType: (t) => setState(() => _rcType = t),
+                  onToggleWeekday: (d) => setState(() {
+                    if (_rcWeekdays.contains(d)) {
+                      _rcWeekdays.remove(d);
+                    } else {
+                      _rcWeekdays.add(d);
+                    }
+                  }),
+                  onToggleMonthDay: (d) => setState(() {
+                    if (_rcMonthDays.contains(d)) {
+                      _rcMonthDays.remove(d);
+                    } else {
+                      _rcMonthDays.add(d);
+                    }
+                  }),
+                ),
+              ],
+            ],
           ),
         ),
         PfFormField(
@@ -306,8 +494,10 @@ class _MultilineField extends StatelessWidget {
         isDense: true,
         filled: true,
         fillColor: theme.pfSurface2,
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 10,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(13),
           borderSide: BorderSide(color: theme.pfLine),
@@ -325,8 +515,8 @@ class _MultilineField extends StatelessWidget {
   }
 }
 
-// repeat:UI 选项 ↔ core Repeat snake 名(none/daily/weekdays/weekly/monthly/yearly)。
-// mobile 只存储与同步;实例生成是桌面 repeat 引擎职责。
+// repeat:UI 选项 ↔ core Repeat snake 名(none/daily/weekdays/weekly/monthly/
+// yearly/custom)。mobile 只存储与同步;实例生成是桌面 repeat 引擎职责。
 const _repeatUiToCore = {
   '不重复': 'none',
   '每天': 'daily',
@@ -334,6 +524,7 @@ const _repeatUiToCore = {
   '每周': 'weekly',
   '每月': 'monthly',
   '每年': 'yearly',
+  '自定义': 'custom',
 };
 String _coreToRepeatLabel(String core) =>
     _repeatUiToCore.entries
@@ -341,6 +532,22 @@ String _coreToRepeatLabel(String core) =>
         .map((e) => e.key)
         .firstOrNull ??
     '不重复';
+
+String _fmtDate(DateTime d) {
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${d.year}-${two(d.month)}-${two(d.day)}';
+}
+
+String _fmtTime(DateTime d) {
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${two(d.hour)}:${two(d.minute)}';
+}
+
+/// yyyy-MM-dd HH:mm(到期日展示)。
+String _fmtDateTime(DateTime d) => '${_fmtDate(d)} ${_fmtTime(d)}';
+
+/// yyyy-MM-ddTHH:mm(桌面 datetime-local 存进 CustomConfig 的格式)。
+String _rcFmt(DateTime d) => '${_fmtDate(d)}T${_fmtTime(d)}';
 
 /// 任务详情 Sheet(§5.3):kv 行 + 子任务清单(勾选/新增/删)+ 开始专注/
 /// 编辑 + 删除(软删除,二次确认)。
@@ -402,8 +609,7 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _kv('标题', task.title, theme),
-        if (task.description.isNotEmpty)
-          _kv('描述', task.description, theme),
+        if (task.description.isNotEmpty) _kv('描述', task.description, theme),
         _kv(
           '优先级',
           task.priority.label,
@@ -416,10 +622,10 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
           ),
         ),
         _kv('项目', task.project, theme),
-        _kv('截止', task.dueLabel, theme),
+        _kv('到期日', task.dueAtLabel.isNotEmpty ? task.dueAtLabel : '无', theme),
         _kv('番茄', '🍅 ${task.pomoLabel}', theme),
-        _kv('提醒', '无', theme),
-        _kv('重复', '不重复', theme),
+        _kv('提醒', task.reminderLabel, theme),
+        _kv('重复', task.repeatLabel, theme),
         const SizedBox(height: 12),
         // === 子任务清单(P1 实体化;随同步跨端)===
         _SubtaskSection(
@@ -428,16 +634,16 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
           onAdd: _addSubtask,
           onToggle: (s) async {
             await context.read<TaskProvider>().toggleSubtask(
-                  s.id,
-                  taskId: task.id,
-                );
+              s.id,
+              taskId: task.id,
+            );
             await _loadSubtasks();
           },
           onDelete: (s) async {
             await context.read<TaskProvider>().deleteSubtask(
-                  s.id,
-                  taskId: task.id,
-                );
+              s.id,
+              taskId: task.id,
+            );
             await _loadSubtasks();
           },
         ),
@@ -450,9 +656,10 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
                 height: 50,
                 onTap: () {
                   Navigator.pop(context);
-                  context
-                      .read<TaskProvider>()
-                      .setFocusTask(task.id, autoStart: true);
+                  context.read<TaskProvider>().setFocusTask(
+                    task.id,
+                    autoStart: true,
+                  );
                   context.read<NavProvider>().select(0);
                 },
               ),
@@ -538,7 +745,11 @@ class _SubtaskSection extends StatelessWidget {
                         ),
                       ),
                       child: s.isCompleted
-                          ? const Icon(Icons.check, size: 12, color: Colors.white)
+                          ? const Icon(
+                              Icons.check,
+                              size: 12,
+                              color: Colors.white,
+                            )
                           : null,
                     ),
                   ),
@@ -560,8 +771,7 @@ class _SubtaskSection extends StatelessWidget {
                     ),
                   ),
                   IconButton(
-                    icon: Icon(Icons.close,
-                        size: 16, color: theme.pfMuted),
+                    icon: Icon(Icons.close, size: 16, color: theme.pfMuted),
                     onPressed: () => onDelete(s),
                     tooltip: '删除子任务',
                   ),
@@ -582,8 +792,10 @@ class _SubtaskSection extends StatelessWidget {
                         isDense: true,
                         border: InputBorder.none,
                         hintText: '添加子任务,回车确认',
-                        hintStyle:
-                            TextStyle(fontSize: 12.5, color: theme.pfMuted),
+                        hintStyle: TextStyle(
+                          fontSize: 12.5,
+                          color: theme.pfMuted,
+                        ),
                       ),
                     ),
                   ),
@@ -750,6 +962,326 @@ class _DropdownField extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 到期日选择行:点按弹「日期 → 时间」双 picker;已选时右侧可清除。
+class _DueAtField extends StatelessWidget {
+  const _DueAtField({required this.dueAt, required this.onPick, this.onClear});
+
+  final DateTime? dueAt;
+  final VoidCallback onPick;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final has = dueAt != null;
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.pfSurface2,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: theme.pfLine),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: GestureDetector(
+              onTap: onPick,
+              behavior: HitTestBehavior.opaque,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 13,
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.event, size: 18, color: theme.pfBrand),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        has ? _fmtDateTime(dueAt!) : '选择日期与时间',
+                        style: TextStyle(
+                          fontSize: 15,
+                          color: has
+                              ? theme.colorScheme.onSurface
+                              : theme.pfMuted,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (has && onClear != null)
+            TextButton(
+              onPressed: onClear,
+              child: const Text('清除', style: TextStyle(fontSize: 13)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 自定义重复规则编辑器(桌面 RepeatCustomDialog 的内联版):
+/// 开始/结束(datetime)→ 频率 N + 类型(天/周/月/年)→ 周类型选星期几、
+/// 月类型选每月几号。needPick 校验在 _submit(_rcValidate)统一做。
+class _RepeatCustomEditor extends StatelessWidget {
+  const _RepeatCustomEditor({
+    required this.start,
+    required this.end,
+    required this.interval,
+    required this.type,
+    required this.weekdays,
+    required this.monthDays,
+    required this.onStart,
+    required this.onEnd,
+    required this.onInterval,
+    required this.onType,
+    required this.onToggleWeekday,
+    required this.onToggleMonthDay,
+  });
+
+  final DateTime start;
+  final DateTime end;
+  final int interval; // 0-99(core 存储值;UI 展示「每 N」= interval+1)
+  final String type; // day/week/month/year(core CustomConfig.type)
+  final Set<int> weekdays; // 1=一 … 7=日
+  final Set<int> monthDays; // 1-31
+  final ValueChanged<DateTime> onStart;
+  final ValueChanged<DateTime> onEnd;
+  final ValueChanged<int> onInterval;
+  final ValueChanged<String> onType;
+  final ValueChanged<int> onToggleWeekday;
+  final ValueChanged<int> onToggleMonthDay;
+
+  static const _weekLabels = ['一', '二', '三', '四', '五', '六', '日'];
+  static const _typeLabels = {
+    'day': '天',
+    'week': '周',
+    'month': '月',
+    'year': '年',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.pfSurface2,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: theme.pfLine),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _RcDateTimeRow(label: '开始', value: start, onPick: onStart),
+          const SizedBox(height: 8),
+          _RcDateTimeRow(label: '结束', value: end, onPick: onEnd),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Text('每', style: TextStyle(fontSize: 14)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _StepperField(
+                  value: interval + 1,
+                  min: 1,
+                  max: 100,
+                  onChanged: (v) => onInterval(v - 1),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _typeLabels[type] ?? '周',
+                style: const TextStyle(fontSize: 14),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          PfSegmented.soft(
+            options: const [
+              ('day', '天'),
+              ('week', '周'),
+              ('month', '月'),
+              ('year', '年'),
+            ],
+            selected: type,
+            onSelect: onType,
+          ),
+          if (type == 'week') ...[
+            const SizedBox(height: 10),
+            _caption('星期几(至少选 1 个)', theme),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (var i = 1; i <= 7; i++)
+                  _circle(
+                    theme,
+                    label: _weekLabels[i - 1],
+                    on: weekdays.contains(i),
+                    onTap: () => onToggleWeekday(i),
+                  ),
+              ],
+            ),
+          ],
+          if (type == 'month') ...[
+            const SizedBox(height: 10),
+            _caption('每月几号(至少选 1 个)', theme),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (var d = 1; d <= 31; d++)
+                  _dayChip(
+                    theme,
+                    day: d,
+                    on: monthDays.contains(d),
+                    onTap: () => onToggleMonthDay(d),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _caption(String text, ThemeData theme) =>
+      Text(text, style: TextStyle(fontSize: 12, color: theme.pfMuted));
+
+  Widget _circle(
+    ThemeData theme, {
+    required String label,
+    required bool on,
+    required VoidCallback onTap,
+  }) => GestureDetector(
+    onTap: onTap,
+    behavior: HitTestBehavior.opaque,
+    child: Container(
+      width: 36,
+      height: 36,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: on ? theme.pfBrand : Colors.transparent,
+        border: Border.all(color: on ? theme.pfBrand : theme.pfLine),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: on ? FontWeight.w700 : FontWeight.w400,
+          color: on ? Colors.white : theme.colorScheme.onSurface,
+        ),
+      ),
+    ),
+  );
+
+  Widget _dayChip(
+    ThemeData theme, {
+    required int day,
+    required bool on,
+    required VoidCallback onTap,
+  }) => GestureDetector(
+    onTap: onTap,
+    behavior: HitTestBehavior.opaque,
+    child: Container(
+      width: 36,
+      height: 30,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(9),
+        color: on ? theme.pfBrand : Colors.transparent,
+        border: Border.all(color: on ? theme.pfBrand : theme.pfLine),
+      ),
+      child: Text(
+        '$day',
+        style: TextStyle(
+          fontSize: 12.5,
+          fontWeight: on ? FontWeight.w700 : FontWeight.w400,
+          color: on ? Colors.white : theme.colorScheme.onSurface,
+        ),
+      ),
+    ),
+  );
+}
+
+/// 编辑器内的 datetime 行:label 左,值按钮右;点按弹「日期 → 时间」。
+class _RcDateTimeRow extends StatelessWidget {
+  const _RcDateTimeRow({
+    required this.label,
+    required this.value,
+    required this.onPick,
+  });
+
+  final String label;
+  final DateTime value;
+  final ValueChanged<DateTime> onPick;
+
+  Future<void> _pick(BuildContext context) async {
+    final now = DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      initialDate: value,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 10),
+    );
+    if (date == null || !context.mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: value.hour, minute: value.minute),
+    );
+    if (time == null || !context.mounted) return;
+    onPick(DateTime(date.year, date.month, date.day, time.hour, time.minute));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        SizedBox(
+          width: 34,
+          child: Text(
+            label,
+            style: TextStyle(fontSize: 13, color: theme.pfMuted),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: GestureDetector(
+            onTap: () => _pick(context),
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                color: theme.pfSurface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: theme.pfLine),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _fmtDateTime(value),
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                  ),
+                  Icon(Icons.edit_calendar, size: 16, color: theme.pfMuted),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

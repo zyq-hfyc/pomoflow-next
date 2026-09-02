@@ -27,18 +27,24 @@ class TaskProvider extends ChangeNotifier {
   factory TaskProvider.demo() {
     final p = TaskProvider._mem();
     final demo = _seedIds();
-    final demoSessions = _demoSessions(DateTime.now());
+    final now = DateTime.now();
+    final demoSessions = _demoSessions(now);
+    DateTime dayAt(int dayOffset, int h, int m) =>
+        DateTime(now.year, now.month, now.day + dayOffset, h, m);
     return p
       .._tasks.addAll([
         // 单番茄时长(pomodoroDuration)对齐桌面语义:每任务独立设置。
         // 0 = 回退到全局 focusMinutes(用户自改后会变);25 锁定「这任务
         // 一个番茄就是 25 分钟」,避免 Bug2:种子无值 → 全局 5min → 显 5min。
+        // dueAt/reminder(P3d 新列)一并示范:今天 18:00 + 提前 30 分钟。
         PfTask(
           id: demo.$1.id1,
           title: '撰写产品需求文档',
           priority: PfPriority.high,
           project: '产品设计',
           dueLabel: '今天',
+          dueAt: dayAt(0, 18, 0),
+          reminder: 'minutes30',
           estimatedPomos: 4,
           completedPomos: 2,
           subtaskCount: 2,
@@ -50,6 +56,8 @@ class TaskProvider extends ChangeNotifier {
           priority: PfPriority.high,
           project: '研发',
           dueLabel: '今天',
+          dueAt: dayAt(0, 20, 0),
+          reminder: 'on_time',
           estimatedPomos: 2,
           pomodoroDuration: 25,
         ),
@@ -59,6 +67,7 @@ class TaskProvider extends ChangeNotifier {
           priority: PfPriority.medium,
           project: '运营',
           dueLabel: '明天',
+          dueAt: dayAt(1, 9, 30),
           estimatedPomos: 1,
           pomodoroDuration: 25,
         ),
@@ -68,6 +77,7 @@ class TaskProvider extends ChangeNotifier {
           priority: PfPriority.low,
           project: '学习',
           dueLabel: '今天',
+          dueAt: dayAt(0, 21, 30),
           estimatedPomos: 3,
           completedPomos: 0,
           subtaskCount: 1,
@@ -79,6 +89,7 @@ class TaskProvider extends ChangeNotifier {
           priority: PfPriority.none,
           project: '日常',
           dueLabel: '每天',
+          repeat: 'daily',
           estimatedPomos: 1,
           pomodoroDuration: 25,
         ),
@@ -94,8 +105,7 @@ class TaskProvider extends ChangeNotifier {
           id: demo.$2.id2,
           kind: JournalKind.note,
           title: '',
-          content:
-              '移动端 Dock 交互参考记账 App 的悬浮胶囊,中间凸起按钮承载最高频动作「新建」。',
+          content: '移动端 Dock 交互参考记账 App 的悬浮胶囊,中间凸起按钮承载最高频动作「新建」。',
         ),
       ])
       .._sessions.addAll(demoSessions)
@@ -108,16 +118,18 @@ class TaskProvider extends ChangeNotifier {
   /// web demo 的演示会话:今天 3 条 + 近几天若干(统计页有图可看),
   /// 任务归属对应上面 5 个 demo 任务(id 固定字符串)。
   static List<PfSession> _demoSessions(DateTime now) {
-    PfSession at(int daysAgo, int hour, int minutes,
-            {String taskId = ''}) =>
+    PfSession at(int daysAgo, int hour, int minutes, {String taskId = ''}) =>
         PfSession(
           id: 'ds${daysAgo}_$hour${taskId.isEmpty ? '' : taskId.hashCode % 97}',
           taskId: taskId,
           durationMinutes: minutes,
-          startedAt: DateTime(
-              now.year, now.month, now.day - daysAgo, hour),
-          endedAt: DateTime(now.year, now.month, now.day - daysAgo, hour)
-              .add(Duration(minutes: minutes)),
+          startedAt: DateTime(now.year, now.month, now.day - daysAgo, hour),
+          endedAt: DateTime(
+            now.year,
+            now.month,
+            now.day - daysAgo,
+            hour,
+          ).add(Duration(minutes: minutes)),
         );
 
     // 全部关联 demo 任务(计数口径要求 task_id 非空,无任务的会话不计)。
@@ -149,7 +161,8 @@ class TaskProvider extends ChangeNotifier {
     final seeded = await db.getMeta('seed_done');
     // 今日复盘:实体表优先,老库回退 meta(P0 迁移语义:下次保存即入实体)。
     final today = localDay(DateTime.now());
-    String todayReview = (await db.dailyReviewContent(today)) ??
+    String todayReview =
+        (await db.dailyReviewContent(today)) ??
         (await db.getMeta('today_review')) ??
         '';
 
@@ -191,12 +204,13 @@ class TaskProvider extends ChangeNotifier {
     // 次性补成 25(幂等:已设即跳过),并刷新内存 + 触发通知。
     bool bumped = false;
     for (final t in seedDemo._tasks) {
-      final live = p._tasks.firstWhere(
-        (x) => x.id == t.id,
-        orElse: () => t,
-      );
-      if (live.id == t.id && live.pomodoroDuration == 0 && t.pomodoroDuration > 0) {
-        await db.updateTask(live.copyWith(pomodoroDuration: t.pomodoroDuration));
+      final live = p._tasks.firstWhere((x) => x.id == t.id, orElse: () => t);
+      if (live.id == t.id &&
+          live.pomodoroDuration == 0 &&
+          t.pomodoroDuration > 0) {
+        await db.updateTask(
+          live.copyWith(pomodoroDuration: t.pomodoroDuration),
+        );
         bumped = true;
       }
     }
@@ -353,14 +367,29 @@ class TaskProvider extends ChangeNotifier {
 
   static const taskViews = ['今天', '明天', '本周', '计划', '已完成', '手账'];
 
-  List<PfTask> viewTasks(String view) => switch (view) {
-        '今天' => _tasks.where((t) => t.dueLabel == '今天' && !t.completed).toList(),
-        '明天' => _tasks.where((t) => t.dueLabel == '明天' && !t.completed).toList(),
-        '本周' => _tasks.where((t) => !t.completed).toList(),
-        '计划' => _tasks.where((t) => !t.completed).toList(),
-        '已完成' => _tasks.where((t) => t.completed).toList(),
-        _ => const <PfTask>[],
-      };
+  /// 视图分流(P3d 起按 dueAt 日期判断,桌面同语义;无到期日的任务
+  /// 进「计划」不进「今天/明天」)。due_label 只做卡片展示。
+  List<PfTask> viewTasks(String view) {
+    final now = DateTime.now();
+    final tomorrow = now.add(const Duration(days: 1));
+    bool sameDay(DateTime? d, DateTime ref) =>
+        d != null &&
+        d.year == ref.year &&
+        d.month == ref.month &&
+        d.day == ref.day;
+    return switch (view) {
+      '今天' =>
+        _tasks.where((t) => !t.completed && sameDay(t.dueAt, now)).toList(),
+      '明天' =>
+        _tasks
+            .where((t) => !t.completed && sameDay(t.dueAt, tomorrow))
+            .toList(),
+      '本周' => _tasks.where((t) => !t.completed).toList(),
+      '计划' => _tasks.where((t) => !t.completed).toList(),
+      '已完成' => _tasks.where((t) => t.completed).toList(),
+      _ => const <PfTask>[],
+    };
+  }
 
   // === 写操作(本地 + DB;P3d-B-Phase-2 commit 4:mutator 末尾标 pending)=====
 
@@ -374,9 +403,15 @@ class TaskProvider extends ChangeNotifier {
             priority: task.priority,
             project: task.project,
             dueLabel: task.dueLabel,
+            dueAt: task.dueAt,
+            reminder: task.reminder,
             tags: task.tags,
             estimatedPomos: task.estimatedPomos,
             completedPomos: task.completedPomos,
+            description: task.description,
+            pomodoroDuration: task.pomodoroDuration,
+            repeat: task.repeat,
+            repeatConfig: task.repeatConfig,
             subtaskCount: task.subtaskCount,
             completed: task.completed,
             syncMeta: task.syncMeta,
@@ -384,7 +419,9 @@ class TaskProvider extends ChangeNotifier {
     _tasks.insert(0, t);
     final db = _db;
     if (db != null) {
-      await db.raw.insert('tasks', _rowFromTask(t));
+      // insertTask 走 _taskToRow 全列映射(此前 _rowFromTask 缺 description/
+      // repeat/pomodoro_duration 等列,新任务落库即丢)。
+      await db.insertTask(t);
       await _markPending(db, t.id);
     }
     notifyListeners();
@@ -601,8 +638,7 @@ class TaskProvider extends ChangeNotifier {
   }) async {
     final db = _db;
     final end = DateTime.now();
-    final start =
-        startedAt ?? end.subtract(Duration(minutes: durationMinutes));
+    final start = startedAt ?? end.subtract(Duration(minutes: durationMinutes));
 
     if (db != null) {
       final id = await _allocateId();
@@ -846,7 +882,8 @@ class TaskProvider extends ChangeNotifier {
 
   /// 计数口径(对齐桌面 core::stats counts_session):自然完成 && 关联任务。
   /// 不选任务的专注 / 中途放弃的会话不进「今日番茄」与统计 —— 两端同数。
-  static bool _countsSession(PfSession s) => s.isCompleted && s.taskId.isNotEmpty;
+  static bool _countsSession(PfSession s) =>
+      s.isCompleted && s.taskId.isNotEmpty;
 
   /// 同步 pull 落库后刷新内存(同步入口在 runOnce 成功后调用)。
   ///
@@ -861,9 +898,8 @@ class TaskProvider extends ChangeNotifier {
     final sessions = await db.listSessions();
     _mottos = await db.listMottos();
     _projects = await db.listProjects();
-    todayReview = (await db.dailyReviewContent(
-            localDay(DateTime.now()))) ??
-        todayReview;
+    todayReview =
+        (await db.dailyReviewContent(localDay(DateTime.now()))) ?? todayReview;
     _tasks
       ..clear()
       ..addAll(tasks);
@@ -872,44 +908,20 @@ class TaskProvider extends ChangeNotifier {
       ..addAll(sessions);
     final today = localDay(DateTime.now());
     todayPomos = sessions
-        .where((s) =>
-            localDay(s.startedAt) == today &&
-            _countsSession(s))
+        .where((s) => localDay(s.startedAt) == today && _countsSession(s))
         .length;
     notifyListeners();
   }
 
-  // === 映射(把 PfTask / PfJournal 转 sqflite row) ==============================
-
-  static Map<String, Object?> _rowFromTask(PfTask t) {
-    String pText(PfPriority p) => switch (p) {
-          PfPriority.high => 'high',
-          PfPriority.medium => 'medium',
-          PfPriority.low => 'low',
-          PfPriority.none => 'none',
-        };
-    return {
-      'id': t.id,
-      'title': t.title,
-      'priority': pText(t.priority),
-      'project': t.project,
-      'due_label': t.dueLabel,
-      'completed': t.completed ? 1 : 0,
-      'estimated': t.estimatedPomos,
-      'completed_cnt': t.completedPomos,
-      'subtask_cnt': t.subtaskCount,
-      'tags_csv': t.tags.join(','),
-      'is_focus': 0,
-    };
-  }
+  // === 映射(把 PfJournal 转 sqflite row;PfTask 走 db._taskToRow) =============
 
   static Map<String, Object?> _rowFromJournal(PfJournal j) {
     String kText(JournalKind k) => switch (k) {
-          JournalKind.todo => 'todo',
-          JournalKind.wish => 'wish',
-          JournalKind.plan => 'plan',
-          JournalKind.note => 'note',
-        };
+      JournalKind.todo => 'todo',
+      JournalKind.wish => 'wish',
+      JournalKind.plan => 'plan',
+      JournalKind.note => 'note',
+    };
     return {
       'id': j.id,
       'kind': kText(j.kind),
@@ -923,25 +935,25 @@ class TaskProvider extends ChangeNotifier {
 /// 种子任务的子任务(id 固定常量跨重启稳定;syncState synced 与任务
 /// 种子一致 —— 种子数据不上云)。
 List<PfSubTask> demoSubtasks(TaskProvider demo) => [
-      PfSubTask(
-        id: 'cccccccc-cccc-4ccc-8ccc-cccccccccc11',
-        taskId: demo._tasks.first.id,
-        title: '梳理产品需求范围',
-        position: 0,
-      ),
-      PfSubTask(
-        id: 'cccccccc-cccc-4ccc-8ccc-cccccccccc12',
-        taskId: demo._tasks.first.id,
-        title: '输出初版需求文档',
-        position: 1,
-      ),
-      PfSubTask(
-        id: 'cccccccc-cccc-4ccc-8ccc-cccccccccc13',
-        taskId: demo._tasks[3].id,
-        title: '通读第 3 章并做笔记',
-        position: 0,
-      ),
-    ];
+  PfSubTask(
+    id: 'cccccccc-cccc-4ccc-8ccc-cccccccccc11',
+    taskId: demo._tasks.first.id,
+    title: '梳理产品需求范围',
+    position: 0,
+  ),
+  PfSubTask(
+    id: 'cccccccc-cccc-4ccc-8ccc-cccccccccc12',
+    taskId: demo._tasks.first.id,
+    title: '输出初版需求文档',
+    position: 1,
+  ),
+  PfSubTask(
+    id: 'cccccccc-cccc-4ccc-8ccc-cccccccccc13',
+    taskId: demo._tasks[3].id,
+    title: '通读第 3 章并做笔记',
+    position: 0,
+  ),
+];
 
 /// 14 字符串 uuid 给 demo() 取稳定 seed id(固定字符串常量,跨重启不变)。
 class _DemoIds {
@@ -964,6 +976,9 @@ class _DemoJIds {
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa04',
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa05',
     ),
-    const _DemoJIds('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb01', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb02'),
+    const _DemoJIds(
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb01',
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb02',
+    ),
   );
 }

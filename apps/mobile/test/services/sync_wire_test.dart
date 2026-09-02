@@ -12,8 +12,10 @@ void main() {
       const ms = 1746149400123;
       final iso = msToIso(ms);
       expect(iso.endsWith('Z'), isTrue);
-      expect(RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$')
-          .hasMatch(iso), isTrue);
+      expect(
+        RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$').hasMatch(iso),
+        isTrue,
+      );
       expect(isoToMs(iso), ms);
     });
 
@@ -26,7 +28,8 @@ void main() {
   group('uuidV4', () {
     test('emits canonical 8-4-4-4-12 lowercase hex with v4 bits', () {
       final re = RegExp(
-          r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$');
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+      );
       for (var i = 0; i < 20; i++) {
         final id = uuidV4();
         expect(id, matches(re), reason: '第 $i 个: $id');
@@ -43,11 +46,7 @@ void main() {
     final now = DateTime(2026, 8, 25, 9, 30);
 
     test('今天/明天/后天 map to day-12:00-local → UTC instant', () {
-      for (final (label, day) in [
-        ('今天', 25),
-        ('明天', 26),
-        ('后天', 27),
-      ]) {
+      for (final (label, day) in [('今天', 25), ('明天', 26), ('后天', 27)]) {
         final iso = dueLabelToIso(label, now: now);
         expect(iso, isNotNull, reason: label);
         // toLocal():Z 后缀 parse 回 UTC 表示,跨时区机器上以本地日断言才稳定。
@@ -71,8 +70,10 @@ void main() {
 
     test('昨天 and far dates fall back to date string / label', () {
       // 拿"now 的前一天"生成的今天 → 相对 now 即昨天。
-      final yesterday =
-          dueLabelToIso('今天', now: now.subtract(const Duration(days: 1)))!;
+      final yesterday = dueLabelToIso(
+        '今天',
+        now: now.subtract(const Duration(days: 1)),
+      )!;
       expect(dueDateToLabel(yesterday, now: now), '昨天');
       final far = DateTime(2026, 12, 24, 12).toUtc().toIso8601String();
       expect(dueDateToLabel(far, now: now), '2026-12-24');
@@ -88,6 +89,8 @@ void main() {
         'title': 'wire 测试任务',
         'priority': 'high',
         'due_label': '今天',
+        'due_at_ms': 1746149400123,
+        'reminder': 'minutes30',
         'completed': 1,
         'estimated': 3,
         'completed_cnt': 2,
@@ -99,7 +102,15 @@ void main() {
       // 无 serde default 的字段必须在 JSON 里显式出现(哪怕 null)——
       // 缺了 serde 会拒收。字段清单 = task.rs 必填集合。
       for (final key in [
-        'id', 'user_id', 'title', 'project_id', 'due_date', 'completed_at',
+        'id',
+        'user_id',
+        'title',
+        'project_id',
+        'due_date',
+        'completed_at',
+        'reminder',
+        'repeat',
+        'repeat_config',
       ]) {
         expect(p.containsKey(key), isTrue, reason: '$key 必须显式出现');
       }
@@ -112,20 +123,25 @@ void main() {
       expect(p['completed_pomodoros'], 2);
       expect(p['revision'], 2);
       expect(p['deleted_at'], isNull);
-      // due_date 由 due_label 映射而来
-      expect(p['due_date'], isNotNull);
+      // v17 起 due_date 由 due_at_ms 真值映射(不再由 due_label 标签近似)。
+      expect(p['due_date'], msToIso(1746149400123));
+      expect(p['reminder'], 'minutes30');
       // created_at/updated_at 同源 updated_at_ms
       expect(p['updated_at'], msToIso(1746149400123));
       expect(p['created_at'], msToIso(1746149400123));
     });
 
     test('projectId param maps to core project_id; absent stays null', () {
-      final withProj = coreTaskPayload(<String, Object?>{
-        'id': 'p1', 'title': '带项目', 'project': '研发',
-      }, 'u', projectId: 'dddddddd-dddd-4ddd-8ddd-dddddddddd01');
+      final withProj = coreTaskPayload(
+        <String, Object?>{'id': 'p1', 'title': '带项目', 'project': '研发'},
+        'u',
+        projectId: 'dddddddd-dddd-4ddd-8ddd-dddddddddd01',
+      );
       expect(withProj['project_id'], 'dddddddd-dddd-4ddd-8ddd-dddddddddd01');
       final noProj = coreTaskPayload(<String, Object?>{
-        'id': 'p2', 'title': '无项目', 'project': '',
+        'id': 'p2',
+        'title': '无项目',
+        'project': '',
       }, 'u');
       expect(noProj['project_id'], isNull);
     });
@@ -179,7 +195,10 @@ void main() {
       expect(p['revision'], 2);
       // 空集合 = 清除关联(tombstone 语义,ADR-010)。
       final empty = coreTaskTagPayload(<String, Object?>{
-        'task_id': 'x', 'tag_ids': '', 'revision': 1, 'updated_at_ms': 1,
+        'task_id': 'x',
+        'tag_ids': '',
+        'revision': 1,
+        'updated_at_ms': 1,
       }, 'u');
       expect(empty['tag_ids'], isEmpty);
     });
@@ -200,7 +219,9 @@ void main() {
       expect(live['deleted_at'], isNull);
 
       final tomb = coreSubtaskPayload(<String, Object?>{
-        'id': 'x', 'task_id': 't', 'title': '已删',
+        'id': 'x',
+        'task_id': 't',
+        'title': '已删',
         'deleted_at_ms': 1746149400123,
       }, 'u');
       expect(tomb['deleted_at'], msToIso(1746149400123));
@@ -219,14 +240,13 @@ void main() {
 
     test('description round-trip: no longer clobbered with empty string', () {
       final p = coreTaskPayload(<String, Object?>{
-        'id': 'desc1', 'title': '带描述',
+        'id': 'desc1',
+        'title': '带描述',
         'description': '桌面写的验收标准',
       }, 'u');
       expect(p['description'], '桌面写的验收标准');
       // 缺列(极老行)回退空串,不再有覆盖隐患的主路径。
-      final f = taskFieldsFromCore(<String, dynamic>{
-        'description': '远端描述',
-      });
+      final f = taskFieldsFromCore(<String, dynamic>{'description': '远端描述'});
       expect(f['description'], '远端描述');
     });
 
@@ -261,12 +281,15 @@ void main() {
       expect(p['text'], '种一棵树最好的时间是十年前');
       expect(p['author'], '谚语');
       final anon = coreMottoPayload(<String, Object?>{
-        'id': 'm2', 'text': '匿名格言', 'author': '',
+        'id': 'm2',
+        'text': '匿名格言',
+        'author': '',
       }, 'u');
       expect(anon['author'], isNull);
 
       final f = mottoFieldsFromCore(<String, dynamic>{
-        'text': '远端格言', 'author': null,
+        'text': '远端格言',
+        'author': null,
       });
       expect(f['text'], '远端格言');
       expect(f['author'], '');
@@ -274,14 +297,19 @@ void main() {
 
     test('pomodoro_duration/repeat round-trip both ways', () {
       final p = coreTaskPayload(<String, Object?>{
-        'id': 'd9', 'title': '带参数', 'completed': 0,
-        'pomodoro_duration': 45, 'repeat': 'daily',
+        'id': 'd9',
+        'title': '带参数',
+        'completed': 0,
+        'pomodoro_duration': 45,
+        'repeat': 'daily',
       }, 'u');
       expect(p['pomodoro_duration'], 45);
       expect(p['repeat'], 'daily');
       // 未设(0)→ null(用全局设置)。
       final p0 = coreTaskPayload(<String, Object?>{
-        'id': 'd8', 'title': '默认', 'completed': 0,
+        'id': 'd8',
+        'title': '默认',
+        'completed': 0,
       }, 'u');
       expect(p0['pomodoro_duration'], isNull);
       expect(p0['repeat'], 'none');
@@ -297,22 +325,123 @@ void main() {
 
     test('active task with no due label', () {
       final p = coreTaskPayload(<String, Object?>{
-        'id': 'x', 'title': 't', 'priority': 'none',
-        'due_label': '', 'completed': 0,
+        'id': 'x',
+        'title': 't',
+        'priority': 'none',
+        'due_label': '',
+        'due_at_ms': 0,
+        'completed': 0,
       }, 'u');
       expect(p['status'], 'active');
       expect(p['due_date'], isNull);
     });
 
+    test('due_at_ms 0 → due_date null(无到期日,桌面同语义)', () {
+      final p = coreTaskPayload(<String, Object?>{
+        'id': 'd10',
+        'title': '无到期',
+        'completed': 0,
+      }, 'u');
+      expect(p['due_date'], isNull);
+    });
+
+    test('reminder passthrough;缺列回退 none', () {
+      final f = coreTaskPayload(<String, Object?>{
+        'id': 'r1',
+        'title': '提醒',
+        'completed': 0,
+        'reminder': 'day1',
+      }, 'u');
+      expect(f['reminder'], 'day1');
+      final none = coreTaskPayload(<String, Object?>{
+        'id': 'r2',
+        'title': '老行',
+        'completed': 0,
+      }, 'u');
+      expect(none['reminder'], 'none');
+    });
+
+    test('repeat_config 只在 repeat=custom 且非空时发送', () {
+      const cfg =
+          '{"interval":0,"type":"week","startDate":"2026-09-02T09:00",'
+          '"endDate":"2026-12-31T23:59","weekdays":[1,3,5]}';
+      final custom = coreTaskPayload(<String, Object?>{
+        'id': 'rc1',
+        'title': '自定义重复',
+        'completed': 0,
+        'repeat': 'custom',
+        'repeat_config': cfg,
+      }, 'u');
+      expect(custom['repeat'], 'custom');
+      expect(custom['repeat_config'], cfg);
+
+      // custom 但配置空(异常防御)→ null。
+      final customEmpty = coreTaskPayload(<String, Object?>{
+        'id': 'rc2',
+        'title': '空配置',
+        'completed': 0,
+        'repeat': 'custom',
+        'repeat_config': '',
+      }, 'u');
+      expect(customEmpty['repeat_config'], isNull);
+
+      // 非 custom 时即便有残留配置也不发(桌面同语义)。
+      final dailyLeftover = coreTaskPayload(<String, Object?>{
+        'id': 'rc3',
+        'title': '每天带残留',
+        'completed': 0,
+        'repeat': 'daily',
+        'repeat_config': cfg,
+      }, 'u');
+      expect(dailyLeftover['repeat_config'], isNull);
+    });
+
+    test('pull:due_date/reminder/repeat_config → 行列(含 due_label 派生)', () {
+      const iso = '2026-09-03T01:30:00.000Z'; // 东八区 = 09-03 09:30
+      final f = taskFieldsFromCore(<String, dynamic>{
+        'due_date': iso,
+        'reminder': 'hour1',
+        'repeat': 'custom',
+        'repeat_config':
+            '{"interval":1,"type":"month","startDate":"2026-09-01T08:00",'
+            '"endDate":"2027-08-31T23:59","monthDays":[1,15]}',
+      });
+      expect(f['due_at_ms'], isoToMs(iso));
+      expect(f['due_label'], isNotEmpty);
+      expect(f['reminder'], 'hour1');
+      expect(f['repeat'], 'custom');
+      expect((f['repeat_config'] as String).contains('"monthDays"'), isTrue);
+
+      // 远端 null due_date(清除到期日)→ due_at_ms 0 + 空标签。
+      final cleared = taskFieldsFromCore(<String, dynamic>{
+        'due_date': null,
+        'repeat_config': null,
+      });
+      expect(cleared['due_at_ms'], 0);
+      expect(cleared['due_label'], '');
+      expect(cleared['repeat_config'], '');
+
+      // 旧对端 payload 缺 due_date → 按清除处理落 0(与 deleted_at 同口径);
+      // reminder 缺 → 不写键,保留本地值(is String 才写)。
+      final legacy = taskFieldsFromCore(<String, dynamic>{'title': '旧版'});
+      expect(legacy['due_at_ms'], 0);
+      expect(legacy['due_label'], '');
+      expect(legacy.containsKey('reminder'), isFalse);
+    });
+
     test('completed_at round-trip: done task emits iso, undone emits null', () {
       final done = coreTaskPayload(<String, Object?>{
-        'id': 'c1', 'title': '完成', 'completed': 1,
+        'id': 'c1',
+        'title': '完成',
+        'completed': 1,
         'completed_at_ms': 1746149400123,
       }, 'u');
       expect(done['status'], 'completed');
       expect(done['completed_at'], msToIso(1746149400123));
       final undone = coreTaskPayload(<String, Object?>{
-        'id': 'c2', 'title': '未完成', 'completed': 0,
+        'id': 'c2',
+        'title': '未完成',
+        'completed': 0,
       }, 'u');
       expect(undone['completed_at'], isNull);
 
@@ -333,12 +462,16 @@ void main() {
 
     test('tombstone row emits non-null deleted_at; live row emits null', () {
       final deleted = coreTaskPayload(<String, Object?>{
-        'id': 'd1', 'title': '已删', 'deleted_at_ms': 1746149400123,
+        'id': 'd1',
+        'title': '已删',
+        'deleted_at_ms': 1746149400123,
         'updated_at_ms': 1746149400123,
       }, 'u');
       expect(deleted['deleted_at'], msToIso(1746149400123));
       final live = coreTaskPayload(<String, Object?>{
-        'id': 'd0', 'title': '活任务', 'deleted_at_ms': 0,
+        'id': 'd0',
+        'title': '活任务',
+        'deleted_at_ms': 0,
       }, 'u');
       expect(live['deleted_at'], isNull);
     });
@@ -360,8 +493,15 @@ void main() {
       }, 'u-9');
 
       for (final key in [
-        'id', 'user_id', 'task_id', 'project_id', 'duration',
-        'started_at', 'ended_at', 'is_completed', 'created_at',
+        'id',
+        'user_id',
+        'task_id',
+        'project_id',
+        'duration',
+        'started_at',
+        'ended_at',
+        'is_completed',
+        'created_at',
       ]) {
         expect(p.containsKey(key), isTrue, reason: '$key 必须显式出现');
       }
@@ -375,11 +515,12 @@ void main() {
 
   group('taskFieldsFromCore', () {
     test('maps core fields; never touches project/tags/subtask', () {
+      final dueIso = dueLabelToIso('今天') ?? '';
       final f = taskFieldsFromCore(<String, dynamic>{
         'title': '桌面端任务',
         'priority': 'low',
         'status': 'active',
-        'due_date': dueLabelToIso('今天'),
+        'due_date': dueIso,
         'estimated_pomodoros': 4,
         'completed_pomodoros': 1,
       });
@@ -387,6 +528,7 @@ void main() {
       expect(f['priority'], 'low');
       expect(f['completed'], 0);
       expect(f['due_label'], '今天');
+      expect(f['due_at_ms'], isoToMs(dueIso));
       expect(f['estimated'], 4);
       expect(f['completed_cnt'], 1);
       expect(f.containsKey('project'), isFalse);
