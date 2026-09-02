@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../data/database.dart';
+import '../models/project.dart';
 import '../models/session.dart';
 import '../models/subtask.dart';
 import '../models/task.dart';
@@ -288,6 +289,65 @@ class TaskProvider extends ChangeNotifier {
 
   int todayPomos = 0;
   String todayReview = '';
+
+  // === 项目(P3 实体化:扁平 → 层级) ===========================================
+
+  List<PfProject> _projects = const [];
+  List<PfProject> get projects => _projects;
+
+  /// 从 DB 重读项目列表(新建/编辑/删除后调用,或首次进入)。
+  Future<void> reloadProjects() async {
+    final db = _db;
+    if (db == null) {
+      _projects = const [];
+      notifyListeners();
+      return;
+    }
+    _projects = await db.listProjects();
+    notifyListeners();
+  }
+
+  /// 新建/更新项目(同名重命名即 upsert;display_order 自动追加到末尾)。
+  Future<void> upsertProject({
+    required String id,
+    required String name,
+    String color = '',
+    String parentId = '',
+  }) async {
+    final db = _db;
+    if (db == null) return;
+    final nextOrder = _projects.where((p) => p.parentId == parentId).length + 1;
+    try {
+      await db.upsertProject(
+        id: id,
+        name: name,
+        color: color,
+        parentId: parentId,
+        displayOrder: nextOrder,
+        originDevice: _deviceIdProvider?.call() ?? '',
+        userId: _userIdProvider?.call() ?? '',
+      );
+      await reloadProjects();
+    } on Exception catch (e) {
+      debugPrint('upsertProject failed: $e');
+    }
+  }
+
+  /// 软删除项目(同步给服务端收敛)。
+  Future<void> deleteProject(String id) async {
+    final db = _db;
+    if (db == null) return;
+    try {
+      await db.softDeleteProject(
+        id: id,
+        originDevice: _deviceIdProvider?.call() ?? '',
+        userId: _userIdProvider?.call() ?? '',
+      );
+      await reloadProjects();
+    } on Exception catch (e) {
+      debugPrint('deleteProject failed: $e');
+    }
+  }
 
   // === 任务视图(§4.2 六视图) ==================================================
 
@@ -800,6 +860,7 @@ class TaskProvider extends ChangeNotifier {
     final tasks = await db.listTasks();
     final sessions = await db.listSessions();
     _mottos = await db.listMottos();
+    _projects = await db.listProjects();
     todayReview = (await db.dailyReviewContent(
             localDay(DateTime.now()))) ??
         todayReview;

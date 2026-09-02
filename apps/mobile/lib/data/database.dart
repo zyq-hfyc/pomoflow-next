@@ -57,7 +57,9 @@ class AppDatabase {
   /// 探测到 LWW 另一方胜出时落行,UI 列表展示「刚被覆盖的字段」)。
   /// schema v14 → v15:新建 weekly_reviews / monthly_reviews 表(P3 周/月复盘
   /// 与桌面端同步;日复盘已存在,这里补全另外两种周期)。
-  static const _schemaVersion = 15;
+  /// schema v15 → v16:projects 补 parent_id / display_order 列(P3 项目层级
+  /// 与桌面端同步对齐,3 级嵌套 + 拖拽改父)。
+  static const _schemaVersion = 16;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -130,6 +132,10 @@ class AppDatabase {
           if (oldVersion < 15) {
             await _v14ToV15(db);
           }
+          // v15 → v16:projects 补 parent_id / display_order。
+          if (oldVersion < 16) {
+            await _v15ToV16(db);
+          }
         },
       ),
     );
@@ -171,6 +177,9 @@ class AppDatabase {
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_focus ON tasks(is_focus)');
     await _createSessionsTable(db);
     await _createProjectsTable(db);
+    // P3 项目层级:新建空库自动种 5 个默认顶级项目(平铺,display_order 1-5)
+    // —— 让 task_create_sheet 不再走硬编码列表,新装用户即可看到。
+    await _seedDefaultProjects(db);
     await _createTagsTable(db);
     await _createTaskTagSyncTable(db);
     await _createSubtasksTable(db);
@@ -335,6 +344,24 @@ class AppDatabase {
     await _createWeeklyReviewsTable(db);
     await _createMonthlyReviewsTable(db);
     await db.insert('meta', {'k': 'schema_version', 'v': '15'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// v15 → v16 升级:projects 加 parent_id / display_order(对齐 core)。
+  /// 老行 parent_id=null(顶级项目);display_order 按 name 回填保证稳定顺序;
+  /// 老库若无 5 个默认项目,顺手种一次(对齐新装体验)。
+  static Future<void> _v15ToV16(Database db) async {
+    await _addColumnIfMissing(
+      db, 'projects', "ALTER TABLE projects ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''");
+    await _addColumnIfMissing(
+      db, 'projects', "ALTER TABLE projects ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0");
+    await db.rawUpdate('''
+      UPDATE projects
+      SET display_order = (
+        SELECT COUNT(*) FROM projects AS p2 WHERE p2.name <= projects.name
+      )''');
+    await _seedDefaultProjects(db);
+    await db.insert('meta', {'k': 'schema_version', 'v': '16'},
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -564,6 +591,8 @@ class AppDatabase {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         color TEXT NOT NULL DEFAULT '',
+        parent_id TEXT NOT NULL DEFAULT '',
+        display_order INTEGER NOT NULL DEFAULT 0,
         revision INTEGER NOT NULL DEFAULT 1,
         sync_state TEXT NOT NULL DEFAULT 'synced',
         updated_at_ms INTEGER NOT NULL DEFAULT 0,
@@ -572,6 +601,19 @@ class AppDatabase {
         user_id TEXT NOT NULL DEFAULT ''
       )
     ''');
+  }
+
+  /// 种 5 个默认顶级项目 —— 让新装用户首次进入 task_create_sheet 即可下拉选中。
+  /// INSERT OR IGNORE:已有同名项目(用户改过 / 同步过来)不覆盖。
+  static Future<void> _seedDefaultProjects(Database db) async {
+    final defaults = ['产品设计', '研发', '运营', '学习', '日常'];
+    for (var i = 0; i < defaults.length; i++) {
+      await db.rawInsert(
+        'INSERT OR IGNORE INTO projects (id, name, parent_id, display_order, sync_state) '
+        "VALUES (?, ?, '', ?, 'synced')",
+        ['default-${defaults[i]}', defaults[i], i + 1],
+      );
+    }
   }
 
   /// v8 → v9 升级:任务级计时参数(单番茄时长覆盖全局 + 重复标记)。
@@ -1033,13 +1075,15 @@ class AppDatabase {
     final rows = await _db.query(
       'projects',
       where: "sync_state != 'tombstone'",
-      orderBy: 'name ASC',
+      orderBy: 'display_order ASC, name ASC',
     );
     return rows
         .map((r) => PfProject(
               id: r['id'] as String,
               name: r['name'] as String,
               color: (r['color'] as String?) ?? '',
+              parentId: (r['parent_id'] as String?) ?? '',
+              displayOrder: (r['display_order'] as int?) ?? 0,
               syncMeta: PfSyncMeta(
                 revision: (r['revision'] as int?) ?? 1,
                 updatedAt: (r['updated_at_ms'] as int? ?? 0) > 0
@@ -1052,6 +1096,79 @@ class AppDatabase {
               ),
             ))
         .toList();
+  }
+
+  /// 新建/更新项目(按 name upsert + 标 pending;同时维护 parent_id/display_order)。
+  Future<void> upsertProject({
+    required String id,
+    required String name,
+    String color = '',
+    String parentId = '',
+    int displayOrder = 0,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final existing = await _db.query(
+      'projects',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (existing.isEmpty) {
+      await _db.insert('projects', {
+        'id': id,
+        'name': name,
+        'color': color,
+        'parent_id': parentId,
+        'display_order': displayOrder,
+        'revision': 1,
+        'sync_state': 'pending',
+        'updated_at_ms': nowMs,
+        'origin_device': originDevice,
+        'payload': '',
+        'user_id': userId,
+      });
+    } else {
+      await _db.update(
+        'projects',
+        {
+          'name': name,
+          'color': color,
+          'parent_id': parentId,
+          'display_order': displayOrder,
+          'revision': ((existing.first['revision'] as int?) ?? 1) + 1,
+          'sync_state': 'pending',
+          'updated_at_ms': nowMs,
+          'origin_device': originDevice,
+          'user_id': userId,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    }
+  }
+
+  /// 软删除项目(标 tombstone + pending)。
+  Future<void> softDeleteProject({
+    required String id,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    await _db.update(
+      'projects',
+      {
+        'sync_state': 'tombstone',
+        'deleted_at_ms': nowMs,
+        'revision': 1,
+        'updated_at_ms': nowMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   Future<PfProject?> findProjectByName(String name) async {

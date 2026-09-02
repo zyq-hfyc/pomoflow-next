@@ -73,7 +73,11 @@ void main() {
       expect(weeklyCols.map((r) => r['name']), contains('week_start'));
       final monthlyCols = await db.raw.rawQuery('PRAGMA table_info(monthly_reviews)');
       expect(monthlyCols.map((r) => r['name']), contains('year_month'));
-      expect(await db.getMeta('schema_version'), '15');
+      // schema v16 加 projects.parent_id / display_order(P3 项目层级)
+      final projCols = await db.raw.rawQuery('PRAGMA table_info(projects)');
+      expect(projCols.map((r) => r['name']), contains('parent_id'));
+      expect(projCols.map((r) => r['name']), contains('display_order'));
+      expect(await db.getMeta('schema_version'), '16');
     } finally {
       await db.close();
     }
@@ -195,7 +199,11 @@ void main() {
       expect(weeklyCols.map((r) => r['name']), contains('week_start'));
       final monthlyCols = await db.raw.rawQuery('PRAGMA table_info(monthly_reviews)');
       expect(monthlyCols.map((r) => r['name']), contains('year_month'));
-      expect(await db.getMeta('schema_version'), '15');
+      // v15 → v16 升级:legacy 库也补 projects.parent_id / display_order
+      final projCols = await db.raw.rawQuery('PRAGMA table_info(projects)');
+      expect(projCols.map((r) => r['name']), contains('parent_id'));
+      expect(projCols.map((r) => r['name']), contains('display_order'));
+      expect(await db.getMeta('schema_version'), '16');
     } finally {
       await db.close();
       await tmp.delete(recursive: true);

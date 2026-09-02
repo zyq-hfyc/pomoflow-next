@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/project.dart';
 import '../models/subtask.dart';
 import '../models/task.dart';
 import '../providers/nav_provider.dart';
@@ -8,6 +9,7 @@ import '../providers/task_provider.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_controls.dart';
 import '../widgets/pf_sheet.dart';
+import 'project_manager_sheet.dart';
 
 /// 新建/编辑任务 Sheet(§5.5 任务类全字段):标题/项目/优先级/截止/预计番茄/
 /// 单番茄时长/重复/标签。传 [editTask] 即编辑模式(预填 + 保存修改)。
@@ -30,7 +32,6 @@ class _TaskCreateForm extends StatefulWidget {
 }
 
 class _TaskCreateFormState extends State<_TaskCreateForm> {
-  static const _projects = ['产品设计', '研发', '运营', '学习', '日常'];
   // 6 条预设(对齐 v1 + core Repeat:none/daily/weekdays/weekly/monthly/yearly)。
   // 自定义规则(JSON)走桌面 repeat 自定义对话框,mobile P0 不展开。
   static const _repeatOptions = [
@@ -51,10 +52,20 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
   late final TextEditingController _descCtrl = TextEditingController(
     text: widget.initial?.description ?? '',
   );
-  late String _project =
-      _projects.contains(widget.initial?.project) && widget.initial != null
-          ? widget.initial!.project
-          : _projects.first;
+  late String _project = _initialProject();
+
+  String _initialProject() {
+    final init = widget.initial;
+    final list = context.read<TaskProvider>().projects;
+    if (init != null && list.any((p) => p.name == init.project)) {
+      return init.project;
+    }
+    return list.isNotEmpty ? list.first.name : '';
+  }
+
+  /// 项目列表从 provider 拉(扁平按 display_order)。每次 build 重新取值
+  /// —— 拉新/删项目后从 ProjectManagerSheet 回来时会自动反映。
+  List<PfProject> _projectList() => context.read<TaskProvider>().projects;
   late PfPriority _priority = widget.initial?.priority ?? PfPriority.medium;
   late String _due =
       widget.initial != null && widget.initial!.dueLabel.isNotEmpty
@@ -71,6 +82,28 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
   late String _repeat = _coreToRepeatLabel(
       widget.initial != null ? widget.initial!.repeat : 'none',
   );
+
+  @override
+  void initState() {
+    super.initState();
+    // 兜底:第一次进 sheet 时若 provider 还没 load 出项目列表,
+    // 异步拉一次(常见于 demo → 真 DB 切换 或 首次冷启动)。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final p = context.read<TaskProvider>();
+      if (p.projects.isEmpty) {
+        p.reloadProjects().then((_) {
+          if (!mounted) return;
+          final list = _projectList();
+          setState(() {
+            if (!list.any((q) => q.name == _project)) {
+              _project = list.isNotEmpty ? list.first.name : '';
+            }
+          });
+        });
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -157,8 +190,23 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
           label: '所属项目',
           child: _DropdownField(
             value: _project,
-            options: _projects,
+            options: _projectList().map((p) => p.name).toList(),
             onChanged: (v) => setState(() => _project = v),
+            trailing: TextButton(
+              onPressed: () {
+                showProjectManagerSheet(context);
+                if (!mounted) return;
+                // 兜底:Provider 状态变更由 listener 触发 rebuild,无需手动 setState
+                final list = _projectList();
+                setState(() {
+                  // 重建:当前选中若已被删则回到第一项
+                  if (!list.any((p) => p.name == _project)) {
+                    _project = list.isNotEmpty ? list.first.name : '';
+                  }
+                });
+              },
+              child: const Text('管理', style: TextStyle(fontSize: 13)),
+            ),
           ),
         ),
         PfFormField(
@@ -656,11 +704,13 @@ class _DropdownField extends StatelessWidget {
     required this.value,
     required this.options,
     required this.onChanged,
+    this.trailing,
   });
 
   final String value;
   final List<String> options;
   final ValueChanged<String> onChanged;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -695,6 +745,7 @@ class _DropdownField extends StatelessWidget {
         child: Row(
           children: [
             Expanded(child: Text(value, style: const TextStyle(fontSize: 15))),
+            if (trailing != null) trailing!,
             Icon(Icons.expand_more, size: 20, color: theme.pfMuted),
           ],
         ),
