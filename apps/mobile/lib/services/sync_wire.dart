@@ -110,6 +110,10 @@ Map<String, Object?> coreTaskPayload(
   final dueAtMs = (row['due_at_ms'] as int?) ?? 0;
   final repeat = (row['repeat'] as String?) ?? 'none';
   final repeatConfig = (row['repeat_config'] as String?) ?? '';
+  // v18 起真值(此前硬编码 null —— mobile 编辑桌面生成的实例会把
+  // repeat_parent_id 冲成 null,模板-实例链接全局断裂,同 description P0)。
+  final repeatParentId = (row['repeat_parent_id'] as String?) ?? '';
+  final repeatEndDateMs = (row['repeat_end_date_ms'] as int?) ?? 0;
   return {
     'id': row['id'],
     'user_id': userId,
@@ -136,8 +140,8 @@ Map<String, Object?> coreTaskPayload(
     'repeat_config': repeat == 'custom' && repeatConfig.isNotEmpty
         ? repeatConfig
         : null,
-    'repeat_parent_id': null,
-    'repeat_end_date': null,
+    'repeat_parent_id': repeatParentId.isNotEmpty ? repeatParentId : null,
+    'repeat_end_date': repeatEndDateMs > 0 ? msToIso(repeatEndDateMs) : null,
     // 完成时刻(此前硬编码 null —— mobile 勾完成的任务推上去,桌面区间
     // 口径的「完成任务」永远是 0;v8 起发真实值)。
     'completed_at': completedAtMs > 0 ? msToIso(completedAtMs) : null,
@@ -437,6 +441,16 @@ Map<String, Object?> taskFieldsFromCore(Map? p) {
   if (p['repeat'] is String) out['repeat'] = p['repeat'] as String;
   if (p['repeat_config'] is String?) {
     out['repeat_config'] = (p['repeat_config'] as String?) ?? '';
+  }
+  // 模板-实例链接 + 重复终止时间(v18;此前 pull 丢弃 → 桌面生成的实例
+  // 落到 mobile 后再推回服务端就成了孤儿)。
+  if (p['repeat_parent_id'] is String?) {
+    out['repeat_parent_id'] = (p['repeat_parent_id'] as String?) ?? '';
+  }
+  if (p['repeat_end_date'] is String?) {
+    out['repeat_end_date_ms'] = isoToMs(
+      (p['repeat_end_date'] as String?) ?? '',
+    );
   }
   if (p['pomodoro_duration'] is int) {
     out['pomodoro_duration'] = p['pomodoro_duration'] as int;

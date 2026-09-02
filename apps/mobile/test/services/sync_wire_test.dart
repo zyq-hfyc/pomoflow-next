@@ -396,6 +396,46 @@ void main() {
       expect(dailyLeftover['repeat_config'], isNull);
     });
 
+    test('repeat_parent_id / repeat_end_date round-trip(v18 修复项)', () {
+      // 实例行(repeat_parent_id 指向模板)→ wire 发真实 id + iso 终止时间。
+      // 此前两键硬编码 null:mobile 编辑桌面生成的实例会把链接冲断(同
+      // description P0 家族)。
+      const parentId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa77';
+      const instId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb77';
+      final p = coreTaskPayload(<String, Object?>{
+        'id': instId,
+        'title': '桌面模板的实例',
+        'completed': 0,
+        'repeat_parent_id': parentId,
+        'repeat_end_date_ms': 1746149400123,
+      }, 'u');
+      expect(p['repeat_parent_id'], parentId);
+      expect(p['repeat_end_date'], msToIso(1746149400123));
+
+      // 模板/普通任务(空串 / 0)→ null(core Option::None)。
+      final plain = coreTaskPayload(<String, Object?>{
+        'id': 'plain1',
+        'title': '普通任务',
+        'completed': 0,
+      }, 'u');
+      expect(plain['repeat_parent_id'], isNull);
+      expect(plain['repeat_end_date'], isNull);
+
+      // pull 方向:远端实例 → 行列;null → '' / 0。
+      final f = taskFieldsFromCore(<String, dynamic>{
+        'repeat_parent_id': parentId,
+        'repeat_end_date': msToIso(1746149400123),
+      });
+      expect(f['repeat_parent_id'], parentId);
+      expect(f['repeat_end_date_ms'], 1746149400123);
+      final fNull = taskFieldsFromCore(<String, dynamic>{
+        'repeat_parent_id': null,
+        'repeat_end_date': null,
+      });
+      expect(fNull['repeat_parent_id'], '');
+      expect(fNull['repeat_end_date_ms'], 0);
+    });
+
     test('pull:due_date/reminder/repeat_config → 行列(含 due_label 派生)', () {
       const iso = '2026-09-03T01:30:00.000Z'; // 东八区 = 09-03 09:30
       final f = taskFieldsFromCore(<String, dynamic>{

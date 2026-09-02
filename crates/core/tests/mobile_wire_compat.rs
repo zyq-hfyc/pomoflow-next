@@ -105,6 +105,33 @@ fn mobile_due_at_reminder_custom_repeat_payload_deserializes() {
 }
 
 #[test]
+fn mobile_repeat_instance_payload_deserializes() {
+    // v18 起变体:mobile 生成的重复实例(repeat_parent_id 指向模板 id,
+    // repeat_end_date 为引擎算出的 iso)。此前 mobile 恒发 null —— 编辑桌面
+    // 实例会把模板链接冲断,此锁防止该 wire 回退。
+    let mut obj = serde_json::from_str::<serde_json::Value>(TASK_JSON)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+    obj.insert(
+        "repeat_parent_id".into(),
+        serde_json::json!("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa77"),
+    );
+    obj.insert(
+        "repeat_end_date".into(),
+        serde_json::json!("2026-12-31T15:59:00.000Z"),
+    );
+    let t: Task = serde_json::from_value(serde_json::Value::Object(obj))
+        .expect("repeat instance payload 必须能反序列化");
+    assert_eq!(
+        t.repeat_parent_id.as_ref().map(|i| i.as_str()),
+        Some("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa77")
+    );
+    assert!(t.repeat_end_date.is_some());
+}
+
+#[test]
 fn mobile_reminder_all_variants_deserialize() {
     // Reminder serde 名无下划线前缀数字(minutes5/hour1/days2 …),
     // mobile `_reminderOptions` 的 key 必须逐个能收。
