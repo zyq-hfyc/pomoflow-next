@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/task_provider.dart';
 import '../services/stats_agg.dart';
+import '../services/stats_export.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_controls.dart';
 import '../widgets/pf_sheet.dart';
@@ -52,7 +53,7 @@ class _StatsPageState extends State<StatsPage> {
             action: PillButton(
               tooltip: '导出',
               child: const Text('⤓', style: TextStyle(fontSize: 16)),
-              onTap: () => _hint('数据导出将在 P3c 接入'),
+              onTap: () => _export(s, _dim),
             ),
           ),
           SliverToBoxAdapter(
@@ -126,6 +127,15 @@ class _StatsPageState extends State<StatsPage> {
 
   void _hint(String msg) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+
+  Future<void> _export(PfStatsSummary s, String dim) async {
+    try {
+      await StatsExporter.shareCsv(s, dim);
+    } catch (e) {
+      if (!mounted) return;
+      _hint('导出失败 · $e');
+    }
+  }
 }
 
 /// 统计小卡(.stat,数值 brand-700)。
