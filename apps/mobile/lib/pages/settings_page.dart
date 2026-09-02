@@ -175,7 +175,8 @@ class SettingsPage extends StatelessWidget {
   }
 }
 
-/// 通知模板编辑 sheet:顶部 6 套预设切换 + 6 个输入框(专注/短/长 × 标题/正文)。
+/// 通知模板编辑 sheet:顶部 6 套预设切换 + 8 个输入框(专注/短/长/提醒 ×
+/// 标题/正文;专注与提醒正文支持 {task_title} 占位符)。
 void _openNotificationTemplateSheet(BuildContext context) {
   pfSheet(
     context,
@@ -200,6 +201,8 @@ class _NotificationTemplateBodyState extends State<_NotificationTemplateBody> {
   late TextEditingController _shortBody;
   late TextEditingController _longTitle;
   late TextEditingController _longBody;
+  late TextEditingController _reminderTitle;
+  late TextEditingController _reminderBody;
   bool _loaded = false;
 
   @override
@@ -212,6 +215,8 @@ class _NotificationTemplateBodyState extends State<_NotificationTemplateBody> {
     _shortBody = TextEditingController(text: p.shortBody);
     _longTitle = TextEditingController(text: p.longTitle);
     _longBody = TextEditingController(text: p.longBody);
+    _reminderTitle = TextEditingController(text: p.reminderTitle);
+    _reminderBody = TextEditingController(text: p.reminderBody);
     _loaded = true;
   }
 
@@ -223,6 +228,8 @@ class _NotificationTemplateBodyState extends State<_NotificationTemplateBody> {
     _shortBody.dispose();
     _longTitle.dispose();
     _longBody.dispose();
+    _reminderTitle.dispose();
+    _reminderBody.dispose();
     super.dispose();
   }
 
@@ -260,6 +267,8 @@ class _NotificationTemplateBodyState extends State<_NotificationTemplateBody> {
                       _shortBody.text = preset.shortBody;
                       _longTitle.text = preset.longTitle;
                       _longBody.text = preset.longBody;
+                      _reminderTitle.text = preset.reminderTitle;
+                      _reminderBody.text = preset.reminderBody;
                     });
                     await _persist();
                   },
@@ -281,6 +290,10 @@ class _NotificationTemplateBodyState extends State<_NotificationTemplateBody> {
         _label('长休息结束', theme),
         _field(_longTitle, '标题', theme),
         _field(_longBody, '正文', theme),
+        const SizedBox(height: 12),
+        _label('任务提醒', theme),
+        _field(_reminderTitle, '标题', theme),
+        _field(_reminderBody, '正文(支持 {task_title})', theme, maxLines: 2),
         const SizedBox(height: 14),
         PfPrimaryButton(
           label: '保存',
@@ -299,6 +312,10 @@ class _NotificationTemplateBodyState extends State<_NotificationTemplateBody> {
     await p.updateFocus(title: _focusTitle.text, body: _focusBody.text);
     await p.updateShort(title: _shortTitle.text, body: _shortBody.text);
     await p.updateLong(title: _longTitle.text, body: _longBody.text);
+    await p.updateReminder(
+      title: _reminderTitle.text,
+      body: _reminderBody.text,
+    );
   }
 
   Widget _label(String text, ThemeData theme) => Padding(
