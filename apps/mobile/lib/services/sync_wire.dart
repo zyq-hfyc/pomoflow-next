@@ -297,6 +297,60 @@ Map<String, Object?> dailyReviewFieldsFromCore(Map? p) {
   return out;
 }
 
+/// weekly_reviews pending 行 → core::WeeklyReview JSON(push 方向)。
+Map<String, Object?> coreWeeklyReviewPayload(
+    Map<String, Object?> row, String userId) {
+  final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
+  final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
+  return {
+    'id': row['id'],
+    'user_id': userId,
+    'week_start': row['week_start'],
+    'content': row['content'] ?? '',
+    'revision': (row['revision'] as int?) ?? 1,
+    'deleted_at': deletedAtMs > 0 ? msToIso(deletedAtMs) : null,
+    'updated_at': msToIso(updatedAtMs),
+  };
+}
+
+/// core::WeeklyReview JSON → 行列(pull 方向;week_start 由 applyRemote 单独传)。
+Map<String, Object?> weeklyReviewFieldsFromCore(Map? p) {
+  if (p == null) return const {};
+  final out = <String, Object?>{};
+  if (p['content'] is String) out['content'] = p['content'] as String;
+  if (p['deleted_at'] is String?) {
+    out['deleted_at_ms'] = isoToMs((p['deleted_at'] as String?) ?? '');
+  }
+  return out;
+}
+
+/// monthly_reviews pending 行 → core::MonthlyReview JSON(push 方向)。
+Map<String, Object?> coreMonthlyReviewPayload(
+    Map<String, Object?> row, String userId) {
+  final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
+  final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
+  return {
+    'id': row['id'],
+    'user_id': userId,
+    'year_month': row['year_month'],
+    'content': row['content'] ?? '',
+    'revision': (row['revision'] as int?) ?? 1,
+    'deleted_at': deletedAtMs > 0 ? msToIso(deletedAtMs) : null,
+    'updated_at': msToIso(updatedAtMs),
+  };
+}
+
+/// core::MonthlyReview JSON → 行列(pull 方向;year_month 由 applyRemote 单独传)。
+Map<String, Object?> monthlyReviewFieldsFromCore(Map? p) {
+  if (p == null) return const {};
+  final out = <String, Object?>{};
+  if (p['content'] is String) out['content'] = p['content'] as String;
+  if (p['deleted_at'] is String?) {
+    out['deleted_at_ms'] = isoToMs((p['deleted_at'] as String?) ?? '');
+  }
+  return out;
+}
+
 /// mottos pending 行 → core::Motto JSON(push 方向;mobile 只拉不发,
 /// 实现对称便于后续编辑入口)。
 Map<String, Object?> coreMottoPayload(Map<String, Object?> row, String userId) {

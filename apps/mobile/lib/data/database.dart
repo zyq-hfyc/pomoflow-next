@@ -55,7 +55,9 @@ class AppDatabase {
   /// 新建 daily_reviews / mottos 表(复盘与座右铭跨端)。
   /// schema v13 → v14:新建 conflict_log 表(P2 冲突可视化 —— pull/push
   /// 探测到 LWW 另一方胜出时落行,UI 列表展示「刚被覆盖的字段」)。
-  static const _schemaVersion = 14;
+  /// schema v14 → v15:新建 weekly_reviews / monthly_reviews 表(P3 周/月复盘
+  /// 与桌面端同步;日复盘已存在,这里补全另外两种周期)。
+  static const _schemaVersion = 15;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -124,6 +126,10 @@ class AppDatabase {
           if (oldVersion < 14) {
             await _v13ToV14(db);
           }
+          // v14 → v15:新建 weekly_reviews / monthly_reviews 表。
+          if (oldVersion < 15) {
+            await _v14ToV15(db);
+          }
         },
       ),
     );
@@ -169,6 +175,8 @@ class AppDatabase {
     await _createTaskTagSyncTable(db);
     await _createSubtasksTable(db);
     await _createDailyReviewsTable(db);
+    await _createWeeklyReviewsTable(db);
+    await _createMonthlyReviewsTable(db);
     await _createMottosTable(db);
     await _createConflictLogTable(db);
     await db.execute('''
@@ -322,6 +330,14 @@ class AppDatabase {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// v14 → v15 升级:新建 weekly_reviews / monthly_reviews 表。
+  static Future<void> _v14ToV15(Database db) async {
+    await _createWeeklyReviewsTable(db);
+    await _createMonthlyReviewsTable(db);
+    await db.insert('meta', {'k': 'schema_version', 'v': '15'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
   /// conflict_log 表(同 _v13ToV14 内 SQL;抽出供 _createSchema 用)。
   static Future<void> _createConflictLogTable(Database db) async {
     await db.execute('''
@@ -362,6 +378,48 @@ class AppDatabase {
     ''');
     await db.execute(
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_reviews_date ON daily_reviews(date)',
+    );
+  }
+
+  /// weekly_reviews:core::WeeklyReview(week_start 为同步自然键,格式 YYYY-MM-DD)。
+  static Future<void> _createWeeklyReviewsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS weekly_reviews (
+        id TEXT PRIMARY KEY,
+        week_start TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 1,
+        sync_state TEXT NOT NULL DEFAULT 'synced',
+        updated_at_ms INTEGER NOT NULL DEFAULT 0,
+        deleted_at_ms INTEGER NOT NULL DEFAULT 0,
+        origin_device TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT ''
+      )
+    ''');
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_weekly_reviews_week_start ON weekly_reviews(week_start)',
+    );
+  }
+
+  /// monthly_reviews:core::MonthlyReview(year_month 为同步自然键,格式 YYYY-MM)。
+  static Future<void> _createMonthlyReviewsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS monthly_reviews (
+        id TEXT PRIMARY KEY,
+        year_month TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 1,
+        sync_state TEXT NOT NULL DEFAULT 'synced',
+        updated_at_ms INTEGER NOT NULL DEFAULT 0,
+        deleted_at_ms INTEGER NOT NULL DEFAULT 0,
+        origin_device TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT ''
+      )
+    ''');
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_monthly_reviews_year_month ON monthly_reviews(year_month)',
     );
   }
 
@@ -1652,6 +1710,262 @@ class AppDatabase {
   Future<Map<String, Object?>?> localDailyReviewCandidate(String id) async {
     final rows = await _db.query(
       'daily_reviews',
+      columns: ['id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  // --- weekly_reviews ---
+
+  /// 某周的周复盘内容(null = 未写)。
+  Future<String?> weeklyReviewContent(String weekStart) async {
+    final rows = await _db.query(
+      'weekly_reviews',
+      columns: ['content'],
+      where: 'week_start = ? AND deleted_at_ms = 0',
+      whereArgs: [weekStart],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return (rows.first['content'] as String?) ?? '';
+  }
+
+  /// 保存(或更新)某周复盘:按 week_start upsert + 标 pending。
+  Future<void> upsertWeeklyReview({
+    required String weekStart,
+    required String content,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final existing = await _db.query(
+      'weekly_reviews',
+      where: 'week_start = ?',
+      whereArgs: [weekStart],
+      limit: 1,
+    );
+    if (existing.isEmpty) {
+      await _db.insert('weekly_reviews', {
+        'id': uuidV4(),
+        'week_start': weekStart,
+        'content': content,
+        'revision': 1,
+        'sync_state': 'pending',
+        'updated_at_ms': nowMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+      });
+    } else {
+      await _db.update(
+        'weekly_reviews',
+        {
+          'content': content,
+          'revision': ((existing.first['revision'] as int?) ?? 1) + 1,
+          'sync_state': 'pending',
+          'updated_at_ms': nowMs,
+          'origin_device': originDevice,
+          'user_id': userId,
+        },
+        where: 'week_start = ?',
+        whereArgs: [weekStart],
+      );
+    }
+  }
+
+  Future<List<Map<String, Object?>>> listPendingWeeklyReviews(
+      {int limit = 50}) async {
+    return _db.rawQuery(
+      '''SELECT id, week_start, content, revision, updated_at_ms, deleted_at_ms,
+                origin_device, user_id, payload
+         FROM weekly_reviews WHERE sync_state = 'pending'
+         ORDER BY updated_at_ms ASC LIMIT ?''',
+      [limit],
+    );
+  }
+
+  Future<void> applyRemoteWeeklyReview({
+    required String id,
+    required String weekStart,
+    required int revision,
+    required int updatedAtMs,
+    required String originDevice,
+    required String userId,
+    required String payload,
+    required Map<String, Object?> fields,
+  }) async {
+    await _db.transaction((txn) async {
+      final existing = await txn.query('weekly_reviews',
+          where: 'week_start = ?', whereArgs: [weekStart], limit: 1);
+      final row = <String, Object?>{
+        ...fields,
+        'id': id,
+        'week_start': weekStart,
+        'revision': revision,
+        'updated_at_ms': updatedAtMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+        'payload': payload,
+        'sync_state': 'synced',
+      };
+      if (existing.isEmpty) {
+        await txn.insert('weekly_reviews', row);
+      } else {
+        final rowId = existing.first['id'] as String;
+        if (rowId != id) {
+          await txn.delete('weekly_reviews',
+              where: 'id = ?', whereArgs: [rowId]);
+          await txn.insert('weekly_reviews', row);
+        } else {
+          await txn
+              .update('weekly_reviews', row, where: 'id = ?', whereArgs: [id]);
+        }
+      }
+    });
+  }
+
+  Future<void> markWeeklyReviewsSynced(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await _db.rawUpdate(
+      "UPDATE weekly_reviews SET sync_state = 'synced' WHERE id IN ($placeholders)",
+      ids,
+    );
+  }
+
+  Future<Map<String, Object?>?> localWeeklyReviewCandidate(String id) async {
+    final rows = await _db.query(
+      'weekly_reviews',
+      columns: ['id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  // --- monthly_reviews ---
+
+  /// 某月复盘内容(null = 未写)。
+  Future<String?> monthlyReviewContent(String yearMonth) async {
+    final rows = await _db.query(
+      'monthly_reviews',
+      columns: ['content'],
+      where: 'year_month = ? AND deleted_at_ms = 0',
+      whereArgs: [yearMonth],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return (rows.first['content'] as String?) ?? '';
+  }
+
+  /// 保存(或更新)某月复盘:按 year_month upsert + 标 pending。
+  Future<void> upsertMonthlyReview({
+    required String yearMonth,
+    required String content,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final existing = await _db.query(
+      'monthly_reviews',
+      where: 'year_month = ?',
+      whereArgs: [yearMonth],
+      limit: 1,
+    );
+    if (existing.isEmpty) {
+      await _db.insert('monthly_reviews', {
+        'id': uuidV4(),
+        'year_month': yearMonth,
+        'content': content,
+        'revision': 1,
+        'sync_state': 'pending',
+        'updated_at_ms': nowMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+      });
+    } else {
+      await _db.update(
+        'monthly_reviews',
+        {
+          'content': content,
+          'revision': ((existing.first['revision'] as int?) ?? 1) + 1,
+          'sync_state': 'pending',
+          'updated_at_ms': nowMs,
+          'origin_device': originDevice,
+          'user_id': userId,
+        },
+        where: 'year_month = ?',
+        whereArgs: [yearMonth],
+      );
+    }
+  }
+
+  Future<List<Map<String, Object?>>> listPendingMonthlyReviews(
+      {int limit = 50}) async {
+    return _db.rawQuery(
+      '''SELECT id, year_month, content, revision, updated_at_ms, deleted_at_ms,
+                origin_device, user_id, payload
+         FROM monthly_reviews WHERE sync_state = 'pending'
+         ORDER BY updated_at_ms ASC LIMIT ?''',
+      [limit],
+    );
+  }
+
+  Future<void> applyRemoteMonthlyReview({
+    required String id,
+    required String yearMonth,
+    required int revision,
+    required int updatedAtMs,
+    required String originDevice,
+    required String userId,
+    required String payload,
+    required Map<String, Object?> fields,
+  }) async {
+    await _db.transaction((txn) async {
+      final existing = await txn.query('monthly_reviews',
+          where: 'year_month = ?', whereArgs: [yearMonth], limit: 1);
+      final row = <String, Object?>{
+        ...fields,
+        'id': id,
+        'year_month': yearMonth,
+        'revision': revision,
+        'updated_at_ms': updatedAtMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+        'payload': payload,
+        'sync_state': 'synced',
+      };
+      if (existing.isEmpty) {
+        await txn.insert('monthly_reviews', row);
+      } else {
+        final rowId = existing.first['id'] as String;
+        if (rowId != id) {
+          await txn.delete('monthly_reviews',
+              where: 'id = ?', whereArgs: [rowId]);
+          await txn.insert('monthly_reviews', row);
+        } else {
+          await txn
+              .update('monthly_reviews', row, where: 'id = ?', whereArgs: [id]);
+        }
+      }
+    });
+  }
+
+  Future<void> markMonthlyReviewsSynced(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await _db.rawUpdate(
+      "UPDATE monthly_reviews SET sync_state = 'synced' WHERE id IN ($placeholders)",
+      ids,
+    );
+  }
+
+  Future<Map<String, Object?>?> localMonthlyReviewCandidate(String id) async {
+    final rows = await _db.query(
+      'monthly_reviews',
       columns: ['id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
       where: 'id = ?',
       whereArgs: [id],

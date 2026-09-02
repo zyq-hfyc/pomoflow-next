@@ -163,6 +163,28 @@ class SyncClient {
         'payload': coreDailyReviewPayload(row, uid),
       });
     }
+    for (final row in await db.listPendingWeeklyReviews()) {
+      changes.add({
+        'id': _uuidChangeId(),
+        'device_id': deviceId,
+        'entity': 'weekly_review',
+        'entity_id': row['id'] as String,
+        'revision': (row['revision'] as int?) ?? 1,
+        'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
+        'payload': coreWeeklyReviewPayload(row, uid),
+      });
+    }
+    for (final row in await db.listPendingMonthlyReviews()) {
+      changes.add({
+        'id': _uuidChangeId(),
+        'device_id': deviceId,
+        'entity': 'monthly_review',
+        'entity_id': row['id'] as String,
+        'revision': (row['revision'] as int?) ?? 1,
+        'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
+        'payload': coreMonthlyReviewPayload(row, uid),
+      });
+    }
     for (final row in await db.listPendingMottos()) {
       changes.add({
         'id': _uuidChangeId(),
@@ -222,6 +244,8 @@ class SyncClient {
             'task_tag' => taskTagIdsToMark,
             'sub_task' => subtaskIdsToMark,
             'daily_review' => reviewIdsToMark,
+            'weekly_review' => reviewIdsToMark,
+            'monthly_review' => reviewIdsToMark,
             'motto' => mottoIdsToMark,
             _ => taskIdsToMark,
           })
@@ -336,6 +360,34 @@ class SyncClient {
           fields: dailyReviewFieldsFromCore(payload),
         );
       }
+    } else if (entity == 'weekly_review') {
+      final weekStart = (payload as Map?)?['week_start'] as String?;
+      if (weekStart != null && weekStart.isNotEmpty) {
+        await db.applyRemoteWeeklyReview(
+          id: entityId,
+          weekStart: weekStart,
+          revision: revision,
+          updatedAtMs: updatedAtMs,
+          originDevice: originDevice,
+          userId: uid,
+          payload: payloadJson,
+          fields: weeklyReviewFieldsFromCore(payload),
+        );
+      }
+    } else if (entity == 'monthly_review') {
+      final yearMonth = (payload as Map?)?['year_month'] as String?;
+      if (yearMonth != null && yearMonth.isNotEmpty) {
+        await db.applyRemoteMonthlyReview(
+          id: entityId,
+          yearMonth: yearMonth,
+          revision: revision,
+          updatedAtMs: updatedAtMs,
+          originDevice: originDevice,
+          userId: uid,
+          payload: payloadJson,
+          fields: monthlyReviewFieldsFromCore(payload),
+        );
+      }
     } else if (entity == 'motto') {
       await db.applyRemoteMotto(
         id: entityId,
@@ -416,6 +468,10 @@ class SyncClient {
         return db.localSubtaskCandidate(id);
       case 'daily_review':
         return db.localDailyReviewCandidate(id);
+      case 'weekly_review':
+        return db.localWeeklyReviewCandidate(id);
+      case 'monthly_review':
+        return db.localMonthlyReviewCandidate(id);
       case 'motto':
         return db.localMottoCandidate(id);
       case 'pomodoro_session':
@@ -445,6 +501,10 @@ class SyncClient {
           return (json['content'] as String?) ?? '';
         case 'daily_review':
           return (json['date'] as String?) ?? '';
+        case 'weekly_review':
+          return (json['week_start'] as String?) ?? '';
+        case 'monthly_review':
+          return (json['year_month'] as String?) ?? '';
         default:
           return '';
       }
@@ -663,6 +723,62 @@ class SyncClient {
           fields: dailyReviewFieldsFromCore(change['payload'] as Map?),
         );
         return true;
+      case 'weekly_review':
+        final remote = _extractChangeTimestamps(change);
+        final local = await db.localWeeklyReviewCandidate(entityId);
+        if (local != null && _localWinsLww(local, remote)) return false;
+        if (local != null) {
+          await db.insertConflict(
+            entity: entity,
+            entityId: entityId,
+            entityTitle: _extractEntityTitle(entity, local['payload']),
+            direction: 'overrode',
+            remoteDevice: remote.deviceId,
+            localUpdatedMs: (local['updated_at_ms'] as int?) ?? 0,
+            remoteUpdatedMs: remote.updatedMs,
+          );
+        }
+        final weekStart = (change['payload'] as Map?)?['week_start'] as String?;
+        if (weekStart == null || weekStart.isEmpty) return false;
+        await db.applyRemoteWeeklyReview(
+          id: entityId,
+          weekStart: weekStart,
+          revision: (change['revision'] as int?) ?? 1,
+          updatedAtMs: remote.updatedMs,
+          originDevice: remote.deviceId,
+          userId: uid,
+          payload: payloadJson,
+          fields: weeklyReviewFieldsFromCore(change['payload'] as Map?),
+        );
+        return true;
+      case 'monthly_review':
+        final remote = _extractChangeTimestamps(change);
+        final local = await db.localMonthlyReviewCandidate(entityId);
+        if (local != null && _localWinsLww(local, remote)) return false;
+        if (local != null) {
+          await db.insertConflict(
+            entity: entity,
+            entityId: entityId,
+            entityTitle: _extractEntityTitle(entity, local['payload']),
+            direction: 'overrode',
+            remoteDevice: remote.deviceId,
+            localUpdatedMs: (local['updated_at_ms'] as int?) ?? 0,
+            remoteUpdatedMs: remote.updatedMs,
+          );
+        }
+        final yearMonth = (change['payload'] as Map?)?['year_month'] as String?;
+        if (yearMonth == null || yearMonth.isEmpty) return false;
+        await db.applyRemoteMonthlyReview(
+          id: entityId,
+          yearMonth: yearMonth,
+          revision: (change['revision'] as int?) ?? 1,
+          updatedAtMs: remote.updatedMs,
+          originDevice: remote.deviceId,
+          userId: uid,
+          payload: payloadJson,
+          fields: monthlyReviewFieldsFromCore(change['payload'] as Map?),
+        );
+        return true;
       case 'motto':
         final remote = _extractChangeTimestamps(change);
         final local = await db.localMottoCandidate(entityId);
@@ -703,8 +819,7 @@ class SyncClient {
         );
         return true;
       default:
-        // weekly/monthly review 范围外(mobile 只有日复盘),
-        // 跳过不崩(cursor 照常推进,不重拉)。
+        // 未知实体:跳过不崩(cursor 照常推进,不重拉)。
         return false;
     }
   }

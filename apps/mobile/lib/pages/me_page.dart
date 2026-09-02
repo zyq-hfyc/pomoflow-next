@@ -14,6 +14,7 @@ import '../theme/tokens.dart';
 import '../widgets/pf_sheet.dart';
 import 'account_page.dart';
 import 'conflict_log_page.dart';
+import 'review_page.dart';
 import 'settings_page.dart';
 
 /// 我的屏(§4.4):渐变资料头 + 账号管理菜单卡 + 数据同步行 + 设置/帮助 + 退出。
@@ -567,6 +568,11 @@ class _OtherMenuCard extends StatelessWidget {
     return _MenuCard(
       items: [
         _MenuItem(
+          emoji: '📝',
+          label: '复盘',
+          onTap: () => _openReview(context),
+        ),
+        _MenuItem(
           emoji: '⚙',
           label: '设置',
           onTap: () => _openSettings(context),
@@ -579,6 +585,23 @@ class _OtherMenuCard extends StatelessWidget {
           onTap: () => _openAccountDanger(context, auth),
         ),
       ],
+    );
+  }
+
+  void _openReview(BuildContext context) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (_, _, _) => const ReviewPage(),
+        transitionsBuilder: (_, anim, _, child) => SlideTransition(
+          position: Tween(
+            begin: const Offset(1, 0),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
+          child: child,
+        ),
+        transitionDuration: const Duration(milliseconds: 300),
+      ),
     );
   }
 

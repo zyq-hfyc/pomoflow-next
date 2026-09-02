@@ -68,7 +68,12 @@ void main() {
         'remote_device', 'local_updated_ms', 'remote_updated_ms',
         'occurred_at_ms',
       ]));
-      expect(await db.getMeta('schema_version'), '14');
+      // schema v15 加 weekly_reviews / monthly_reviews 表(P3 周/月复盘)
+      final weeklyCols = await db.raw.rawQuery('PRAGMA table_info(weekly_reviews)');
+      expect(weeklyCols.map((r) => r['name']), contains('week_start'));
+      final monthlyCols = await db.raw.rawQuery('PRAGMA table_info(monthly_reviews)');
+      expect(monthlyCols.map((r) => r['name']), contains('year_month'));
+      expect(await db.getMeta('schema_version'), '15');
     } finally {
       await db.close();
     }
@@ -185,7 +190,12 @@ void main() {
       final conflictCols = await db.raw
           .rawQuery('PRAGMA table_info(conflict_log)');
       expect(conflictCols.map((r) => r['name']), contains('direction'));
-      expect(await db.getMeta('schema_version'), '14');
+      // v14 → v15 升级:legacy v4 库也新增 weekly/monthly_reviews
+      final weeklyCols = await db.raw.rawQuery('PRAGMA table_info(weekly_reviews)');
+      expect(weeklyCols.map((r) => r['name']), contains('week_start'));
+      final monthlyCols = await db.raw.rawQuery('PRAGMA table_info(monthly_reviews)');
+      expect(monthlyCols.map((r) => r['name']), contains('year_month'));
+      expect(await db.getMeta('schema_version'), '15');
     } finally {
       await db.close();
       await tmp.delete(recursive: true);

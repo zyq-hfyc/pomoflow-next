@@ -99,7 +99,7 @@ class TaskProvider extends ChangeNotifier {
       ])
       .._sessions.addAll(demoSessions)
       ..todayPomos = demoSessions
-          .where((s) => _localDay(s.startedAt) == _localDay(DateTime.now()))
+          .where((s) => localDay(s.startedAt) == localDay(DateTime.now()))
           .length
       ..todayReview = '上午两个番茄写完了需求初稿,下午会议偏多。';
   }
@@ -147,7 +147,7 @@ class TaskProvider extends ChangeNotifier {
     // 首次启动 seed:meta.seed_done 缺失时插入 demo 5 task + 2 journal。
     final seeded = await db.getMeta('seed_done');
     // 今日复盘:实体表优先,老库回退 meta(P0 迁移语义:下次保存即入实体)。
-    final today = _localDay(DateTime.now());
+    final today = localDay(DateTime.now());
     String todayReview = (await db.dailyReviewContent(today)) ??
         (await db.getMeta('today_review')) ??
         '';
@@ -163,7 +163,7 @@ class TaskProvider extends ChangeNotifier {
     // todayPomos 权威 = sessions 表按本地日派生(P1);sessions 为空的老库回退
     // v4 时代的 meta.today_pomos 计数。
     final todayCount = sessions
-        .where((s) => _localDay(s.startedAt) == _localDay(DateTime.now()))
+        .where((s) => localDay(s.startedAt) == localDay(DateTime.now()))
         .length;
     p.todayPomos = todayCount > 0
         ? todayCount
@@ -556,7 +556,7 @@ class TaskProvider extends ChangeNotifier {
       _sessions.insert(0, s);
       await db.insertSession(s);
       await _markSessionPending(db, id);
-      todayPomos = (await db.sessionsOnDay(_localDay(end))).length;
+      todayPomos = (await db.sessionsOnDay(localDay(end))).length;
     } else {
       // web demo 内存路径:同样落内存 session(统计页与 todayPomos 同源)。
       _sessions.insert(
@@ -635,7 +635,7 @@ class TaskProvider extends ChangeNotifier {
     if (db != null) {
       try {
         await db.upsertDailyReview(
-          date: _localDay(DateTime.now()),
+          date: localDay(DateTime.now()),
           content: text,
           originDevice: _deviceIdProvider?.call() ?? '',
           userId: _userIdProvider?.call() ?? '',
@@ -645,6 +645,81 @@ class TaskProvider extends ChangeNotifier {
       }
     }
     notifyListeners();
+  }
+
+  /// 读某周复盘内容。格式 weekStart = yyyy-mm-dd(当周周一)。
+  Future<String?> weeklyReviewContent(String weekStart) async {
+    final db = _db;
+    if (db == null) return null;
+    try {
+      return await db.weeklyReviewContent(weekStart);
+    } on Exception catch (e) {
+      debugPrint('weeklyReviewContent failed: $e');
+      return null;
+    }
+  }
+
+  /// 保存周复盘。
+  Future<void> saveWeeklyReview(String weekStart, String text) async {
+    final db = _db;
+    if (db != null) {
+      try {
+        await db.upsertWeeklyReview(
+          weekStart: weekStart,
+          content: text,
+          originDevice: _deviceIdProvider?.call() ?? '',
+          userId: _userIdProvider?.call() ?? '',
+        );
+      } on Exception catch (e) {
+        debugPrint('upsertWeeklyReview failed: $e');
+      }
+    }
+    notifyListeners();
+  }
+
+  /// 读某月复盘内容。格式 yearMonth = yyyy-mm。
+  Future<String?> monthlyReviewContent(String yearMonth) async {
+    final db = _db;
+    if (db == null) return null;
+    try {
+      return await db.monthlyReviewContent(yearMonth);
+    } on Exception catch (e) {
+      debugPrint('monthlyReviewContent failed: $e');
+      return null;
+    }
+  }
+
+  /// 保存月复盘。
+  Future<void> saveMonthlyReview(String yearMonth, String text) async {
+    final db = _db;
+    if (db != null) {
+      try {
+        await db.upsertMonthlyReview(
+          yearMonth: yearMonth,
+          content: text,
+          originDevice: _deviceIdProvider?.call() ?? '',
+          userId: _userIdProvider?.call() ?? '',
+        );
+      } on Exception catch (e) {
+        debugPrint('upsertMonthlyReview failed: $e');
+      }
+    }
+    notifyListeners();
+  }
+
+  /// 本周周一(ISO 周,周一为起点)。
+  static String currentWeekStart() {
+    final now = DateTime.now();
+    final weekday = now.weekday; // 1=Mon ... 7=Sun
+    final monday = now.subtract(Duration(days: weekday - 1));
+    return localDay(monday);
+  }
+
+  /// 本月年月字符串 yyyy-mm。
+  static String currentYearMonth() {
+    final now = DateTime.now();
+    return '${now.year.toString().padLeft(4, '0')}-'
+        '${now.month.toString().padLeft(2, '0')}';
   }
 
   Future<String> nextId() async => await _allocateId();
@@ -704,7 +779,7 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// 本地日 yyyy-mm-dd(与 DB sessionsOnDay 的 localtime 口径一致)。
-  static String _localDay(DateTime d) =>
+  static String localDay(DateTime d) =>
       '${d.year.toString().padLeft(4, '0')}-'
       '${d.month.toString().padLeft(2, '0')}-'
       '${d.day.toString().padLeft(2, '0')}';
@@ -726,7 +801,7 @@ class TaskProvider extends ChangeNotifier {
     final sessions = await db.listSessions();
     _mottos = await db.listMottos();
     todayReview = (await db.dailyReviewContent(
-            _localDay(DateTime.now()))) ??
+            localDay(DateTime.now()))) ??
         todayReview;
     _tasks
       ..clear()
@@ -734,10 +809,10 @@ class TaskProvider extends ChangeNotifier {
     _sessions
       ..clear()
       ..addAll(sessions);
-    final today = _localDay(DateTime.now());
+    final today = localDay(DateTime.now());
     todayPomos = sessions
         .where((s) =>
-            _localDay(s.startedAt) == today &&
+            localDay(s.startedAt) == today &&
             _countsSession(s))
         .length;
     notifyListeners();
