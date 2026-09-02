@@ -90,11 +90,12 @@ Future<void> _runReminderCheckInBackground() async {
     final tasks = await db.listTasks();
     final tpl = NotificationTemplateProvider();
     await tpl.initialize(); // 只依赖 SharedPreferences,后台 isolate 可用
-    await runReminderCheck(
+    final fired = await runReminderCheck(
       tasks: tasks,
       templateTitle: tpl.reminderTitle,
       templateBody: tpl.reminderBody,
     );
+    debugPrint('[bg-reminder] checked, fired $fired');
   } finally {
     await db.close();
   }
