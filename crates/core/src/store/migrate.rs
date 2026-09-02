@@ -32,6 +32,7 @@ const MIGRATIONS: &[MigrationFn] = &[
     migration_001_repeat_meta_and_audit,
     migration_002_sync_foundation,
     migration_003_task_tag_sync,
+    migration_004_conflict_log,
 ];
 
 /// 当前代码支持的最新 schema 版号(= 已应用迁移数)。
@@ -326,6 +327,29 @@ fn migration_003_task_tag_sync(conn: &Connection) -> CoreResult<()> {
          FROM task_tags tt JOIN tasks t ON t.id = tt.task_id;",
     )
     .map_err(|e| CoreError::storage(format!("task_tag_sync: {e}")))?;
+    Ok(())
+}
+
+// === 迁移 4:conflict_log 表(P2 冲突可视化) ===
+
+/// 新建 conflict_log 表与索引。不参与同步,仅本地记录 LWW 覆盖事件。
+fn migration_004_conflict_log(conn: &Connection) -> CoreResult<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS conflict_log (
+           id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+           entity TEXT NOT NULL,
+           entity_id TEXT NOT NULL,
+           entity_title TEXT NOT NULL DEFAULT '',
+           direction TEXT NOT NULL,
+           remote_device TEXT NOT NULL DEFAULT '',
+           local_updated_ms INTEGER NOT NULL DEFAULT 0,
+           remote_updated_ms INTEGER NOT NULL DEFAULT 0,
+           occurred_at_ms INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_conflict_log_occurred
+           ON conflict_log(occurred_at_ms DESC);",
+    )
+    .map_err(|e| CoreError::storage(format!("conflict_log: {e}")))?;
     Ok(())
 }
 

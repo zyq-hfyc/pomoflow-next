@@ -20,11 +20,13 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use pomoflow_core::store::SqliteStore;
+use pomoflow_core::store::{ConflictRecord, SqliteStore, Store};
 use pomoflow_core::sync::engine::{apply_pull_response, apply_push_outcomes, build_push_request};
 use pomoflow_core::sync::{
-    ApplyOutcome, PullRequest, PullResponse, PushRequest, PushResponse, SyncCursor,
+    ApplyOutcome, Change, PullRequest, PullResponse, PushRequest, PushResponse, SyncCursor,
 };
+use pomoflow_core::sync::{resolve_conflict, Resolution};
+use pomoflow_core::sync::ChangeLogStore;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
 
@@ -386,6 +388,7 @@ async fn run_sync(store: &SqliteStore) -> Result<SyncReport, String> {
                 ApplyOutcome::Dropped { .. } => report.dropped += 1,
             }
         }
+        record_push_conflicts(store, &req.changes, &resp).map_err(|e| e.to_string())?;
         apply_push_outcomes(store, &req.changes, &resp).map_err(es)?;
     }
 
@@ -405,6 +408,7 @@ async fn run_sync(store: &SqliteStore) -> Result<SyncReport, String> {
             post_with_auto_refresh(&client, &format!("{url}/v1/sync/pull"), store, &static_token, &req)
                 .await?;
         let n = resp.changes.len();
+        record_pull_conflicts(store, &resp.changes).map_err(|e| e.to_string())?;
         apply_pull_response(store, &resp.changes).map_err(es)?;
         cursor = resp.next_cursor;
         store
@@ -451,6 +455,116 @@ mod tests {
         assert_eq!(clamp_interval(5), 5);
         assert_eq!(clamp_interval(60), 60);
         assert_eq!(clamp_interval(u32::MAX), 1440);
+    }
+}
+
+// === 冲突日志(P2 冲突可视化) ===============================================
+
+/// push 阶段服务端返回 Conflicted → 本地被 winner 覆盖,记录 direction='lost'。
+fn record_push_conflicts(
+    store: &SqliteStore,
+    pushed: &[Change],
+    resp: &PushResponse,
+) -> Result<(), String> {
+    if pushed.len() != resp.results.len() {
+        return Err("push/results 长度不一致".into());
+    }
+    let now = chrono::Utc::now().timestamp_millis();
+    for (change, outcome) in pushed.iter().zip(resp.results.iter()) {
+        if let ApplyOutcome::Conflicted { winner, .. } = outcome {
+            let title = entity_title(change);
+            store
+                .insert_conflict(ConflictRecord {
+                    entity: entity_kind_name(change.entity),
+                    entity_id: change.entity_id.to_string(),
+                    entity_title: title,
+                    direction: "lost".into(),
+                    remote_device: winner.device_id.clone(),
+                    local_updated_ms: change.updated_at.timestamp_millis(),
+                    remote_updated_ms: winner.updated_at.timestamp_millis(),
+                    occurred_at_ms: now,
+                })
+                .map_err(|e| format!("insert conflict: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// pull 阶段远端胜本地 → 记录 direction='overrode'。
+fn record_pull_conflicts(store: &SqliteStore, changes: &[Change]) -> Result<(), String> {
+    let now = chrono::Utc::now().timestamp_millis();
+    for remote in changes {
+        let Some(local) = store
+            .local_candidate(remote.entity, &remote.entity_id)
+            .map_err(|e| format!("local_candidate: {e}"))?
+        else {
+            continue; // 本地无此行,不存在覆盖
+        };
+        match resolve_conflict(&local, remote) {
+            Resolution::Left => continue, // 本地胜,不记录
+            Resolution::Right | Resolution::Tie => {
+                let title = entity_title(remote);
+                store
+                    .insert_conflict(ConflictRecord {
+                        entity: entity_kind_name(remote.entity),
+                        entity_id: remote.entity_id.to_string(),
+                        entity_title: title,
+                        direction: "overrode".into(),
+                        remote_device: remote.device_id.clone(),
+                        local_updated_ms: local.updated_at.timestamp_millis(),
+                        remote_updated_ms: remote.updated_at.timestamp_millis(),
+                        occurred_at_ms: now,
+                    })
+                    .map_err(|e| format!("insert conflict: {e}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn entity_kind_name(entity: pomoflow_core::sync::EntityKind) -> String {
+    use pomoflow_core::sync::EntityKind;
+    match entity {
+        EntityKind::Task => "task",
+        EntityKind::Project => "project",
+        EntityKind::Tag => "tag",
+        EntityKind::SubTask => "sub_task",
+        EntityKind::PomodoroSession => "pomodoro_session",
+        EntityKind::Motto => "motto",
+        EntityKind::TaskTag => "task_tag",
+        EntityKind::DailyReview => "daily_review",
+        EntityKind::WeeklyReview => "weekly_review",
+        EntityKind::MonthlyReview => "monthly_review",
+    }
+    .to_string()
+}
+
+/// 从 Change.payload 提取用于 UI 展示的标题字段。
+fn entity_title(change: &Change) -> String {
+    use serde_json::Value;
+    match &change.payload {
+        Value::Object(m) => match change.entity {
+            pomoflow_core::sync::EntityKind::Task | pomoflow_core::sync::EntityKind::SubTask => {
+                m.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string()
+            }
+            pomoflow_core::sync::EntityKind::Project | pomoflow_core::sync::EntityKind::Tag => {
+                m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string()
+            }
+            pomoflow_core::sync::EntityKind::Motto => {
+                m.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string()
+            }
+            pomoflow_core::sync::EntityKind::DailyReview => {
+                m.get("date").and_then(|v| v.as_str()).unwrap_or("").to_string()
+            }
+            pomoflow_core::sync::EntityKind::WeeklyReview => {
+                m.get("week_start").and_then(|v| v.as_str()).unwrap_or("").to_string()
+            }
+            pomoflow_core::sync::EntityKind::MonthlyReview => {
+                m.get("year_month").and_then(|v| v.as_str()).unwrap_or("").to_string()
+            }
+            _ => String::new(),
+        },
+        _ => String::new(),
     }
 }
 

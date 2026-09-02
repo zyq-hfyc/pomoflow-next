@@ -20,8 +20,12 @@
     authListSessions,
     authRevokeSession,
     authRevokeOthers,
+    listConflicts,
+    countConflicts,
+    clearConflicts,
     type AutoSyncEvent,
     type SessionInfo,
+    type ConflictLogItem,
   } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
   import { markSyncing, markSyncDone } from "../../lib/syncState.svelte";
@@ -52,8 +56,14 @@
   let error = $state<string | null>(null);
   let copiedField = $state<"user" | "device" | null>(null);
 
+  // P2 冲突可视化
+  let conflicts = $state<ConflictLogItem[]>([]);
+  let conflictCount = $state(0);
+  let conflictBusy = $state(false);
+
   onMount(() => {
     void load();
+    void loadConflicts();
     // 监听后台自动同步结果;组件卸载(切标签)时取消,避免重复监听累积
     let unlisten: (() => void) | null = null;
     void onAutoSync(applyAutoEvent).then((un) => (unlisten = un));
@@ -71,6 +81,33 @@
       identity = id;
     } catch (e) {
       error = String(e);
+    }
+  }
+
+  async function loadConflicts() {
+    try {
+      const [rows, count] = await Promise.all([
+        listConflicts(50),
+        countConflicts(),
+      ]);
+      conflicts = rows;
+      conflictCount = count;
+    } catch (e) {
+      console.warn("load conflicts failed", e);
+    }
+  }
+
+  async function onClearConflicts() {
+    if (conflictBusy) return;
+    if (!confirm(t.settings.sync.clearConfirms)) return;
+    conflictBusy = true;
+    try {
+      await clearConflicts();
+      await loadConflicts();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      conflictBusy = false;
     }
   }
 
@@ -137,6 +174,39 @@
     }
   }
 
+  function entityLabel(entity: string): string {
+    const map: Record<string, string> = {
+      task: "任务",
+      project: "项目",
+      tag: "标签",
+      sub_task: "子任务",
+      daily_review: "日复盘",
+      weekly_review: "周复盘",
+      monthly_review: "月复盘",
+      motto: "座右铭",
+      pomodoro_session: "番茄",
+      task_tag: "任务标签",
+    };
+    return map[entity] ?? entity;
+  }
+
+  function shortDevice(device: string): string {
+    if (!device) return "未知设备";
+    return device.length > 14 ? `${device.slice(0, 14)}…` : device;
+  }
+
+  function fmtTime(ms: number): string {
+    const d = new Date(ms);
+    const now = new Date();
+    const diff = now.getTime() - d.getTime();
+    if (diff < 60_000) return "刚刚";
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+    if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`;
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
   function applyAutoEvent(e: AutoSyncEvent) {
     const time = new Date(e.at_ms).toLocaleTimeString();
     lastAutoText = e.ok
@@ -183,6 +253,7 @@
     try {
       const r = await syncNow();
       markSyncDone(); // bump rev → 手账/任务/计时页面自动重拉
+      await loadConflicts(); // 同步后刷新冲突日志
       resultText = fmt(t.settings.sync.result, {
         pushed: r.pushed,
         pulled: r.pulled,
@@ -427,6 +498,54 @@
     </div>
   </section>
 
+  <!-- 冲突日志(P2 冲突可视化) -->
+  <section class="group">
+    <h3 class="group-title">{t.settings.sync.conflictSection}</h3>
+    <div class="group-body">
+      <div class="form-row">
+        <span class="row-label">{t.settings.sync.conflictCount}</span>
+        <div class="actions">
+          <button
+            type="button"
+            class="action"
+            disabled={conflictBusy}
+            onclick={() => void loadConflicts()}
+          >
+            {t.settings.sync.conflictsReload}
+          </button>
+          {#if conflicts.length > 0}
+            <button
+              type="button"
+              class="action"
+              disabled={conflictBusy}
+              onclick={() => void onClearConflicts()}
+            >
+              {t.settings.sync.conflictsClear}
+            </button>
+          {/if}
+        </div>
+      </div>
+      {#if conflictCount > 0}
+        <p class="hint">{fmt(t.settings.sync.conflictHint, { n: conflictCount })}</p>
+        <ul class="conflict-list">
+          {#each conflicts as c (c.occurred_at_ms + c.entity_id)}
+            <li class="conflict-row">
+              <span class="conflict-badge" class:lost={c.direction === "lost"}>
+                {c.direction === "lost" ? "我方输" : "被覆盖"}
+              </span>
+              <span class="conflict-entity">{entityLabel(c.entity)}</span>
+              <span class="conflict-title">{c.entity_title || "(无标题)"}</span>
+              <span class="conflict-device">{shortDevice(c.remote_device)}</span>
+              <span class="conflict-time">{fmtTime(c.occurred_at_ms)}</span>
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="hint">{t.settings.sync.noConflicts}</p>
+      {/if}
+    </div>
+  </section>
+
   {#if resultText}
     <div class="result" role="status">{resultText}</div>
   {/if}
@@ -653,5 +772,48 @@
     to {
       transform: rotate(360deg);
     }
+  }
+
+  .conflict-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 240px;
+    overflow: auto;
+  }
+  .conflict-row {
+    display: grid;
+    grid-template-columns: auto auto 1fr auto auto;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-top: 1px solid var(--color-border);
+    font-size: 0.8rem;
+  }
+  .conflict-badge {
+    padding: 0.1rem 0.35rem;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-accent-500) 12%, transparent);
+    color: var(--color-accent-600);
+    font-weight: 600;
+  }
+  .conflict-badge.lost {
+    background: color-mix(in srgb, var(--color-error) 12%, transparent);
+    color: var(--color-error);
+  }
+  .conflict-entity {
+    color: var(--color-text);
+    font-weight: 500;
+  }
+  .conflict-title {
+    color: var(--color-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .conflict-device,
+  .conflict-time {
+    color: var(--color-text-muted);
+    white-space: nowrap;
   }
 </style>

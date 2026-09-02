@@ -283,6 +283,13 @@ export const zh = {
       indicatorIdle: '尚未同步(点击配置)',
       autoLastOk: '最近自动同步 {time}:推送 {pushed} 条,拉取 {pulled} 条',
       autoLastErr: '最近自动同步失败 {time}:{error}',
+      conflictSection: '同步记录',
+      conflictCount: '冲突记录',
+      conflictsReload: '刷新',
+      conflictsClear: '清空',
+      clearConfirms: '确定清空所有冲突记录?清空后无法恢复。',
+      conflictHint: '最近有 {n} 条冲突/覆盖记录',
+      noConflicts: '近期没有冲突。多设备同步时,同一字段被两端同时修改才会触发覆盖。',
     },
     account: {
       title: '账号',

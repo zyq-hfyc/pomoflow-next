@@ -187,6 +187,29 @@ pub trait Store: std::fmt::Debug {
     /// 本地时区算好的 UTC 毫秒窗口;按 started_at 分桶与 stats::overview / range
     /// 一致(v1 语义),跨午夜会话归到开始日。
     fn today_completed_minutes(&self, start_ms: i64, end_ms: i64) -> CoreResult<u32>;
+
+    // --- conflict_log(P2 冲突可视化) ---
+    /// 记录一次 LWW 覆盖/输掉事件。
+    fn insert_conflict(&self, record: ConflictRecord) -> CoreResult<()>;
+    /// 最近 N 条冲突记录,按时间倒序。
+    fn list_recent_conflicts(&self, limit: usize) -> CoreResult<Vec<ConflictRecord>>;
+    /// 清空全部冲突记录。
+    fn clear_conflicts(&self) -> CoreResult<()>;
+    /// 当前冲突记录总数。
+    fn count_conflicts(&self) -> CoreResult<usize>;
+}
+
+/// 冲突日志记录(不参与同步,仅本地展示)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConflictRecord {
+    pub entity: String,
+    pub entity_id: String,
+    pub entity_title: String,
+    pub direction: String,
+    pub remote_device: String,
+    pub local_updated_ms: i64,
+    pub remote_updated_ms: i64,
+    pub occurred_at_ms: i64,
 }
 
 /// `InMemoryStore` —— 用于单元测试 + "先把流程跑通"的占位实现。
@@ -223,6 +246,8 @@ struct Inner {
     pending: std::collections::HashSet<String>,
     /// 每行最后写入设备(tie-break 用)
     origin: HashMap<String, String>,
+    /// 冲突日志(P2 冲突可视化)
+    conflicts: Vec<ConflictRecord>,
 }
 
 impl Inner {
@@ -1127,6 +1152,48 @@ impl Store for InMemoryStore {
             }
         }
         u32::try_from(total).map_err(|_| CoreError::storage("today minutes overflow"))
+    }
+
+    fn insert_conflict(&self, record: ConflictRecord) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        g.conflicts.push(record);
+        Ok(())
+    }
+
+    fn list_recent_conflicts(&self, limit: usize) -> CoreResult<Vec<ConflictRecord>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut recent: Vec<ConflictRecord> = g
+            .conflicts
+            .iter()
+            .rev()
+            .take(limit)
+            .cloned()
+            .collect();
+        recent.reverse();
+        Ok(recent)
+    }
+
+    fn clear_conflicts(&self) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        g.conflicts.clear();
+        Ok(())
+    }
+
+    fn count_conflicts(&self) -> CoreResult<usize> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        Ok(g.conflicts.len())
     }
 }
 

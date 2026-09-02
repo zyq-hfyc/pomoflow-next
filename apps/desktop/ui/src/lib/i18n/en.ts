@@ -278,6 +278,13 @@ export const en: Dict = {
       indicatorIdle: 'Not synced yet (click to configure)',
       autoLastOk: 'Last auto sync {time}: pushed {pushed}, pulled {pulled}',
       autoLastErr: 'Last auto sync failed {time}: {error}',
+      conflictSection: 'Sync History',
+      conflictCount: 'Conflict Records',
+      conflictsReload: 'Refresh',
+      conflictsClear: 'Clear',
+      clearConfirms: 'Clear all conflict records? This cannot be undone.',
+      conflictHint: '{n} recent conflict(s) / override(s)',
+      noConflicts: 'No recent conflicts. Conflicts only occur when the same field is edited on multiple devices.',
     },
     language: {
       title: 'Interface Language',

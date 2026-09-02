@@ -625,3 +625,26 @@ export const exportTasksXlsx = (
   headers: string[],
   rows: ExportRow[],
 ) => invoke<void>("export_tasks_xlsx", { path, sheetName, headers, rows });
+
+// === conflict_log(P2 冲突可视化) ===
+
+export interface ConflictLogItem {
+  entity: string;
+  entity_id: string;
+  entity_title: string;
+  direction: "overrode" | "lost";
+  remote_device: string;
+  local_updated_ms: number;
+  remote_updated_ms: number;
+  occurred_at_ms: number;
+}
+
+/** 最近 N 条冲突记录(时间倒序)。 */
+export const listConflicts = (limit = 50) =>
+  invoke<ConflictLogItem[]>("list_conflicts", { limit });
+
+/** 当前冲突记录总数。 */
+export const countConflicts = () => invoke<number>("count_conflicts");
+
+/** 清空全部冲突记录。 */
+export const clearConflicts = () => invoke<void>("clear_conflicts");

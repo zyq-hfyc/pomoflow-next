@@ -39,7 +39,7 @@ use crate::model::{
     Project, Reminder, Repeat, SubTask, Tag, Task, TaskStatus, TaskTagLink, Timestamp,
     WeeklyReview,
 };
-use crate::store::{Store, TaskDateFilter, TaskQuery};
+use crate::store::{ConflictRecord, Store, TaskDateFilter, TaskQuery};
 use crate::sync::{change_of, Change, ChangeLogStore, EntityKind};
 
 /// `pomoflow-core::Store` trait 的 SQLite 持久化实现。
@@ -475,6 +475,22 @@ CREATE TABLE IF NOT EXISTS notification_templates (
   reminder_body TEXT,
   updated_at_ms INTEGER NOT NULL
 );
+
+-- 冲突日志:P2 冲突可视化 —— pull/push 探测到 LWW 另一方胜出时落行,
+-- 供 UI 列表展示「刚被覆盖的实体」。不参与同步,仅本地记录。
+CREATE TABLE IF NOT EXISTS conflict_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  entity TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  entity_title TEXT NOT NULL DEFAULT '',
+  direction TEXT NOT NULL,
+  remote_device TEXT NOT NULL DEFAULT '',
+  local_updated_ms INTEGER NOT NULL DEFAULT 0,
+  remote_updated_ms INTEGER NOT NULL DEFAULT 0,
+  occurred_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_conflict_log_occurred ON conflict_log(occurred_at_ms DESC);
 
 -- 本机同步元数据(key-value):user_id(本机用户,ADR-007 多租户归属)、
 -- device_id(设备标识)、last_sync_seq(拉取游标,ADR-011)
@@ -1845,6 +1861,80 @@ impl Store for SqliteStore {
         )
         .map_err(|e| CoreError::storage(format!("upsert_notification_template: {e}")))?;
         Ok(template)
+    }
+
+    // --- conflict_log(P2 冲突可视化) ---
+
+    fn insert_conflict(
+        &self,
+        record: ConflictRecord,
+    ) -> CoreResult<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO conflict_log
+             (entity, entity_id, entity_title, direction, remote_device,
+              local_updated_ms, remote_updated_ms, occurred_at_ms)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                record.entity,
+                record.entity_id,
+                record.entity_title,
+                record.direction,
+                record.remote_device,
+                record.local_updated_ms,
+                record.remote_updated_ms,
+                record.occurred_at_ms,
+            ],
+        )
+        .map_err(|e| CoreError::storage(format!("insert_conflict: {e}")))?;
+        Ok(())
+    }
+
+    fn list_recent_conflicts(
+        &self,
+        limit: usize,
+    ) -> CoreResult<Vec<ConflictRecord>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT entity, entity_id, entity_title, direction, remote_device,
+                        local_updated_ms, remote_updated_ms, occurred_at_ms
+                 FROM conflict_log
+                 ORDER BY occurred_at_ms DESC
+                 LIMIT ?",
+            )
+            .map_err(|e| CoreError::storage(format!("list_recent_conflicts: {e}")))?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(ConflictRecord {
+                    entity: row.get(0)?,
+                    entity_id: row.get(1)?,
+                    entity_title: row.get(2)?,
+                    direction: row.get(3)?,
+                    remote_device: row.get(4)?,
+                    local_updated_ms: row.get(5)?,
+                    remote_updated_ms: row.get(6)?,
+                    occurred_at_ms: row.get(7)?,
+                })
+            })
+            .map_err(|e| CoreError::storage(format!("list_recent_conflicts query: {e}")))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| CoreError::storage(format!("list_recent_conflicts collect: {e}")))
+    }
+
+    fn clear_conflicts(&self) -> CoreResult<()> {
+        let conn = self.lock()?;
+        conn.execute("DELETE FROM conflict_log", [])
+            .map_err(|e| CoreError::storage(format!("clear_conflicts: {e}")))?;
+        Ok(())
+    }
+
+    fn count_conflicts(&self) -> CoreResult<usize> {
+        let conn = self.lock()?;
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM conflict_log", [], |row| row.get(0))
+            .map_err(|e| CoreError::storage(format!("count_conflicts: {e}")))?;
+        usize::try_from(count).map_err(|_| CoreError::storage("conflict count overflow"))
     }
 }
 

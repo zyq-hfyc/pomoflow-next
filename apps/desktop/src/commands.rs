@@ -719,3 +719,49 @@ pub fn stats_overview(
         tz_offset_min,
     ))
 }
+
+// === conflict_log(P2 冲突可视化) ============================================
+
+/// 桌面端冲突记录视图(与 mobile ConflictRecord 字段对齐)。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConflictLogView {
+    pub entity: String,
+    pub entity_id: String,
+    pub entity_title: String,
+    pub direction: String,
+    pub remote_device: String,
+    pub local_updated_ms: i64,
+    pub remote_updated_ms: i64,
+    pub occurred_at_ms: i64,
+}
+
+#[tauri::command]
+pub fn list_conflicts(
+    limit: usize,
+    state: State<'_, AppState>,
+) -> Result<Vec<ConflictLogView>, String> {
+    let rows = state.store.list_recent_conflicts(limit).map_err(map_err)?;
+    Ok(rows
+        .into_iter()
+        .map(|r| ConflictLogView {
+            entity: r.entity,
+            entity_id: r.entity_id,
+            entity_title: r.entity_title,
+            direction: r.direction,
+            remote_device: r.remote_device,
+            local_updated_ms: r.local_updated_ms,
+            remote_updated_ms: r.remote_updated_ms,
+            occurred_at_ms: r.occurred_at_ms,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub fn count_conflicts(state: State<'_, AppState>) -> Result<usize, String> {
+    state.store.count_conflicts().map_err(map_err)
+}
+
+#[tauri::command]
+pub fn clear_conflicts(state: State<'_, AppState>) -> Result<(), String> {
+    state.store.clear_conflicts().map_err(map_err)
+}
