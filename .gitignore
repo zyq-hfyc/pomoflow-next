@@ -85,6 +85,10 @@ artifacts/
 apps/mobile/android/local.properties
 apps/mobile/android/.gradle/
 
+# Android 构建产物/自动生成的空规则文件(非业务逻辑,不入仓)
+apps/mobile/android/build/
+apps/mobile/android/app/proguard-rules.pro
+
 # release 签名(密码/keystore 绝不入仓)
 apps/mobile/android/key.properties
 apps/mobile/android/pomoflow-release.keystore
