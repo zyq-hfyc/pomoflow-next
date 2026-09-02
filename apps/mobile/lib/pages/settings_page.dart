@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../providers/notification_template_provider.dart';
 import '../providers/settings_provider.dart';
 import '../providers/theme_provider.dart';
 import '../theme/tokens.dart';
 import 'trash_page.dart';
+import '../widgets/pf_controls.dart';
 import '../widgets/pf_sheet.dart';
 
 /// 设置页(§7 精简版):专注/休息时长 + 主题 + 关于。
@@ -131,6 +133,30 @@ class SettingsPage extends StatelessWidget {
                 child: ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text(
+                    '通知文案',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: Text(
+                    '风格 + 标题/正文(支持 {task_title} 占位符)',
+                    style: TextStyle(fontSize: 12, color: theme.pfMuted),
+                  ),
+                  trailing: Icon(
+                    Icons.chevron_right,
+                    size: 20,
+                    color: theme.pfMuted,
+                  ),
+                  onTap: () => _openNotificationTemplateSheet(context),
+                ),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: _Card(
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text(
                     '关于',
                     style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                   ),
@@ -147,6 +173,181 @@ class SettingsPage extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 通知模板编辑 sheet:顶部 6 套预设切换 + 6 个输入框(专注/短/长 × 标题/正文)。
+void _openNotificationTemplateSheet(BuildContext context) {
+  pfSheet(
+    context,
+    title: '通知文案',
+    heightFactor: .85,
+    body: (ctx) => const _NotificationTemplateBody(),
+  );
+}
+
+class _NotificationTemplateBody extends StatefulWidget {
+  const _NotificationTemplateBody();
+
+  @override
+  State<_NotificationTemplateBody> createState() =>
+      _NotificationTemplateBodyState();
+}
+
+class _NotificationTemplateBodyState extends State<_NotificationTemplateBody> {
+  late TextEditingController _focusTitle;
+  late TextEditingController _focusBody;
+  late TextEditingController _shortTitle;
+  late TextEditingController _shortBody;
+  late TextEditingController _longTitle;
+  late TextEditingController _longBody;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final p = context.read<NotificationTemplateProvider>();
+    _focusTitle = TextEditingController(text: p.focusTitle);
+    _focusBody = TextEditingController(text: p.focusBody);
+    _shortTitle = TextEditingController(text: p.shortTitle);
+    _shortBody = TextEditingController(text: p.shortBody);
+    _longTitle = TextEditingController(text: p.longTitle);
+    _longBody = TextEditingController(text: p.longBody);
+    _loaded = true;
+  }
+
+  @override
+  void dispose() {
+    _focusTitle.dispose();
+    _focusBody.dispose();
+    _shortTitle.dispose();
+    _shortBody.dispose();
+    _longTitle.dispose();
+    _longBody.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final p = context.watch<NotificationTemplateProvider>();
+    if (!_loaded) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 风格切换:6 套预设
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final entry in NotificationTemplateProvider.styles.entries)
+                ChoiceChip(
+                  label: Text(entry.value),
+                  selected: p.style == entry.key,
+                  onSelected: (_) async {
+                    final preset = NotificationTemplateProvider.presetFor(
+                      entry.key,
+                    );
+                    await context
+                        .read<NotificationTemplateProvider>()
+                        .setStyle(entry.key);
+                    // 切换预设时整套替换,让用户能立刻看到效果
+                    setState(() {
+                      _focusTitle.text = preset.focusTitle;
+                      _focusBody.text = preset.focusBody;
+                      _shortTitle.text = preset.shortTitle;
+                      _shortBody.text = preset.shortBody;
+                      _longTitle.text = preset.longTitle;
+                      _longBody.text = preset.longBody;
+                    });
+                    await _persist();
+                  },
+                ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.only(bottom: 12),
+            children: [
+              _label('专注完成', theme),
+              _field(_focusTitle, '标题', theme),
+              _field(_focusBody, '正文(支持 {task_title})', theme, maxLines: 2),
+              const SizedBox(height: 12),
+              _label('短休息结束', theme),
+              _field(_shortTitle, '标题', theme),
+              _field(_shortBody, '正文', theme),
+              const SizedBox(height: 12),
+              _label('长休息结束', theme),
+              _field(_longTitle, '标题', theme),
+              _field(_longBody, '正文', theme),
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
+        PfPrimaryButton(
+          label: '保存',
+          onTap: () async {
+            await _persist();
+            if (!context.mounted) return;
+            Navigator.pop(context);
+          },
+        ),
+      ],
+    );
+  }
+
+  Future<void> _persist() async {
+    final p = context.read<NotificationTemplateProvider>();
+    await p.updateFocus(title: _focusTitle.text, body: _focusBody.text);
+    await p.updateShort(title: _shortTitle.text, body: _shortBody.text);
+    await p.updateLong(title: _longTitle.text, body: _longBody.text);
+  }
+
+  Widget _label(String text, ThemeData theme) => Padding(
+        padding: const EdgeInsets.only(bottom: 4, top: 4),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: theme.pfMuted,
+          ),
+        ),
+      );
+
+  Widget _field(TextEditingController ctrl, String hint, ThemeData theme,
+          {int maxLines = 1}) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: TextField(
+          controller: ctrl,
+          maxLines: maxLines,
+          minLines: 1,
+          style: const TextStyle(fontSize: 14),
+          decoration: InputDecoration(
+            hintText: hint,
+            isDense: true,
+            filled: true,
+            fillColor: theme.pfSurface2,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(11),
+              borderSide: BorderSide(color: theme.pfLine),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(11),
+              borderSide: BorderSide(color: theme.pfLine),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(11),
+              borderSide: BorderSide(color: theme.pfBrand),
+            ),
+          ),
+        ),
+      );
 }
 
 class _Card extends StatelessWidget {

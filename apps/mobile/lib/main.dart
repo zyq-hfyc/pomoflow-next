@@ -6,6 +6,7 @@ import 'package:workmanager/workmanager.dart';
 import 'providers/auth_provider.dart';
 import 'providers/conflict_provider.dart';
 import 'providers/nav_provider.dart';
+import 'providers/notification_template_provider.dart';
 import 'providers/settings_provider.dart';
 import 'providers/task_provider.dart';
 import 'providers/theme_provider.dart';
@@ -76,6 +77,9 @@ class PomoFlowApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()..initialize()),
         ChangeNotifierProvider(create: (_) => ThemeProvider()..initialize()),
+        ChangeNotifierProvider(
+          create: (_) => NotificationTemplateProvider()..initialize(),
+        ),
         ChangeNotifierProvider(create: (_) => NavProvider()),
         // SQLite-backed data layer(P3d-Phase-1)。失败时 main 已降级 demo,
         // 这里直接 value 注入已 hydrate 的实例。

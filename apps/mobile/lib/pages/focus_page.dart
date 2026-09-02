@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../models/task.dart';
 import '../providers/settings_provider.dart';
 import '../providers/task_provider.dart';
+import '../providers/notification_template_provider.dart';
 import '../services/notification_service.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_controls.dart';
@@ -135,11 +136,11 @@ class _FocusPageState extends State<FocusPage> {
           if (_mode == _TimerMode.focus) {
             // 只有专注时段落 session + 计数;短/长休息归零不产出番茄(P1 行为修正)。
             final task = context.read<TaskProvider>().focusTask;
+            final tpl = context.read<NotificationTemplateProvider>();
             unawaited(NotificationService.showSessionComplete(
-              title: '专注完成 🍅',
-              body: task != null
-                  ? '「${task.title}」专注时段已结束,休息一下吧'
-                  : '专注时段已结束,休息一下吧',
+              title: tpl.focusTitle,
+              body: tpl.focusBody,
+              taskTitle: task?.title,
             ));
             context.read<TaskProvider>().completePomodoro(
                   durationMinutes: (_total ~/ 60).clamp(1, 1000),
@@ -147,10 +148,15 @@ class _FocusPageState extends State<FocusPage> {
                       DateTime.now().subtract(Duration(seconds: _total)),
                 );
           } else {
-            final label = _mode == _TimerMode.short ? '短休息' : '长休息';
+            final tpl = context.read<NotificationTemplateProvider>();
+            final title = _mode == _TimerMode.short
+                ? tpl.shortTitle
+                : tpl.longTitle;
+            final body =
+                _mode == _TimerMode.short ? tpl.shortBody : tpl.longBody;
             unawaited(NotificationService.showSessionComplete(
-              title: '$label结束 ☕',
-              body: '休息结束,准备好开始下一轮专注了吗?',
+              title: title,
+              body: body,
             ));
           }
         }

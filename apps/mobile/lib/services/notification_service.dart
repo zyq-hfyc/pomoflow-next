@@ -67,14 +67,19 @@ class NotificationService {
     return true;
   }
 
-  /// 番茄钟完成/休息结束时弹通知。
+  /// 番茄钟完成/休息结束时弹通知(用模板正文)。
   /// 若通知未授权或开关关闭则静默跳过,不阻断计时流程。
+  /// [taskTitle] 用于替换模板正文里的 `{task_title}` 占位符(可选)。
   static Future<void> showSessionComplete({
     required String title,
     String? body,
+    String? taskTitle,
   }) async {
     if (kIsWeb) return;
     if (!await isEnabled()) return;
+    final resolvedBody = body == null
+        ? null
+        : body.replaceAll('{task_title}', taskTitle ?? '');
     const androidDetails = AndroidNotificationDetails(
       'pomoflow_session',
       'PomoFlow 计时提醒',
@@ -97,7 +102,7 @@ class NotificationService {
     await _instance.show(
       0, // id:同一 id 覆盖,番茄钟场景适合覆盖旧通知
       title,
-      body ?? '你刚刚完成了一个时段,准备开始下一个吧',
+      resolvedBody ?? '你刚刚完成了一个时段,准备开始下一个吧',
       details,
     );
   }
