@@ -30,7 +30,10 @@ dependencies:
   image_picker: ^1.1.2
   # 数据导出分享面板
   share_plus: ^10.1.4
+  # 后台自动同步(Android WorkManager)
   workmanager: ^0.10.9
+  # 本地通知提醒(番茄完成 / 休息结束)
+  flutter_local_notifications: ^17.1.2
 
 dev_dependencies:
   flutter_test:

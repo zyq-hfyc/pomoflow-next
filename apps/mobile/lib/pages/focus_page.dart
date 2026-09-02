@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../models/task.dart';
 import '../providers/settings_provider.dart';
 import '../providers/task_provider.dart';
+import '../services/notification_service.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_controls.dart';
 import '../widgets/pf_sheet.dart';
@@ -50,6 +51,7 @@ class _FocusPageState extends State<FocusPage> {
   }
   bool _running = false;
   bool _started = false; // 是否进入过运行(区分「开始」与「继续」)
+  bool _notificationsEnabled = true;
   Timer? _timer;
   final _reviewCtrl = TextEditingController();
 
@@ -57,6 +59,26 @@ class _FocusPageState extends State<FocusPage> {
   void initState() {
     super.initState();
     _reviewCtrl.text = context.read<TaskProvider>().todayReview;
+    _loadNotificationState();
+  }
+
+  Future<void> _loadNotificationState() async {
+    final enabled = await NotificationService.isEnabled();
+    if (mounted) setState(() => _notificationsEnabled = enabled);
+  }
+
+  Future<void> _toggleNotifications() async {
+    if (!_notificationsEnabled) {
+      final granted = await NotificationService.requestPermission();
+      if (!granted) {
+        if (!mounted) return;
+        _hint('需要通知权限才能开启提醒');
+        return;
+      }
+    }
+    final next = !_notificationsEnabled;
+    await NotificationService.setEnabled(next);
+    if (mounted) setState(() => _notificationsEnabled = next);
   }
 
   @override
@@ -112,11 +134,24 @@ class _FocusPageState extends State<FocusPage> {
           });
           if (_mode == _TimerMode.focus) {
             // 只有专注时段落 session + 计数;短/长休息归零不产出番茄(P1 行为修正)。
+            final task = context.read<TaskProvider>().focusTask;
+            unawaited(NotificationService.showSessionComplete(
+              title: '专注完成 🍅',
+              body: task != null
+                  ? '「${task.title}」专注时段已结束,休息一下吧'
+                  : '专注时段已结束,休息一下吧',
+            ));
             context.read<TaskProvider>().completePomodoro(
                   durationMinutes: (_total ~/ 60).clamp(1, 1000),
                   startedAt:
                       DateTime.now().subtract(Duration(seconds: _total)),
                 );
+          } else {
+            final label = _mode == _TimerMode.short ? '短休息' : '长休息';
+            unawaited(NotificationService.showSessionComplete(
+              title: '$label结束 ☕',
+              body: '休息结束,准备好开始下一轮专注了吗?',
+            ));
           }
         }
       });
@@ -184,9 +219,12 @@ class _FocusPageState extends State<FocusPage> {
             title: '专注',
             subtitle: '保持节奏，一次只做一件事',
             action: PillButton(
-              tooltip: '提醒',
-              child: const Text('🔔', style: TextStyle(fontSize: 16)),
-              onTap: () => _hint('通知提醒将在 P3c 接入系统通知'),
+              tooltip: _notificationsEnabled ? '关闭提醒' : '开启提醒',
+              child: Text(
+                _notificationsEnabled ? '🔔' : '🔕',
+                style: const TextStyle(fontSize: 16),
+              ),
+              onTap: () => _toggleNotifications(),
             ),
           ),
           SliverPadding(

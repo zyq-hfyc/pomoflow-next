@@ -10,6 +10,7 @@ import 'providers/settings_provider.dart';
 import 'providers/task_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/background_sync.dart';
+import 'services/notification_service.dart';
 import 'services/sync_client.dart';
 import 'pages/login_page.dart';
 import 'pages/home_page.dart';
@@ -17,6 +18,8 @@ import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 本地通知初始化(P3c):web 短路,Android/iOS 建 channel。
+  await NotificationService.initialize();
   // 后台自动同步(workmanager):native 平台初始化 + 按开关注册周期任务;
   // web 短路(SyncScheduler.apply 内部 kIsWeb 判断)。
   await _initBackgroundSync();

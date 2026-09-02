@@ -2,6 +2,8 @@
     <!-- release 构建不走 debug manifest 合并,INTERNET 必须在 main 显式声明
          (B-Phase-3:真机连 sync-server 的硬前置)。 -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Android 13+ 通知权限(P3c 本地通知)。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="pomoflow_mobile"
         android:name="${applicationName}"
