@@ -13,6 +13,7 @@ import 'providers/theme_provider.dart';
 import 'services/background_sync.dart';
 import 'services/notification_service.dart';
 import 'services/sync_client.dart';
+import 'services/task_reminder_engine.dart';
 import 'pages/login_page.dart';
 import 'pages/home_page.dart';
 import 'theme/app_theme.dart';
@@ -107,6 +108,12 @@ class PomoFlowApp extends StatelessWidget {
                 (throw StateError('TaskProvider 是 demo 模式,db 不可用')),
             deviceId: () => auth.deviceId,
             userId: () => auth.userId,
+          );
+          // 提醒触发引擎(P3d):providers 就绪后注入并启动 30s 周期检查
+          // (含启动补弹;resumed/专注结束/新建任务另有即时触发)。
+          TaskReminderEngine.attach(
+            taskProvider,
+            context.read<NotificationTemplateProvider>(),
           );
           return Consumer<ThemeProvider>(
             builder: (context, theme, _) => MaterialApp(

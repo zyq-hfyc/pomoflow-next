@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import '../models/task.dart';
 import '../providers/nav_provider.dart';
 import '../providers/task_provider.dart';
 import '../services/sync_wire.dart';
+import '../services/task_reminder_engine.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_controls.dart';
 import '../widgets/pf_sheet.dart';
@@ -317,6 +319,9 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(initial == null ? '已创建并加入清单' : '已保存修改')),
     );
+    // 桌面 checkRemindersNow 语义:新建/编辑已过提醒时间点的任务立刻弹,
+    // 不用等 30s tick(引擎自带去重,重复调用安全)。
+    unawaited(TaskReminderEngine.checkNow());
   }
 
   @override
@@ -957,7 +962,7 @@ class _DropdownField extends StatelessWidget {
         child: Row(
           children: [
             Expanded(child: Text(value, style: const TextStyle(fontSize: 15))),
-            if (trailing != null) trailing!,
+            ?trailing,
             Icon(Icons.expand_more, size: 20, color: theme.pfMuted),
           ],
         ),

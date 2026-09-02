@@ -9,6 +9,7 @@ import '../providers/settings_provider.dart';
 import '../providers/task_provider.dart';
 import '../providers/notification_template_provider.dart';
 import '../services/notification_service.dart';
+import '../services/task_reminder_engine.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_controls.dart';
 import '../widgets/pf_sheet.dart';
@@ -50,6 +51,7 @@ class _FocusPageState extends State<FocusPage> {
       _TimerMode.long => settings.longBreakMinutes * 60,
     };
   }
+
   bool _running = false;
   bool _started = false; // 是否进入过运行(区分「开始」与「继续」)
   bool _notificationsEnabled = true;
@@ -105,12 +107,23 @@ class _FocusPageState extends State<FocusPage> {
     });
   }
 
+  /// 专注抑制同步 + 专注结束补弹(桌面 reminders 1s 翻转监听语义:
+  /// 专注中被抑制的任务提醒,结束/暂停后立即补一轮检查)。
+  void _syncFocusGuard({required bool running}) {
+    final wasFocusing = FocusGuard.isFocusing;
+    FocusGuard.update(running: running, focusMode: _mode == _TimerMode.focus);
+    if (wasFocusing && !FocusGuard.isFocusing) {
+      unawaited(TaskReminderEngine.checkNow());
+    }
+  }
+
   /// 开始计时(_toggle 的启动分支,供 autoStart 消费复用)。
   void _start() {
     setState(() {
       _running = true;
       _started = true;
     });
+    _syncFocusGuard(running: true);
     _armTimer();
   }
 
@@ -118,6 +131,7 @@ class _FocusPageState extends State<FocusPage> {
     if (_running) {
       _timer?.cancel();
       setState(() => _running = false);
+      _syncFocusGuard(running: false);
     } else {
       _start();
     }
@@ -125,42 +139,42 @@ class _FocusPageState extends State<FocusPage> {
 
   void _armTimer() {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (_left > 0) {
-          setState(() => _left--);
-        } else {
-          _timer?.cancel();
-          setState(() {
-            _running = false;
-            _started = false; // 归零后按钮回到「开始」,而非误导性的「继续」
-          });
-          if (_mode == _TimerMode.focus) {
-            // 只有专注时段落 session + 计数;短/长休息归零不产出番茄(P1 行为修正)。
-            final task = context.read<TaskProvider>().focusTask;
-            final tpl = context.read<NotificationTemplateProvider>();
-            unawaited(NotificationService.showSessionComplete(
+      if (_left > 0) {
+        setState(() => _left--);
+      } else {
+        _timer?.cancel();
+        setState(() {
+          _running = false;
+          _started = false; // 归零后按钮回到「开始」,而非误导性的「继续」
+        });
+        _syncFocusGuard(running: false); // 专注结束 → 补弹被抑制的提醒
+        if (_mode == _TimerMode.focus) {
+          // 只有专注时段落 session + 计数;短/长休息归零不产出番茄(P1 行为修正)。
+          final task = context.read<TaskProvider>().focusTask;
+          final tpl = context.read<NotificationTemplateProvider>();
+          unawaited(
+            NotificationService.showSessionComplete(
               title: tpl.focusTitle,
               body: tpl.focusBody,
               taskTitle: task?.title,
-            ));
-            context.read<TaskProvider>().completePomodoro(
-                  durationMinutes: (_total ~/ 60).clamp(1, 1000),
-                  startedAt:
-                      DateTime.now().subtract(Duration(seconds: _total)),
-                );
-          } else {
-            final tpl = context.read<NotificationTemplateProvider>();
-            final title = _mode == _TimerMode.short
-                ? tpl.shortTitle
-                : tpl.longTitle;
-            final body =
-                _mode == _TimerMode.short ? tpl.shortBody : tpl.longBody;
-            unawaited(NotificationService.showSessionComplete(
-              title: title,
-              body: body,
-            ));
-          }
+            ),
+          );
+          context.read<TaskProvider>().completePomodoro(
+            durationMinutes: (_total ~/ 60).clamp(1, 1000),
+            startedAt: DateTime.now().subtract(Duration(seconds: _total)),
+          );
+        } else {
+          final tpl = context.read<NotificationTemplateProvider>();
+          final title = _mode == _TimerMode.short
+              ? tpl.shortTitle
+              : tpl.longTitle;
+          final body = _mode == _TimerMode.short ? tpl.shortBody : tpl.longBody;
+          unawaited(
+            NotificationService.showSessionComplete(title: title, body: body),
+          );
         }
-      });
+      }
+    });
   }
 
   void _skip() {
@@ -169,9 +183,7 @@ class _FocusPageState extends State<FocusPage> {
     // 对齐桌面 stop_pomodoro;历史可查)。<1 分钟视为误触,不落。
     final elapsed = _total - _left;
     if (_mode == _TimerMode.focus && elapsed >= 60) {
-      context
-          .read<TaskProvider>()
-          .abandonPomodoro(elapsedSeconds: elapsed);
+      context.read<TaskProvider>().abandonPomodoro(elapsedSeconds: elapsed);
     }
     setState(() {
       _total = _secondsFor(_mode); // 归零重取(设置/任务可能已变)
@@ -179,6 +191,7 @@ class _FocusPageState extends State<FocusPage> {
       _running = false;
       _started = false;
     });
+    _syncFocusGuard(running: false); // 中途跳出专注 → 补弹
   }
 
   Future<void> _pickTask() async {
@@ -200,7 +213,10 @@ class _FocusPageState extends State<FocusPage> {
     final theme = Theme.of(context);
     final tasks = context.watch<TaskProvider>();
     final focusTask = tasks.focusTask;
-    final cfg = (label: _modeLabel[_mode]!, showPomo: _mode == _TimerMode.focus);
+    final cfg = (
+      label: _modeLabel[_mode]!,
+      showPomo: _mode == _TimerMode.focus,
+    );
 
     // 任务卡「▶ 开始」的自动开始(桌面 autostart 语义):未计时 → 切回
     // 专注模式(修 Bug:休息模式 5 分钟残留)+ 启动;计时中只切任务不打断。
@@ -622,12 +638,7 @@ class _RingPainter extends CustomPainter {
     final inset = stroke / 2 + 1;
     final ox = (size.width - side) / 2 + inset;
     final oy = (size.height - side) / 2 + inset;
-    final arcRect = Rect.fromLTWH(
-      ox,
-      oy,
-      side - inset * 2,
-      side - inset * 2,
-    );
+    final arcRect = Rect.fromLTWH(ox, oy, side - inset * 2, side - inset * 2);
 
     canvas.drawCircle(
       arcRect.center,

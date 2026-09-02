@@ -8,8 +8,11 @@ import 'package:workmanager/workmanager.dart';
 
 import '../data/database.dart';
 import '../providers/auth_provider.dart' show AuthProvider;
+import '../providers/notification_template_provider.dart';
 import 'api_client.dart';
+import 'notification_service.dart';
 import 'sync_client.dart';
+import 'task_reminder_engine.dart';
 
 /// 后台自动同步(workmanager)—— mobile 版 spawn_auto_sync。
 ///
@@ -46,6 +49,13 @@ void callbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
     try {
       await _runBackgroundSyncOnce();
+      // 任务提醒后台兜底:独立 try/catch —— 提醒失败不影响同步结果
+      // (engine 去重表在 SharedPreferences,主/后台 isolate 共享一致)。
+      try {
+        await _runReminderCheckInBackground();
+      } catch (e) {
+        debugPrint('[bg-reminder] fail (non-fatal): $e');
+      }
       return true;
     } on ApiException catch (e) {
       // 业务错误(401/403/404/400/业务信封 message)→ permanent → 返 true
@@ -68,6 +78,28 @@ void callbackDispatcher() {
   });
 }
 
+/// 后台 isolate 的提醒检查:重建最小依赖链(开库 → 拉活任务 → 模板从
+/// SharedPreferences 恢复 → runReminderCheck)。周期 30 分钟只能覆盖
+/// 「到点前后 ±30min」的提醒,精确到点靠前台 30s tick + 回前台补弹。
+Future<void> _runReminderCheckInBackground() async {
+  if (kIsWeb) return;
+  // flutter_local_notifications 在后台 isolate 需各自 initialize 才能 show。
+  await NotificationService.initialize();
+  final db = await AppDatabase.open();
+  try {
+    final tasks = await db.listTasks();
+    final tpl = NotificationTemplateProvider();
+    await tpl.initialize(); // 只依赖 SharedPreferences,后台 isolate 可用
+    await runReminderCheck(
+      tasks: tasks,
+      templateTitle: tpl.reminderTitle,
+      templateBody: tpl.reminderBody,
+    );
+  } finally {
+    await db.close();
+  }
+}
+
 /// 后台 isolate 重建依赖链并跑一轮 pull→push。
 Future<void> _runBackgroundSyncOnce() async {
   await ApiClient.instance.initialize();
@@ -76,8 +108,7 @@ Future<void> _runBackgroundSyncOnce() async {
     const storage = FlutterSecureStorage(
       aOptions: AndroidOptions(encryptedSharedPreferences: true),
     );
-    final deviceId =
-        await storage.read(key: AuthProvider.storageKeyDeviceId);
+    final deviceId = await storage.read(key: AuthProvider.storageKeyDeviceId);
     final userId = await storage.read(key: AuthProvider.storageKeyUserId);
     SyncClient.configure(
       db: () => db,

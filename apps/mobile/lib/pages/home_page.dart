@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/nav_provider.dart';
 import '../providers/task_provider.dart';
+import '../services/task_reminder_engine.dart';
 import '../sheets/quick_create_sheet.dart';
 import '../widgets/dock_nav.dart';
 import 'focus_page.dart';
@@ -42,6 +45,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (state != AppLifecycleState.resumed) return;
     // unawaited:不阻塞前台渲染;reloadFromDb 自带 notifyListeners。
     context.read<TaskProvider>().reloadFromDb();
+    // 回前台补一轮提醒检查(后台/锁屏期间到点的,引擎自带去重)。
+    unawaited(TaskReminderEngine.checkNow());
   }
 
   @override
