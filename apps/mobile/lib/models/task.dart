@@ -90,7 +90,7 @@ class PfTask {
   /// `pomodoro_duration: Option<u32>` 的「覆盖全局」语义)。
   final int pomodoroDuration;
 
-  /// 重复(none/daily/weekdays/weekly,对齐 core Repeat snake 名)。
+  /// 重复(none/daily/weekdays/weekly/monthly/yearly,对齐 core Repeat snake 名)。
   /// mobile 只存储与同步;实例生成是桌面 repeat 引擎职责。
   final String repeat;
 

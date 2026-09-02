@@ -31,7 +31,16 @@ class _TaskCreateForm extends StatefulWidget {
 
 class _TaskCreateFormState extends State<_TaskCreateForm> {
   static const _projects = ['产品设计', '研发', '运营', '学习', '日常'];
-  static const _repeatOptions = ['不重复', '每天', '每周一', '工作日'];
+  // 6 条预设(对齐 v1 + core Repeat:none/daily/weekdays/weekly/monthly/yearly)。
+  // 自定义规则(JSON)走桌面 repeat 自定义对话框,mobile P0 不展开。
+  static const _repeatOptions = [
+    '不重复',
+    '每天',
+    '工作日',
+    '每周',
+    '每月',
+    '每年',
+  ];
 
   late final TextEditingController _titleCtrl = TextEditingController(
     text: widget.initial?.title ?? '',
@@ -268,13 +277,15 @@ class _MultilineField extends StatelessWidget {
   }
 }
 
-// repeat:UI 选项 ↔ core Repeat snake 名(none/daily/weekly/weekdays)。
+// repeat:UI 选项 ↔ core Repeat snake 名(none/daily/weekdays/weekly/monthly/yearly)。
 // mobile 只存储与同步;实例生成是桌面 repeat 引擎职责。
 const _repeatUiToCore = {
   '不重复': 'none',
   '每天': 'daily',
-  '每周一': 'weekly',
   '工作日': 'weekdays',
+  '每周': 'weekly',
+  '每月': 'monthly',
+  '每年': 'yearly',
 };
 String _coreToRepeatLabel(String core) =>
     _repeatUiToCore.entries
