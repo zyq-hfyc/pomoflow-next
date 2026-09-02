@@ -204,6 +204,30 @@ pub fn delete_task(id: String, state: State<'_, AppState>) -> Result<(), String>
     state.store.delete_task(&id).map_err(map_err)
 }
 
+// === 垃圾箱(P2+ UI 拉实)====================================================
+
+/// 列出所有已软删除的任务(按删除时间倒序)。
+#[tauri::command]
+pub fn list_deleted_tasks(state: State<'_, AppState>) -> Result<Vec<TaskView>, String> {
+    let tasks = state.store.list_deleted_tasks().map_err(map_err)?;
+    embed_views(&state, tasks)
+}
+
+/// 还原软删除的任务(走 push 通道让其他端同步收敛)。
+#[tauri::command]
+pub fn restore_task(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
+    state.store.restore_task(&id).map_err(map_err)
+}
+
+/// 硬删除任务(从 DB 物理删除,不可恢复)。同时清掉该任务的重复实例。
+#[tauri::command]
+pub fn purge_task(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
+    crate::repeat_service::delete_all_instances(&state.store, &id).map_err(map_err)?;
+    state.store.purge_task(&id).map_err(map_err)
+}
+
 // === Project commands ===
 
 #[tauri::command]

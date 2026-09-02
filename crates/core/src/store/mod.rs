@@ -94,6 +94,12 @@ pub trait Store: std::fmt::Debug {
     fn get_task(&self, id: &Id) -> CoreResult<Task>;
     fn upsert_task(&self, task: Task) -> CoreResult<Task>;
     fn delete_task(&self, id: &Id) -> CoreResult<()>;
+    /// 列出已软删除的任务(P2 垃圾箱 UI 拉实),按删除时间倒序。
+    fn list_deleted_tasks(&self) -> CoreResult<Vec<Task>>;
+    /// 还原软删除的任务(清 deleted_at + bump revision + 标 pending 推送)。
+    fn restore_task(&self, id: &Id) -> CoreResult<()>;
+    /// 硬删除任务(从 DB 物理删除;不可恢复 —— 与 LWW 同步收敛后多端都不再有)。
+    fn purge_task(&self, id: &Id) -> CoreResult<()>;
 
     // --- Projects ---
     fn list_projects(&self) -> CoreResult<Vec<Project>>;
@@ -445,6 +451,65 @@ impl Store for InMemoryStore {
                 .insert(id.clone(), (rev + 1, Timestamp::now()));
             g.touch("task_tag", id.as_str(), &self.device_id);
         }
+        Ok(())
+    }
+
+    fn list_deleted_tasks(&self) -> CoreResult<Vec<Task>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<Task> = g
+            .tasks
+            .values()
+            .filter(|t| t.deleted_at.is_some())
+            .cloned()
+            .collect();
+        // 按 deleted_at 倒序(最近删的在前);fallback id 升序保证稳定
+        out.sort_by(|a, b| match (b.deleted_at, a.deleted_at) {
+            (Some(bt), Some(at)) => bt.0.cmp(&at.0),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.id.0.cmp(&b.id.0),
+        });
+        Ok(out)
+    }
+
+    fn restore_task(&self, id: &Id) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let task = g
+            .tasks
+            .get(id)
+            .ok_or_else(|| CoreError::NotFound {
+                entity: "task",
+                id: id.to_string(),
+            })?;
+        if task.deleted_at.is_none() {
+            return Ok(()); // 已是活动态,no-op
+        }
+        let task = g.tasks.get_mut(id).unwrap();
+        task.deleted_at = None;
+        task.revision = task.revision.saturating_add(1);
+        g.touch("task", id.as_str(), &self.device_id);
+        Ok(())
+    }
+
+    fn purge_task(&self, id: &Id) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        if g.tasks.remove(id).is_none() {
+            return Err(CoreError::NotFound {
+                entity: "task",
+                id: id.to_string(),
+            });
+        }
+        g.task_tags.remove(id);
+        g.task_tag_meta.remove(id);
         Ok(())
     }
 

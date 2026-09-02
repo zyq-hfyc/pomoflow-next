@@ -1154,6 +1154,67 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    fn list_deleted_tasks(&self) -> CoreResult<Vec<Task>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT * FROM tasks WHERE deleted_at_ms IS NOT NULL
+                 ORDER BY deleted_at_ms DESC, id ASC",
+            )
+            .map_err(|e| CoreError::storage(format!("prepare list_deleted_tasks: {e}")))?;
+        let rows = stmt
+            .query_map([], row_to_task)
+            .map_err(|e| CoreError::storage(format!("query list_deleted_tasks: {e}")))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| CoreError::storage(format!("row: {e}")))?);
+        }
+        Ok(out)
+    }
+
+    fn restore_task(&self, id: &Id) -> CoreResult<()> {
+        let conn = self.lock()?;
+        // 清 deleted_at + bump revision + 标 pending → 服务端会把这个"还原"当
+        // 一条普通变更推进,多端 LWW 收敛(若两端同时还原/还原,revision 大者胜)。
+        let changed = conn
+            .execute(
+                "UPDATE tasks SET deleted_at_ms = NULL, updated_at_ms = ?,
+                    revision = revision + 1, sync_state = 'pending', origin_device = ?
+                 WHERE id = ? AND deleted_at_ms IS NOT NULL",
+                params![now_ms(), self.device_id, id.as_str()],
+            )
+            .map_err(|e| CoreError::storage(format!("restore_task: {e}")))?;
+        if changed == 0 {
+            // 行不存在 或 已是活动态 —— 与 LWW 收敛语义一致:不抛错,no-op。
+            return Ok(());
+        }
+        Ok(())
+    }
+
+    fn purge_task(&self, id: &Id) -> CoreResult<()> {
+        let conn = self.lock()?;
+        // 物理删除:同时清掉 task_tags + task_tag_sync 两张关联表;revisions 同步行
+        // 通过外键 / 显式 SQL 清(无外键定义)。重复实例(重复任务)的 subtasks / sessions
+        // 由上游 repeat_service.delete_all_instances 调用方保证先清。
+        conn.execute("DELETE FROM task_tags WHERE task_id = ?", params![id.as_str()])
+            .map_err(|e| CoreError::storage(format!("purge_task task_tags: {e}")))?;
+        conn.execute(
+            "DELETE FROM task_tag_sync WHERE task_id = ?",
+            params![id.as_str()],
+        )
+        .map_err(|e| CoreError::storage(format!("purge_task task_tag_sync: {e}")))?;
+        let changed = conn
+            .execute("DELETE FROM tasks WHERE id = ?", params![id.as_str()])
+            .map_err(|e| CoreError::storage(format!("purge_task: {e}")))?;
+        if changed == 0 {
+            return Err(CoreError::NotFound {
+                entity: "task",
+                id: id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
     fn list_projects(&self) -> CoreResult<Vec<Project>> {
         let conn = self.lock()?;
         let mut stmt = conn

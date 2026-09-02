@@ -648,3 +648,16 @@ export const countConflicts = () => invoke<number>("count_conflicts");
 
 /** 清空全部冲突记录。 */
 export const clearConflicts = () => invoke<void>("clear_conflicts");
+
+// === Trash(P2+ 垃圾箱 UI) ===
+
+/** 列出已软删除的任务(按删除时间倒序)。 */
+export const listDeletedTasks = () => invoke<TaskView[]>("list_deleted_tasks");
+
+/** 还原软删除的任务(同步给其他端收敛)。 */
+export const restoreTask = (id: string) =>
+  invoke<void>("restore_task", { id });
+
+/** 硬删除任务(从 DB 物理删除,不可恢复)。 */
+export const purgeTask = (id: string) =>
+  invoke<void>("purge_task", { id });

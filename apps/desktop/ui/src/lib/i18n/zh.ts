@@ -215,6 +215,7 @@ export const zh = {
       notification: '通知文案',
       sync: '数据同步',
       language: '中英切换',
+      trash: '垃圾箱',
     },
     language: {
       title: '界面语言',
@@ -290,6 +291,20 @@ export const zh = {
       clearConfirms: '确定清空所有冲突记录?清空后无法恢复。',
       conflictHint: '最近有 {n} 条冲突/覆盖记录',
       noConflicts: '近期没有冲突。多设备同步时,同一字段被两端同时修改才会触发覆盖。',
+    },
+    trash: {
+      title: '垃圾箱',
+      section: '已删除任务',
+      count: '共 N 条',
+      countFmt: '当前共 {n} 条已删除任务',
+      refresh: '刷新',
+      empty: '垃圾箱是空的。删除任务后会自动进入此处。',
+      restore: '还原',
+      purge: '彻底删除',
+      purgeAll: '清空垃圾箱',
+      purgeConfirm: '彻底删除该任务?不可恢复。',
+      purgeAllConfirm: '将彻底删除全部 {n} 条任务?不可恢复。',
+      projectLabel: '项目',
     },
     account: {
       title: '账号',

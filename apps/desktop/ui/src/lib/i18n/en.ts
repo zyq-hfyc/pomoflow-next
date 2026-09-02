@@ -216,6 +216,7 @@ export const en: Dict = {
       notification: 'Notifications',
       sync: 'Data Sync',
       language: 'Language',
+      trash: 'Trash',
     },
     sync: {
       title: 'Data Sync',
@@ -285,6 +286,20 @@ export const en: Dict = {
       clearConfirms: 'Clear all conflict records? This cannot be undone.',
       conflictHint: '{n} recent conflict(s) / override(s)',
       noConflicts: 'No recent conflicts. Conflicts only occur when the same field is edited on multiple devices.',
+    },
+    trash: {
+      title: 'Trash',
+      section: 'Deleted Tasks',
+      count: 'Total N',
+      countFmt: '{n} deleted task(s) currently',
+      refresh: 'Refresh',
+      empty: 'Trash is empty. Deleted tasks will appear here.',
+      restore: 'Restore',
+      purge: 'Delete Permanently',
+      purgeAll: 'Empty Trash',
+      purgeConfirm: 'Permanently delete this task? Cannot be undone.',
+      purgeAllConfirm: 'Permanently delete all {n} task(s)? Cannot be undone.',
+      projectLabel: 'Project',
     },
     language: {
       title: 'Interface Language',

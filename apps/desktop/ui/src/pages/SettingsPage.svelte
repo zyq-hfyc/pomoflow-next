@@ -16,6 +16,7 @@
     Bell,
     RefreshCw,
     Languages,
+    Trash2,
   } from "lucide-svelte";
   import { getDict } from "../lib/i18n.svelte";
   import TimerSetting from "../components/Settings/TimerSetting.svelte";
@@ -26,6 +27,7 @@
   import NotificationTemplateSetting from "../components/Settings/NotificationTemplateSetting.svelte";
   import SyncSetting from "../components/Settings/SyncSetting.svelte";
   import LanguageSetting from "../components/Settings/LanguageSetting.svelte";
+  import TrashSetting from "../components/Settings/TrashSetting.svelte";
 
   const t = $derived(getDict());
 
@@ -37,7 +39,8 @@
     | "motto"
     | "notification"
     | "sync"
-    | "language";
+    | "language"
+    | "trash";
 
   let activeTab = $state<SettingTab>("timer");
 
@@ -52,6 +55,7 @@
     { key: "notification", icon: Bell as any, label: t.settings.tab.notification },
     { key: "sync", icon: RefreshCw as any, label: t.settings.tab.sync },
     { key: "language", icon: Languages as any, label: t.settings.tab.language },
+    { key: "trash", icon: Trash2 as any, label: t.settings.tab.trash ?? "回收站" },
   ]);
 </script>
 
@@ -99,6 +103,8 @@
         <SyncSetting />
       {:else if activeTab === "language"}
         <LanguageSetting />
+      {:else if activeTab === "trash"}
+        <TrashSetting />
       {/if}
     </div>
   </main>
