@@ -154,7 +154,21 @@ void main() {
         // 实例引擎:模板-实例链接 + 重复终止时间)
         expect(v17cols.map((r) => r['name']), contains('repeat_parent_id'));
         expect(v17cols.map((r) => r['name']), contains('repeat_end_date_ms'));
-        expect(await db.getMeta('schema_version'), '18');
+        // schema v19 加 journals 8 同步列(手账跨端同步)
+        final jCols = await db.raw.rawQuery('PRAGMA table_info(journals)');
+        for (final c in [
+          'created_at_ms',
+          'revision',
+          'sync_state',
+          'updated_at_ms',
+          'origin_device',
+          'user_id',
+          'deleted_at_ms',
+          'payload',
+        ]) {
+          expect(jCols.map((r) => r['name']), contains(c));
+        }
+        expect(await db.getMeta('schema_version'), '19');
       } finally {
         await db.close();
       }
@@ -246,6 +260,14 @@ void main() {
         tags_csv TEXT NOT NULL DEFAULT ''
       )
     ''');
+    // 老手账行(v19 同步列缺失)→ 升级后应标 pending + 回填 created_at。
+    await raw.insert('journals', {
+      'id': 'jjjjjjjj-jjjj-4jjj-8jjj-jjjjjjjjjj01',
+      'kind': 'note',
+      'title': '老库小记',
+      'content': '升级前写的内容',
+      'tags_csv': '旧标签',
+    });
     await raw.execute('PRAGMA user_version = 4');
     await raw.close();
 
@@ -307,10 +329,17 @@ void main() {
       // v17 → v18 升级:legacy 库也补 repeat_parent_id / repeat_end_date_ms
       expect(v17cols.map((r) => r['name']), contains('repeat_parent_id'));
       expect(v17cols.map((r) => r['name']), contains('repeat_end_date_ms'));
+      // v18 → v19 升级:legacy journals 也补同步列,存量行标 pending(数据晋升)
+      final jCols = await db.raw.rawQuery('PRAGMA table_info(journals)');
+      expect(jCols.map((r) => r['name']), contains('sync_state'));
+      expect(jCols.map((r) => r['name']), contains('created_at_ms'));
+      final legacyJ = (await db.raw.query('journals')).first;
+      expect(legacyJ['sync_state'], 'pending');
+      expect((legacyJ['created_at_ms'] as int), greaterThan(0));
       final legacyRow = (await db.raw.query('tasks')).first;
       expect(legacyRow['due_label'], '今天');
       expect((legacyRow['due_at_ms'] as int), greaterThan(0));
-      expect(await db.getMeta('schema_version'), '18');
+      expect(await db.getMeta('schema_version'), '19');
     } finally {
       await db.close();
       await tmp.delete(recursive: true);

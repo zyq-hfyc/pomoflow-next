@@ -295,6 +295,51 @@ void main() {
       expect(f['author'], '');
     });
 
+    test('journal payload round-trip(v19 手账上云)', () {
+      final p = coreJournalPayload(<String, Object?>{
+        'id': 'jjjjjjjj-jjjj-4jjj-8jjj-jjjjjjjjjj02',
+        'kind': 'wish',
+        'title': '去北海道看雪',
+        'content': '冬天或春天都行',
+        'tags_csv': '旅行,长期',
+        'created_at_ms': 1756684800000,
+        'revision': 1,
+        'updated_at_ms': 1756684800123,
+        'deleted_at_ms': 0,
+      }, 'u-7');
+      expect(p['user_id'], 'u-7');
+      expect(p['kind'], 'wish');
+      expect(p['tags'], ['旅行', '长期']); // csv → core serde 数组形态
+      expect(p['deleted_at'], isNull);
+      expect(p['created_at'], isA<String>());
+
+      // 墓碑:deleted_at_ms > 0 → deleted_at ISO 串
+      final tomb = coreJournalPayload(<String, Object?>{
+        'id': 'jjjjjjjj-jjjj-4jjj-8jjj-jjjjjjjjjj02',
+        'kind': 'note',
+        'title': '',
+        'tags_csv': '',
+        'revision': 2,
+        'updated_at_ms': 1756771200000,
+        'deleted_at_ms': 1756771200000,
+      }, 'u-7');
+      expect(tomb['deleted_at'], isA<String>());
+
+      // pull 方向:tags 数组 → tags_csv,created_at ISO → ms
+      final f = journalFieldsFromCore(<String, dynamic>{
+        'kind': 'plan',
+        'title': '2026 年度规划',
+        'content': '读 12 本书',
+        'tags': ['成长'],
+        'created_at': '2026-01-01T00:00:00.000Z',
+        'deleted_at': null,
+      });
+      expect(f['kind'], 'plan');
+      expect(f['tags_csv'], '成长');
+      expect((f['created_at_ms'] as int), greaterThan(0));
+      expect(f['deleted_at_ms'], 0);
+    });
+
     test('pomodoro_duration/repeat round-trip both ways', () {
       final p = coreTaskPayload(<String, Object?>{
         'id': 'd9',
