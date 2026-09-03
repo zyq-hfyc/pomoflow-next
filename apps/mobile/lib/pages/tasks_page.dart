@@ -144,9 +144,11 @@ class _TasksPageState extends State<TasksPage> {
                     children: [
                       for (final (i, cell) in statCells.indexed) ...[
                         if (i > 0) const SizedBox(width: 9),
-                        Expanded(
-                          child: _StatCell(value: cell.$1, label: cell.$2),
-                        ),
+                        // _StatCell 自带顶层 Expanded(等分 Row 宽度),
+                        // 外层不能再包一层 —— 双 Expanded 会抛 competing
+                        // ParentDataWidgets 布局异常(d15cf27 引入,
+                        // widget test 拦下,装机前修复)。
+                        _StatCell(value: cell.$1, label: cell.$2),
                       ],
                     ],
                   ),
@@ -636,31 +638,35 @@ class _TaskCard extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 8),
-            // ▶ 快捷专注(.start-mini):设为专注任务并切到专注 Tab
-            GestureDetector(
-              onTap: () {
-                // autoStart:跳转后自动开表(桌面 autostart 语义;修圆环不倒计时)
-                context.read<TaskProvider>().setFocusTask(
-                  task.id,
-                  autoStart: true,
-                );
-                _goFocus(context);
-              },
-              child: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: theme.pfBrand50,
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  '▶',
-                  style: TextStyle(fontSize: 17, color: theme.pfBrand700),
+            // ▶ 快捷专注(.start-mini):设为专注任务并切到专注 Tab。
+            // 仅未完成任务显示 —— 已完成任务不能开始专注(2026-09-03
+            // 真机 Bug1:已完成视图点 ▶ 会跳专注页开表倒计时)。
+            if (!task.completed) ...[
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () {
+                  // autoStart:跳转后自动开表(桌面 autostart 语义;修圆环不倒计时)
+                  context.read<TaskProvider>().setFocusTask(
+                    task.id,
+                    autoStart: true,
+                  );
+                  _goFocus(context);
+                },
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: theme.pfBrand50,
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    '▶',
+                    style: TextStyle(fontSize: 17, color: theme.pfBrand700),
+                  ),
                 ),
               ),
-            ),
+            ],
           ],
         ),
       ),

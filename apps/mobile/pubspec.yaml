@@ -9,6 +9,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Material 组件本地化(日期选择器年月/按钮文案等按 locale 展示)
+  flutter_localizations:
+    sdk: flutter
   cupertino_icons: ^1.0.8
   # REST 客户端
   http: ^1.2.0

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:workmanager/workmanager.dart';
 
@@ -119,6 +120,13 @@ class PomoFlowApp extends StatelessWidget {
             builder: (context, theme, _) => MaterialApp(
               title: 'PomoFlow',
               debugShowCheckedModeBanner: false,
+              // Material 内建控件本地化(2026-09-03 真机 Bug2:到期日
+              // 日期/时间选择器年月等默认英文)。App 自身文案是硬编码中文,
+              // 故 locale 锁 zh;将来加语言设置时改为跟随设置切 zh/en,
+              // supportedLocales 已把 en 备好。
+              locale: const Locale('zh'),
+              supportedLocales: const [Locale('zh'), Locale('en')],
+              localizationsDelegates: GlobalMaterialLocalizations.delegates,
               theme: buildAppTheme(),
               darkTheme: buildAppDarkTheme(),
               themeMode: theme.mode,
