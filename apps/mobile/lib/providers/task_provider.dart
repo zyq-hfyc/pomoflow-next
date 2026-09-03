@@ -906,15 +906,29 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 保存今日复盘:走 daily_reviews 实体(按日期 upsert + pending,
+  /// 读某日复盘内容(null = 未写)。格式 date = yyyy-mm-dd。
+  Future<String?> dailyReviewContent(String date) async {
+    final db = _db;
+    if (db == null) return null;
+    try {
+      return await db.dailyReviewContent(date);
+    } on Exception catch (e) {
+      debugPrint('dailyReviewContent failed: $e');
+      return null;
+    }
+  }
+
+  /// 保存(或更新)某日复盘:按日期 upsert + pending,
   /// 跨端同步 —— 桌面端看得到;此前存 meta.today_review 不同步)。
-  Future<void> saveReview(String text) async {
-    todayReview = text;
+  Future<void> saveDailyReview(String date, String text) async {
+    if (date == localDay(DateTime.now())) {
+      todayReview = text;
+    }
     final db = _db;
     if (db != null) {
       try {
         await db.upsertDailyReview(
-          date: localDay(DateTime.now()),
+          date: date,
           content: text,
           originDevice: _deviceIdProvider?.call() ?? '',
           userId: _userIdProvider?.call() ?? '',
@@ -925,6 +939,10 @@ class TaskProvider extends ChangeNotifier {
     }
     notifyListeners();
   }
+
+  /// 兼容旧调用(仅今日):专注页复盘卡移除后随调用方一起清理。
+  Future<void> saveReview(String text) async =>
+      saveDailyReview(localDay(DateTime.now()), text);
 
   /// 读某周复盘内容。格式 weekStart = yyyy-mm-dd(当周周一)。
   Future<String?> weeklyReviewContent(String weekStart) async {
@@ -986,6 +1004,36 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 读某年复盘内容。格式 year = yyyy(4 位字符串)。
+  Future<String?> yearlyReviewContent(String year) async {
+    final db = _db;
+    if (db == null) return null;
+    try {
+      return await db.yearlyReviewContent(year);
+    } on Exception catch (e) {
+      debugPrint('yearlyReviewContent failed: $e');
+      return null;
+    }
+  }
+
+  /// 保存年复盘。
+  Future<void> saveYearlyReview(String year, String text) async {
+    final db = _db;
+    if (db != null) {
+      try {
+        await db.upsertYearlyReview(
+          year: year,
+          content: text,
+          originDevice: _deviceIdProvider?.call() ?? '',
+          userId: _userIdProvider?.call() ?? '',
+        );
+      } on Exception catch (e) {
+        debugPrint('upsertYearlyReview failed: $e');
+      }
+    }
+    notifyListeners();
+  }
+
   /// 本周周一(ISO 周,周一为起点)。
   static String currentWeekStart() {
     final now = DateTime.now();
@@ -1000,6 +1048,10 @@ class TaskProvider extends ChangeNotifier {
     return '${now.year.toString().padLeft(4, '0')}-'
         '${now.month.toString().padLeft(2, '0')}';
   }
+
+  /// 本年字符串 yyyy(4 位,年复盘自然键)。
+  static String currentYear() =>
+      DateTime.now().year.toString().padLeft(4, '0');
 
   Future<String> nextId() async => await _allocateId();
 

@@ -185,6 +185,17 @@ class SyncClient {
         'payload': coreMonthlyReviewPayload(row, uid),
       });
     }
+    for (final row in await db.listPendingYearlyReviews()) {
+      changes.add({
+        'id': _uuidChangeId(),
+        'device_id': deviceId,
+        'entity': 'yearly_review',
+        'entity_id': row['id'] as String,
+        'revision': (row['revision'] as int?) ?? 1,
+        'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
+        'payload': coreYearlyReviewPayload(row, uid),
+      });
+    }
     for (final row in await db.listPendingMottos()) {
       changes.add({
         'id': _uuidChangeId(),
@@ -235,6 +246,9 @@ class SyncClient {
     final taskTagIdsToMark = <String>[];
     final subtaskIdsToMark = <String>[];
     final reviewIdsToMark = <String>[];
+    final weeklyReviewIdsToMark = <String>[];
+    final monthlyReviewIdsToMark = <String>[];
+    final yearlyReviewIdsToMark = <String>[];
     final mottoIdsToMark = <String>[];
     final journalIdsToMark = <String>[];
     final sessionIdsToMark = <String>[];
@@ -253,8 +267,9 @@ class SyncClient {
             'task_tag' => taskTagIdsToMark,
             'sub_task' => subtaskIdsToMark,
             'daily_review' => reviewIdsToMark,
-            'weekly_review' => reviewIdsToMark,
-            'monthly_review' => reviewIdsToMark,
+            'weekly_review' => weeklyReviewIdsToMark,
+            'monthly_review' => monthlyReviewIdsToMark,
+            'yearly_review' => yearlyReviewIdsToMark,
             'motto' => mottoIdsToMark,
             'journal' => journalIdsToMark,
             _ => taskIdsToMark,
@@ -272,6 +287,9 @@ class SyncClient {
               'task_tag' => taskTagIdsToMark,
               'sub_task' => subtaskIdsToMark,
               'daily_review' => reviewIdsToMark,
+              'weekly_review' => weeklyReviewIdsToMark,
+              'monthly_review' => monthlyReviewIdsToMark,
+              'yearly_review' => yearlyReviewIdsToMark,
               'motto' => mottoIdsToMark,
               'journal' => journalIdsToMark,
               _ => taskIdsToMark,
@@ -299,6 +317,15 @@ class SyncClient {
     }
     if (reviewIdsToMark.isNotEmpty) {
       await db.markDailyReviewsSynced(reviewIdsToMark);
+    }
+    if (weeklyReviewIdsToMark.isNotEmpty) {
+      await db.markWeeklyReviewsSynced(weeklyReviewIdsToMark);
+    }
+    if (monthlyReviewIdsToMark.isNotEmpty) {
+      await db.markMonthlyReviewsSynced(monthlyReviewIdsToMark);
+    }
+    if (yearlyReviewIdsToMark.isNotEmpty) {
+      await db.markYearlyReviewsSynced(yearlyReviewIdsToMark);
     }
     if (mottoIdsToMark.isNotEmpty) {
       await db.markMottosSynced(mottoIdsToMark);
@@ -411,6 +438,20 @@ class SyncClient {
           fields: monthlyReviewFieldsFromCore(payload),
         );
       }
+    } else if (entity == 'yearly_review') {
+      final year = (payload as Map?)?['year'] as String?;
+      if (year != null && year.isNotEmpty) {
+        await db.applyRemoteYearlyReview(
+          id: entityId,
+          year: year,
+          revision: revision,
+          updatedAtMs: updatedAtMs,
+          originDevice: originDevice,
+          userId: uid,
+          payload: payloadJson,
+          fields: yearlyReviewFieldsFromCore(payload),
+        );
+      }
     } else if (entity == 'motto') {
       await db.applyRemoteMotto(
         id: entityId,
@@ -508,6 +549,8 @@ class SyncClient {
         return db.localWeeklyReviewCandidate(id);
       case 'monthly_review':
         return db.localMonthlyReviewCandidate(id);
+      case 'yearly_review':
+        return db.localYearlyReviewCandidate(id);
       case 'motto':
         return db.localMottoCandidate(id);
       case 'journal':
@@ -549,6 +592,8 @@ class SyncClient {
           return (json['week_start'] as String?) ?? '';
         case 'monthly_review':
           return (json['year_month'] as String?) ?? '';
+        case 'yearly_review':
+          return (json['year'] as String?) ?? '';
         default:
           return '';
       }
@@ -828,6 +873,34 @@ class SyncClient {
           userId: uid,
           payload: payloadJson,
           fields: monthlyReviewFieldsFromCore(change['payload'] as Map?),
+        );
+        return true;
+      case 'yearly_review':
+        final remote = _extractChangeTimestamps(change);
+        final local = await db.localYearlyReviewCandidate(entityId);
+        if (local != null && _localWinsLww(local, remote)) return false;
+        if (local != null) {
+          await db.insertConflict(
+            entity: entity,
+            entityId: entityId,
+            entityTitle: _extractEntityTitle(entity, local['payload']),
+            direction: 'overrode',
+            remoteDevice: remote.deviceId,
+            localUpdatedMs: (local['updated_at_ms'] as int?) ?? 0,
+            remoteUpdatedMs: remote.updatedMs,
+          );
+        }
+        final year = (change['payload'] as Map?)?['year'] as String?;
+        if (year == null || year.isEmpty) return false;
+        await db.applyRemoteYearlyReview(
+          id: entityId,
+          year: year,
+          revision: (change['revision'] as int?) ?? 1,
+          updatedAtMs: remote.updatedMs,
+          originDevice: remote.deviceId,
+          userId: uid,
+          payload: payloadJson,
+          fields: yearlyReviewFieldsFromCore(change['payload'] as Map?),
         );
         return true;
       case 'motto':

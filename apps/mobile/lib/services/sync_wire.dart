@@ -378,6 +378,35 @@ Map<String, Object?> monthlyReviewFieldsFromCore(Map? p) {
   return out;
 }
 
+/// yearly_reviews pending 行 → core::YearlyReview JSON(push 方向)。
+Map<String, Object?> coreYearlyReviewPayload(
+  Map<String, Object?> row,
+  String userId,
+) {
+  final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
+  final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
+  return {
+    'id': row['id'],
+    'user_id': userId,
+    'year': row['year'],
+    'content': row['content'] ?? '',
+    'revision': (row['revision'] as int?) ?? 1,
+    'deleted_at': deletedAtMs > 0 ? msToIso(deletedAtMs) : null,
+    'updated_at': msToIso(updatedAtMs),
+  };
+}
+
+/// core::YearlyReview JSON → 行列(pull 方向;year 由 applyRemote 单独传)。
+Map<String, Object?> yearlyReviewFieldsFromCore(Map? p) {
+  if (p == null) return const {};
+  final out = <String, Object?>{};
+  if (p['content'] is String) out['content'] = p['content'] as String;
+  if (p['deleted_at'] is String?) {
+    out['deleted_at_ms'] = isoToMs((p['deleted_at'] as String?) ?? '');
+  }
+  return out;
+}
+
 /// mottos pending 行 → core::Motto JSON(push 方向;mobile 只拉不发,
 /// 实现对称便于后续编辑入口)。
 Map<String, Object?> coreMottoPayload(Map<String, Object?> row, String userId) {
