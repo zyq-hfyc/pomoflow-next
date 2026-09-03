@@ -112,4 +112,70 @@ void main() {
       await db.close();
     }
   });
+
+  test(
+    'updateJournalFields 改值+升版+转 pending;softDeleteJournal 出墓碑可推送',
+    () async {
+      final db = await AppDatabase.open(path: ':memory:');
+      try {
+        const id = 'jjjjjjjj-jjjj-4jjj-8jjj-jjjjjjjjjj07';
+        final now = DateTime.now();
+        await db.insertJournal(
+          PfJournal(
+            id: id,
+            kind: JournalKind.note,
+            title: '旧标题',
+            content: '旧内容',
+            createdAt: now,
+            syncMeta: PfSyncMeta(
+              revision: 3,
+              syncState: 'synced',
+              originDevice: 'dev-a',
+              userId: 'u-1',
+              updatedAt: now,
+            ),
+          ),
+        );
+
+        // 编辑:kind 换类 + 字段全改 → revision 3→4、sync_state 转 pending
+        await db.updateJournalFields(
+          id: id,
+          kind: 'wish',
+          title: '新标题',
+          content: '新内容',
+          tags: const ['改期'],
+          originDevice: 'dev-a',
+          userId: 'u-1',
+        );
+        final pending = await db.listPendingJournals();
+        expect(pending, hasLength(1));
+        expect(pending.first['kind'], 'wish');
+        expect(pending.first['revision'], 4, reason: '编辑必须升 revision(LWW)');
+        final payload = coreJournalPayload(pending.first, 'u-1');
+        expect(payload['title'], '新标题');
+        expect(payload['tags'], ['改期']);
+        expect(payload['deleted_at'], isNull);
+
+        // push 成功后回到 synced
+        await db.markJournalsSynced([id]);
+        expect(await db.listPendingJournals(), isEmpty);
+
+        // 删除:墓碑行 revision 4→5,payload 带 deleted_at 可推送
+        await db.softDeleteJournal(
+          id: id,
+          originDevice: 'dev-a',
+          userId: 'u-1',
+        );
+        expect(await db.listJournals(), isEmpty, reason: '软删后列表不可见');
+        final tomb = await db.listPendingJournals();
+        expect(tomb, hasLength(1));
+        expect(tomb.first['revision'], 5);
+        expect(tomb.first['deleted_at_ms'], greaterThan(0));
+        final tombPayload = coreJournalPayload(tomb.first, 'u-1');
+        expect(tombPayload['deleted_at'], isNotNull);
+      } finally {
+        await db.close();
+      }
+    },
+  );
 }
