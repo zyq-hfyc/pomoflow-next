@@ -96,27 +96,36 @@ class _ProjectManagerBodyState extends State<_ProjectManagerBody> {
     final projects = context.watch<TaskProvider>().projects;
     final tree = buildProjectTree(projects);
 
+    // 不用 Expanded/有界 ListView:pfSheet 的 body 在 SingleChildScrollView
+    // (无界高度)里,顶层 Column 的 flex 子项会抛 unbounded 异常 →
+    // sheet 内容渲染失败只剩蒙层(真机 Bug,同 tasks_page._pickSheet /
+    // 设置页通知文案两例)。shrinkWrap + NeverScrollable 平铺交给外层滚。
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: tree.isEmpty
-              ? Center(
-                  child: Text('暂无项目', style: TextStyle(color: theme.pfMuted)),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                  itemCount: tree.length,
-                  itemBuilder: (ctx, i) => _ProjectRow(
-                    node: tree[i],
-                    onEdit: () => _editProject(tree[i].project),
-                    onAddChild: () =>
-                        _editProject(null, parentId: tree[i].project.id),
-                    onDelete: () => _confirmDelete(tree[i].project),
-                    onReparent: () => _reparent(tree[i].project),
-                  ),
-                ),
-        ),
+        if (tree.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 28),
+            child: Center(
+              child: Text('暂无项目', style: TextStyle(color: theme.pfMuted)),
+            ),
+          )
+        else
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+            itemCount: tree.length,
+            itemBuilder: (ctx, i) => _ProjectRow(
+              node: tree[i],
+              onEdit: () => _editProject(tree[i].project),
+              onAddChild: () =>
+                  _editProject(null, parentId: tree[i].project.id),
+              onDelete: () => _confirmDelete(tree[i].project),
+              onReparent: () => _reparent(tree[i].project),
+            ),
+          ),
         const Divider(height: 1),
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
