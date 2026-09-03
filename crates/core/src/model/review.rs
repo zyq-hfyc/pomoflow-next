@@ -1,4 +1,4 @@
-//! 复盘实体 —— 日 / 周 / 月 三种粒度
+//! 复盘实体 —— 日 / 周 / 月 / 年 四种粒度
 //!
 //! v1 用日期 / 周一日期 / YYYY-MM 作为"主键",v2 这里仍然保持字符串形式的
 //! "自然日期主键",同时加 UUID `id` 用于 sync(同一日期在不同设备上可能
@@ -57,6 +57,26 @@ pub struct MonthlyReview {
     pub user_id: Id,
     /// 年月 `YYYY-MM`(同步自然键)
     pub year_month: String,
+    #[serde(default)]
+    pub content: String,
+
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub deleted_at: Option<Timestamp>,
+    #[serde(default)]
+    pub updated_at: Timestamp,
+}
+
+/// 年复盘 —— 主键是 `YYYY`(v2 新增粒度,移动端复盘入口重构批)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct YearlyReview {
+    pub id: Id,
+    /// 归属用户(多租户隔离,ADR-007;本地 = 本机用户 UUID,Store 写入时盖章)
+    #[serde(default = "crate::model::nil_user_id")]
+    pub user_id: Id,
+    /// 年份 `YYYY`(同步自然键)
+    pub year: String,
     #[serde(default)]
     pub content: String,
 

@@ -34,6 +34,7 @@ const MIGRATIONS: &[MigrationFn] = &[
     migration_003_task_tag_sync,
     migration_004_conflict_log,
     migration_005_journal,
+    migration_006_yearly_review,
 ];
 
 /// 当前代码支持的最新 schema 版号(= 已应用迁移数)。
@@ -379,6 +380,27 @@ fn migration_005_journal(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
+/// v5 → v6:年复盘表(复盘入口重构批,移动端「+新建 → 复盘 → 年」)。
+/// 桌面端旧库没有这张表;新库由 SCHEMA_SQL 一次建成,此处幂等兜底。
+fn migration_006_yearly_review(conn: &Connection) -> CoreResult<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS yearly_reviews (
+           id TEXT PRIMARY KEY NOT NULL,
+           year TEXT NOT NULL UNIQUE,
+           content TEXT NOT NULL DEFAULT '',
+           revision INTEGER NOT NULL DEFAULT 1,
+           updated_at_ms INTEGER NOT NULL,
+           user_id TEXT NOT NULL DEFAULT '',
+           sync_state TEXT NOT NULL DEFAULT 'pending',
+           origin_device TEXT NOT NULL DEFAULT ''
+         );
+         CREATE INDEX IF NOT EXISTS idx_yearly_reviews_pending
+           ON yearly_reviews(year) WHERE sync_state = 'pending';",
+    )
+    .map_err(|e| CoreError::storage(format!("yearly_review: {e}")))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -522,5 +544,40 @@ mod tests {
             )
             .unwrap();
         assert_eq!(synced, 2, "INSERT OR IGNORE 不应把已同步行重置回 pending");
+    }
+
+    /// v5 库(无 yearly_reviews,版本停在 5)升 v6:建表 + 幂等可重跑。
+    #[test]
+    fn migration_006_adds_yearly_reviews() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::store::sqlite::SCHEMA_SQL)
+            .unwrap();
+        // 模拟 v5 存量:SCHEMA_SQL 已含 yearly_reviews,先删掉再钉版本 5
+        conn.execute_batch(
+            "DROP TABLE yearly_reviews;
+             PRAGMA user_version = 5;",
+        )
+        .unwrap();
+
+        assert_eq!(run_migrations(&conn).unwrap(), latest_version());
+        assert!(has_table(&conn, "yearly_reviews").unwrap());
+        assert_eq!(current_version(&conn).unwrap(), latest_version());
+
+        // 迁移建表带 UNIQUE 自然键 + 同步列(与 SCHEMA_SQL 同构)
+        conn.execute_batch(
+            "INSERT INTO yearly_reviews (id, year, content, updated_at_ms)
+             VALUES ('y1', '2026', '试写', 1);",
+        )
+        .unwrap();
+        // 重跑 no-op,数据不丢
+        assert_eq!(run_migrations(&conn).unwrap(), latest_version());
+        let content: String = conn
+            .query_row(
+                "SELECT content FROM yearly_reviews WHERE year = '2026'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(content, "试写");
     }
 }

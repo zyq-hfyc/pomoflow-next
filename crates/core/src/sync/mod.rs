@@ -59,6 +59,7 @@ pub enum EntityKind {
     DailyReview,
     WeeklyReview,
     MonthlyReview,
+    YearlyReview,
 }
 
 /// 一端对外发送的"自上次同步以来的全部变更"。
@@ -310,6 +311,11 @@ impl_sync_entity!(
     crate::model::MonthlyReview,
     EntityKind::MonthlyReview,
     keystr year_month
+);
+impl_sync_entity!(
+    crate::model::YearlyReview,
+    EntityKind::YearlyReview,
+    keystr year
 );
 
 /// 实体 → 待推送 Change 快照(origin 为空回落本机 device)。

@@ -27,8 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{CoreError, CoreResult};
 use crate::model::{
     DailyReview, Id, Journal, MonthlyReview, Motto, NotificationTemplate, PomodoroSession,
-    Priority,
-    Project, SubTask, Tag, Task, TaskTagLink, Timestamp, WeeklyReview,
+    Priority, Project, SubTask, Tag, Task, TaskTagLink, Timestamp, WeeklyReview, YearlyReview,
 };
 use crate::sync::{change_of, Change, ChangeLogStore, EntityKind, SyncEntity};
 
@@ -165,6 +164,10 @@ pub trait Store: std::fmt::Debug {
     fn upsert_monthly_review(&self, review: MonthlyReview) -> CoreResult<MonthlyReview>;
     fn delete_monthly_review(&self, year_month: &str) -> CoreResult<()>;
 
+    fn get_yearly_review(&self, year: &str) -> CoreResult<Option<YearlyReview>>;
+    fn upsert_yearly_review(&self, review: YearlyReview) -> CoreResult<YearlyReview>;
+    fn delete_yearly_review(&self, year: &str) -> CoreResult<()>;
+
     // --- SubTasks ---
     /// 列出某 Task 下所有未软删的子任务,按 position 升序。
     fn list_subtasks_for_task(&self, task_id: &Id) -> CoreResult<Vec<SubTask>>;
@@ -253,6 +256,7 @@ struct Inner {
     daily_reviews: HashMap<String, DailyReview>,
     weekly_reviews: HashMap<String, WeeklyReview>,
     monthly_reviews: HashMap<String, MonthlyReview>,
+    yearly_reviews: HashMap<String, YearlyReview>,
     mottos: HashMap<Id, Motto>,
     journals: HashMap<Id, Journal>,
     notification_template: Option<NotificationTemplate>,
@@ -488,13 +492,10 @@ impl Store for InMemoryStore {
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        let task = g
-            .tasks
-            .get(id)
-            .ok_or_else(|| CoreError::NotFound {
-                entity: "task",
-                id: id.to_string(),
-            })?;
+        let task = g.tasks.get(id).ok_or_else(|| CoreError::NotFound {
+            entity: "task",
+            id: id.to_string(),
+        })?;
         if task.deleted_at.is_none() {
             return Ok(()); // 已是活动态,no-op
         }
@@ -1084,6 +1085,63 @@ impl Store for InMemoryStore {
         Ok(())
     }
 
+    fn get_yearly_review(&self, year: &str) -> CoreResult<Option<YearlyReview>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        Ok(g.yearly_reviews.get(year).cloned())
+    }
+
+    fn upsert_yearly_review(&self, mut review: YearlyReview) -> CoreResult<YearlyReview> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        if review.user_id.is_nil() {
+            review.user_id = self.user_id.clone();
+        }
+        review.revision = g
+            .yearly_reviews
+            .get(&review.year)
+            .map(|r| r.revision + 1)
+            .unwrap_or(1);
+        g.touch("yearly_review", &review.year, &self.device_id);
+        g.yearly_reviews.insert(review.year.clone(), review.clone());
+        Ok(review)
+    }
+
+    fn delete_yearly_review(&self, year: &str) -> CoreResult<()> {
+        // ADR-010:删除 = content='' 的 upsert(同 delete_daily_review)
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        match g.yearly_reviews.get_mut(year) {
+            Some(r) => {
+                r.content = String::new();
+                r.revision += 1;
+                r.updated_at = crate::model::Timestamp::now();
+            }
+            None => {
+                g.yearly_reviews.insert(
+                    year.to_string(),
+                    YearlyReview {
+                        id: Id::new(),
+                        user_id: self.user_id.clone(),
+                        year: year.to_string(),
+                        content: String::new(),
+                        revision: 1,
+                        deleted_at: None,
+                        updated_at: crate::model::Timestamp::now(),
+                    },
+                );
+            }
+        }
+        g.touch("yearly_review", year, &self.device_id);
+        Ok(())
+    }
+
     fn list_subtasks_for_task(&self, task_id: &Id) -> CoreResult<Vec<SubTask>> {
         let g = self
             .inner
@@ -1282,13 +1340,8 @@ impl Store for InMemoryStore {
             .inner
             .read()
             .map_err(|e| CoreError::storage(e.to_string()))?;
-        let mut recent: Vec<ConflictRecord> = g
-            .conflicts
-            .iter()
-            .rev()
-            .take(limit)
-            .cloned()
-            .collect();
+        let mut recent: Vec<ConflictRecord> =
+            g.conflicts.iter().rev().take(limit).cloned().collect();
         recent.reverse();
         Ok(recent)
     }
@@ -1327,6 +1380,7 @@ fn kind_str(k: EntityKind) -> &'static str {
         EntityKind::DailyReview => "daily_review",
         EntityKind::WeeklyReview => "weekly_review",
         EntityKind::MonthlyReview => "monthly_review",
+        EntityKind::YearlyReview => "yearly_review",
     }
 }
 
@@ -1454,6 +1508,10 @@ impl ChangeLogStore for InMemoryStore {
                 let e = decode!(MonthlyReview);
                 g.monthly_reviews.insert(e.year_month.clone(), e);
             }
+            EntityKind::YearlyReview => {
+                let e = decode!(YearlyReview);
+                g.yearly_reviews.insert(e.year.clone(), e);
+            }
             // 关联实体:按权威载荷原样落库(revision 不 bump),settle pending
             EntityKind::TaskTag => {
                 let mut e = decode!(TaskTagLink);
@@ -1515,6 +1573,7 @@ impl ChangeLogStore for InMemoryStore {
             EntityKind::DailyReview => probe!(g.daily_reviews, "daily_review", Some(id)),
             EntityKind::WeeklyReview => probe!(g.weekly_reviews, "weekly_review", Some(id)),
             EntityKind::MonthlyReview => probe!(g.monthly_reviews, "monthly_review", Some(id)),
+            EntityKind::YearlyReview => probe!(g.yearly_reviews, "yearly_review", Some(id)),
             EntityKind::TaskTag => {
                 match Id::parse(id).and_then(|k| g.task_tag_meta.get(&k).map(|m| (k, m.0, m.1))) {
                     Some((task_id, rev, upd)) => {

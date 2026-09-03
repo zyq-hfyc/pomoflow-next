@@ -36,9 +36,8 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use crate::error::{CoreError, CoreResult};
 use crate::model::{
     DailyReview, Id, Journal, MonthlyReview, Motto, NotificationTemplate, PomodoroSession,
-    Priority,
-    Project, Reminder, Repeat, SubTask, Tag, Task, TaskStatus, TaskTagLink, Timestamp,
-    WeeklyReview,
+    Priority, Project, Reminder, Repeat, SubTask, Tag, Task, TaskStatus, TaskTagLink, Timestamp,
+    WeeklyReview, YearlyReview,
 };
 use crate::store::{ConflictRecord, Store, TaskDateFilter, TaskQuery};
 use crate::sync::{change_of, Change, ChangeLogStore, EntityKind};
@@ -285,8 +284,14 @@ impl Stamped for MonthlyReview {
         &mut self.user_id
     }
 }
+impl Stamped for YearlyReview {
+    fn user_id(&mut self) -> &mut Id {
+        &mut self.user_id
+    }
+}
 
-/// SQLite schema —— 9 张表,所有时间戳 ms INTEGER,所有枚举 TEXT。
+/// SQLite schema —— 实体表 + 同步辅助表共 16 张,
+/// 所有时间戳 ms INTEGER,所有枚举 TEXT。
 ///
 /// 这里永远是**最新结构**(新库一次建成);旧库升级走 `migrate.rs` 的版本化迁移
 /// (迁移函数里同步补一份新列,保持两边一致)。
@@ -428,6 +433,17 @@ CREATE TABLE IF NOT EXISTS weekly_reviews (
 CREATE TABLE IF NOT EXISTS monthly_reviews (
   id TEXT PRIMARY KEY NOT NULL,
   year_month TEXT NOT NULL UNIQUE,
+  content TEXT NOT NULL DEFAULT '',
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at_ms INTEGER NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  sync_state TEXT NOT NULL DEFAULT 'pending',
+  origin_device TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS yearly_reviews (
+  id TEXT PRIMARY KEY NOT NULL,
+  year TEXT NOT NULL UNIQUE,
   content TEXT NOT NULL DEFAULT '',
   revision INTEGER NOT NULL DEFAULT 1,
   updated_at_ms INTEGER NOT NULL,
@@ -969,6 +985,27 @@ fn row_to_monthly_review(row: &Row<'_>) -> rusqlite::Result<MonthlyReview> {
     }))
 }
 
+fn row_to_yearly_review(row: &Row<'_>) -> rusqlite::Result<YearlyReview> {
+    let id_s: String = row.get("id")?;
+    let id = Id::parse(&id_s).ok_or_else(|| {
+        core_err(CoreError::storage(format!(
+            "invalid yearly_review id: {id_s}"
+        )))
+    })?;
+    let user_id_s: String = row.get("user_id")?;
+    let user_id = Id::parse(&user_id_s).unwrap_or_else(Id::nil);
+
+    core_try(Ok(YearlyReview {
+        id,
+        user_id,
+        year: row.get("year")?,
+        content: row.get("content")?,
+        revision: row.get::<_, i64>("revision")? as u64,
+        deleted_at: None,
+        updated_at: ts_from_ms(row.get("updated_at_ms")?).map_err(core_err)?,
+    }))
+}
+
 fn row_to_subtask(row: &Row<'_>) -> rusqlite::Result<SubTask> {
     let id_s: String = row.get("id")?;
     let id = Id::parse(&id_s)
@@ -1041,7 +1078,11 @@ fn row_to_journal(row: &Row<'_>) -> rusqlite::Result<Journal> {
         tags: if tags_csv.is_empty() {
             Vec::new()
         } else {
-            tags_csv.split(',').filter(|s| !s.is_empty()).map(String::from).collect()
+            tags_csv
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect()
         },
         created_at: ts_from_ms(row.get("created_at_ms")?).map_err(core_err)?,
         revision: row.get::<_, i64>("revision")? as u64,
@@ -1250,8 +1291,11 @@ impl Store for SqliteStore {
         // 物理删除:同时清掉 task_tags + task_tag_sync 两张关联表;revisions 同步行
         // 通过外键 / 显式 SQL 清(无外键定义)。重复实例(重复任务)的 subtasks / sessions
         // 由上游 repeat_service.delete_all_instances 调用方保证先清。
-        conn.execute("DELETE FROM task_tags WHERE task_id = ?", params![id.as_str()])
-            .map_err(|e| CoreError::storage(format!("purge_task task_tags: {e}")))?;
+        conn.execute(
+            "DELETE FROM task_tags WHERE task_id = ?",
+            params![id.as_str()],
+        )
+        .map_err(|e| CoreError::storage(format!("purge_task task_tags: {e}")))?;
         conn.execute(
             "DELETE FROM task_tag_sync WHERE task_id = ?",
             params![id.as_str()],
@@ -1808,6 +1852,44 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    fn get_yearly_review(&self, year: &str) -> CoreResult<Option<YearlyReview>> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT * FROM yearly_reviews WHERE year = ?",
+            params![year],
+            row_to_yearly_review,
+        )
+        .optional()
+        .map_err(|e| CoreError::storage(format!("get_yearly_review: {e}")))
+    }
+
+    fn upsert_yearly_review(&self, review: YearlyReview) -> CoreResult<YearlyReview> {
+        self.upsert_yearly_review_marked(review, true)
+    }
+
+    fn delete_yearly_review(&self, year: &str) -> CoreResult<()> {
+        // ADR-010:删除 = content='' 的 upsert(同 delete_daily_review)
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO yearly_reviews
+                (id, user_id, year, content, revision, updated_at_ms, sync_state, origin_device)
+             VALUES (?, ?, ?, '', 1, ?, 'pending', ?)
+             ON CONFLICT(year) DO UPDATE SET
+                content = '', updated_at_ms = excluded.updated_at_ms, revision = revision + 1,
+                user_id = excluded.user_id, sync_state = 'pending',
+                origin_device = excluded.origin_device",
+            params![
+                Id::new().as_str(),
+                self.user_id.as_str(),
+                year,
+                now_ms(),
+                self.device_id
+            ],
+        )
+        .map_err(|e| CoreError::storage(format!("delete_yearly_review: {e}")))?;
+        Ok(())
+    }
+
     fn list_subtasks_for_task(&self, task_id: &Id) -> CoreResult<Vec<SubTask>> {
         let conn = self.lock()?;
         let mut stmt = conn
@@ -1916,7 +1998,9 @@ impl Store for SqliteStore {
     fn list_journals(&self) -> CoreResult<Vec<Journal>> {
         let conn = self.lock()?;
         let mut stmt = conn
-            .prepare("SELECT * FROM journals WHERE deleted_at_ms IS NULL ORDER BY created_at_ms ASC")
+            .prepare(
+                "SELECT * FROM journals WHERE deleted_at_ms IS NULL ORDER BY created_at_ms ASC",
+            )
             .map_err(|e| CoreError::storage(format!("prepare list_journals: {e}")))?;
         let rows = stmt
             .query_map([], row_to_journal)
@@ -2011,10 +2095,7 @@ impl Store for SqliteStore {
 
     // --- conflict_log(P2 冲突可视化) ---
 
-    fn insert_conflict(
-        &self,
-        record: ConflictRecord,
-    ) -> CoreResult<()> {
+    fn insert_conflict(&self, record: ConflictRecord) -> CoreResult<()> {
         let conn = self.lock()?;
         conn.execute(
             "INSERT INTO conflict_log
@@ -2036,10 +2117,7 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    fn list_recent_conflicts(
-        &self,
-        limit: usize,
-    ) -> CoreResult<Vec<ConflictRecord>> {
+    fn list_recent_conflicts(&self, limit: usize) -> CoreResult<Vec<ConflictRecord>> {
         let conn = self.lock()?;
         let mut stmt = conn
             .prepare(
@@ -2531,6 +2609,55 @@ impl SqliteStore {
         .map_err(|e| CoreError::storage(format!("upsert_monthly_review: {e}")))?;
         Ok(review)
     }
+
+    fn upsert_yearly_review_marked(
+        &self,
+        review: YearlyReview,
+        pending: bool,
+    ) -> CoreResult<YearlyReview> {
+        let review = self.stamp(review);
+        let conn = self.lock()?;
+        if pending {
+            conn.execute(
+                "INSERT INTO yearly_reviews
+                    (id, user_id, year, content, revision, updated_at_ms, sync_state, origin_device)
+                 VALUES (?, ?, ?, ?, 1, ?, 'pending', ?)
+                 ON CONFLICT(year) DO UPDATE SET
+                    content=excluded.content, updated_at_ms=excluded.updated_at_ms,
+                    revision = revision + 1, user_id=excluded.user_id,
+                    sync_state='pending', origin_device=excluded.origin_device",
+                params![
+                    review.id.as_str(),
+                    review.user_id.as_str(),
+                    review.year,
+                    review.content,
+                    ts_to_ms(review.updated_at),
+                    self.device_id
+                ],
+            )
+        } else {
+            conn.execute(
+                "INSERT INTO yearly_reviews
+                    (id, user_id, year, content, revision, updated_at_ms, sync_state, origin_device)
+                 VALUES (?, ?, ?, ?, ?, ?, 'synced', ?)
+                 ON CONFLICT(year) DO UPDATE SET
+                    content=excluded.content, updated_at_ms=excluded.updated_at_ms,
+                    revision=excluded.revision, user_id=excluded.user_id,
+                    sync_state='synced', origin_device=excluded.origin_device",
+                params![
+                    review.id.as_str(),
+                    review.user_id.as_str(),
+                    review.year,
+                    review.content,
+                    review.revision as i64,
+                    ts_to_ms(review.updated_at),
+                    self.device_id
+                ],
+            )
+        }
+        .map_err(|e| CoreError::storage(format!("upsert_yearly_review: {e}")))?;
+        Ok(review)
+    }
 }
 
 impl ChangeLogStore for SqliteStore {
@@ -2579,6 +2706,7 @@ impl ChangeLogStore for SqliteStore {
         scan!("daily_reviews", row_to_daily_review);
         scan!("weekly_reviews", row_to_weekly_review);
         scan!("monthly_reviews", row_to_monthly_review);
+        scan!("yearly_reviews", row_to_yearly_review);
 
         // task_tag:关联载荷从 task_tags 现查组装(空集合 = 清除 tombstone,ADR-010)
         if out.len() < limit {
@@ -2628,6 +2756,7 @@ impl ChangeLogStore for SqliteStore {
             EntityKind::DailyReview => apply!(DailyReview, upsert_daily_review_marked),
             EntityKind::WeeklyReview => apply!(WeeklyReview, upsert_weekly_review_marked),
             EntityKind::MonthlyReview => apply!(MonthlyReview, upsert_monthly_review_marked),
+            EntityKind::YearlyReview => apply!(YearlyReview, upsert_yearly_review_marked),
             // 关联实体走专用内核(键是 task_id,载荷是 tag 集合,非整实体 upsert)
             EntityKind::TaskTag => {
                 let mut link: TaskTagLink = serde_json::from_value(change.payload.clone())
@@ -2683,6 +2812,7 @@ impl ChangeLogStore for SqliteStore {
                 EntityKind::DailyReview => mark!("daily_reviews", "date", ids),
                 EntityKind::WeeklyReview => mark!("weekly_reviews", "week_start", ids),
                 EntityKind::MonthlyReview => mark!("monthly_reviews", "year_month", ids),
+                EntityKind::YearlyReview => mark!("yearly_reviews", "year", ids),
                 EntityKind::TaskTag => mark!("task_tag_sync", "task_id", ids),
             }
         }
@@ -2724,6 +2854,9 @@ impl ChangeLogStore for SqliteStore {
             }
             EntityKind::MonthlyReview => {
                 probe!("monthly_reviews", "year_month", row_to_monthly_review)
+            }
+            EntityKind::YearlyReview => {
+                probe!("yearly_reviews", "year", row_to_yearly_review)
             }
             EntityKind::TaskTag => {
                 let hit = conn
@@ -2948,7 +3081,10 @@ fn journal_sqlite_roundtrip_and_pending() {
         .unwrap()
         .expect("墓碑行应可作 candidate 查出");
     b.apply_remote(&tomb).unwrap();
-    assert!(b.list_journals().unwrap().is_empty(), "B 应用墓碑后不再列出");
+    assert!(
+        b.list_journals().unwrap().is_empty(),
+        "B 应用墓碑后不再列出"
+    );
     let row = b
         .local_candidate(EntityKind::Journal, jid.as_str())
         .unwrap()
@@ -2956,4 +3092,71 @@ fn journal_sqlite_roundtrip_and_pending() {
     let after: crate::model::Journal = serde_json::from_value(row.payload).unwrap();
     assert!(after.deleted_at.is_some());
     assert!(after.revision >= 2);
+}
+
+/// 年复盘(复盘入口重构批):upsert → pending 队列 payload 带自然键 year;
+/// 远端 apply 原样落 synced;删除 = content=''(ADR-010);自然键 candidate。
+#[test]
+fn yearly_review_roundtrip_and_pending() {
+    use crate::sync::ChangeLogStore;
+
+    let a = SqliteStore::open_in_memory().unwrap();
+    let mut y = crate::model::YearlyReview {
+        id: crate::model::Id::new(),
+        user_id: crate::model::Id::nil(),
+        year: "2026".into(),
+        content: String::new(),
+        revision: 0,
+        deleted_at: None,
+        updated_at: crate::model::Timestamp::now(),
+    };
+    y.content = "今年专注了 800 个番茄".into();
+    let saved = a.upsert_yearly_review(y).unwrap();
+    assert_eq!(saved.year, "2026");
+    assert_eq!(
+        a.get_yearly_review("2026").unwrap().unwrap().content,
+        "今年专注了 800 个番茄"
+    );
+
+    // pending Change:sync key 是自然键 year(非 UUID id)
+    let change = a
+        .list_pending(100)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.entity == EntityKind::YearlyReview)
+        .expect("年复盘应入 pending 队列");
+    assert_eq!(change.entity_id, "2026");
+    let payload: crate::model::YearlyReview =
+        serde_json::from_value(change.payload.clone()).unwrap();
+    assert_eq!(payload.year, "2026");
+
+    // 胜者 apply_remote(synced 落行)+ mark_synced 不再重推
+    let b = SqliteStore::open_in_memory().unwrap();
+    b.apply_remote(&change).unwrap();
+    let got = b.get_yearly_review("2026").unwrap().expect("胜者应落库");
+    assert_eq!(got.content, "今年专注了 800 个番茄");
+    b.mark_synced(&[(EntityKind::YearlyReview, "2026".to_string())])
+        .unwrap();
+    assert!(
+        !b.list_pending(100)
+            .unwrap()
+            .iter()
+            .any(|c| c.entity == EntityKind::YearlyReview),
+        "mark_synced 后不再 pending"
+    );
+
+    // 删除 = content='' 的 upsert(ADR-010),revision 上升仍可作 candidate
+    b.delete_yearly_review("2026").unwrap();
+    let gone = b
+        .get_yearly_review("2026")
+        .unwrap()
+        .expect("行保留(硬删语义走空内容)");
+    assert_eq!(gone.content, "");
+    assert!(gone.revision >= 2);
+    let cand = b
+        .local_candidate(EntityKind::YearlyReview, "2026")
+        .unwrap()
+        .expect("空内容行应可作 candidate 查出");
+    let cand_payload: crate::model::YearlyReview = serde_json::from_value(cand.payload).unwrap();
+    assert_eq!(cand_payload.content, "");
 }
