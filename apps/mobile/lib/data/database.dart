@@ -61,7 +61,10 @@ class AppDatabase {
   /// 与桌面端同步对齐,3 级嵌套 + 拖拽改父)。
   /// schema v17 → v18:tasks 补 repeat_parent_id / repeat_end_date_ms 列
   /// (重复实例引擎:实例指向模板 + 模板终止时间;''/0 = 非实例/未设)。
-  static const _schemaVersion = 19;
+  /// schema v18 → v19:journals 补 8 同步列(手账跨端同步)。
+  /// schema v19 → v20:新建 yearly_reviews 表(年复盘,「+新建 → 复盘」入口
+  /// 重构批;日/周/月已存在,补第四种周期粒度)。
+  static const _schemaVersion = 20;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -153,6 +156,10 @@ class AppDatabase {
           if (oldVersion < 19) {
             await _v18ToV19(db);
           }
+          // v19 → v20:新建 yearly_reviews 表(年复盘)。
+          if (oldVersion < 20) {
+            await _v19ToV20(db);
+          }
         },
       ),
     );
@@ -210,6 +217,7 @@ class AppDatabase {
     await _createDailyReviewsTable(db);
     await _createWeeklyReviewsTable(db);
     await _createMonthlyReviewsTable(db);
+    await _createYearlyReviewsTable(db);
     await _createMottosTable(db);
     await _createConflictLogTable(db);
     await db.execute('''
@@ -545,6 +553,15 @@ class AppDatabase {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// v19 → v20 升级:新建 yearly_reviews 表(年复盘)。
+  static Future<void> _v19ToV20(Database db) async {
+    await _createYearlyReviewsTable(db);
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '20',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
   /// conflict_log 表(同 _v13ToV14 内 SQL;抽出供 _createSchema 用)。
   static Future<void> _createConflictLogTable(Database db) async {
     await db.execute('''
@@ -627,6 +644,27 @@ class AppDatabase {
     ''');
     await db.execute(
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_monthly_reviews_year_month ON monthly_reviews(year_month)',
+    );
+  }
+
+  /// yearly_reviews:core::YearlyReview(year 为同步自然键,格式 YYYY)。
+  static Future<void> _createYearlyReviewsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS yearly_reviews (
+        id TEXT PRIMARY KEY,
+        year TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 1,
+        sync_state TEXT NOT NULL DEFAULT 'synced',
+        updated_at_ms INTEGER NOT NULL DEFAULT 0,
+        deleted_at_ms INTEGER NOT NULL DEFAULT 0,
+        origin_device TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT ''
+      )
+    ''');
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_yearly_reviews_year ON yearly_reviews(year)',
     );
   }
 
@@ -2410,6 +2448,146 @@ class AppDatabase {
   Future<Map<String, Object?>?> localMonthlyReviewCandidate(String id) async {
     final rows = await _db.query(
       'monthly_reviews',
+      columns: ['id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  // --- yearly_reviews ---
+
+  /// 某年复盘内容(null = 未写)。
+  Future<String?> yearlyReviewContent(String year) async {
+    final rows = await _db.query(
+      'yearly_reviews',
+      columns: ['content'],
+      where: 'year = ? AND deleted_at_ms = 0',
+      whereArgs: [year],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return (rows.first['content'] as String?) ?? '';
+  }
+
+  /// 保存(或更新)某年复盘:按 year upsert + 标 pending。
+  Future<void> upsertYearlyReview({
+    required String year,
+    required String content,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final existing = await _db.query(
+      'yearly_reviews',
+      where: 'year = ?',
+      whereArgs: [year],
+      limit: 1,
+    );
+    if (existing.isEmpty) {
+      await _db.insert('yearly_reviews', {
+        'id': uuidV4(),
+        'year': year,
+        'content': content,
+        'revision': 1,
+        'sync_state': 'pending',
+        'updated_at_ms': nowMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+      });
+    } else {
+      await _db.update(
+        'yearly_reviews',
+        {
+          'content': content,
+          'revision': ((existing.first['revision'] as int?) ?? 1) + 1,
+          'sync_state': 'pending',
+          'updated_at_ms': nowMs,
+          'origin_device': originDevice,
+          'user_id': userId,
+        },
+        where: 'year = ?',
+        whereArgs: [year],
+      );
+    }
+  }
+
+  Future<List<Map<String, Object?>>> listPendingYearlyReviews({
+    int limit = 50,
+  }) async {
+    return _db.rawQuery(
+      '''SELECT id, year, content, revision, updated_at_ms, deleted_at_ms,
+                origin_device, user_id, payload
+         FROM yearly_reviews WHERE sync_state = 'pending'
+         ORDER BY updated_at_ms ASC LIMIT ?''',
+      [limit],
+    );
+  }
+
+  Future<void> applyRemoteYearlyReview({
+    required String id,
+    required String year,
+    required int revision,
+    required int updatedAtMs,
+    required String originDevice,
+    required String userId,
+    required String payload,
+    required Map<String, Object?> fields,
+  }) async {
+    await _db.transaction((txn) async {
+      final existing = await txn.query(
+        'yearly_reviews',
+        where: 'year = ?',
+        whereArgs: [year],
+        limit: 1,
+      );
+      final row = <String, Object?>{
+        ...fields,
+        'id': id,
+        'year': year,
+        'revision': revision,
+        'updated_at_ms': updatedAtMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+        'payload': payload,
+        'sync_state': 'synced',
+      };
+      if (existing.isEmpty) {
+        await txn.insert('yearly_reviews', row);
+      } else {
+        final rowId = existing.first['id'] as String;
+        if (rowId != id) {
+          await txn.delete(
+            'yearly_reviews',
+            where: 'id = ?',
+            whereArgs: [rowId],
+          );
+          await txn.insert('yearly_reviews', row);
+        } else {
+          await txn.update(
+            'yearly_reviews',
+            row,
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+        }
+      }
+    });
+  }
+
+  Future<void> markYearlyReviewsSynced(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await _db.rawUpdate(
+      "UPDATE yearly_reviews SET sync_state = 'synced' WHERE id IN ($placeholders)",
+      ids,
+    );
+  }
+
+  Future<Map<String, Object?>?> localYearlyReviewCandidate(String id) async {
+    final rows = await _db.query(
+      'yearly_reviews',
       columns: ['id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
       where: 'id = ?',
       whereArgs: [id],

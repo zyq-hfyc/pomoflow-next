@@ -168,7 +168,10 @@ void main() {
         ]) {
           expect(jCols.map((r) => r['name']), contains(c));
         }
-        expect(await db.getMeta('schema_version'), '19');
+        // schema v20 加 yearly_reviews 表(年复盘,自然键 year YYYY)
+        final yCols = await db.raw.rawQuery('PRAGMA table_info(yearly_reviews)');
+        expect(yCols.map((r) => r['name']), contains('year'));
+        expect(await db.getMeta('schema_version'), '20');
       } finally {
         await db.close();
       }
@@ -338,8 +341,12 @@ void main() {
       expect((legacyJ['created_at_ms'] as int), greaterThan(0));
       final legacyRow = (await db.raw.query('tasks')).first;
       expect(legacyRow['due_label'], '今天');
+      // v19 → v20 升级:legacy 库也新建 yearly_reviews
+      final yCols = await db.raw.rawQuery('PRAGMA table_info(yearly_reviews)');
+      expect(yCols.map((r) => r['name']), contains('year'));
+      expect(await db.getMeta('schema_version'), '20');
       expect((legacyRow['due_at_ms'] as int), greaterThan(0));
-      expect(await db.getMeta('schema_version'), '19');
+      expect(await db.getMeta('schema_version'), '20');
     } finally {
       await db.close();
       await tmp.delete(recursive: true);
@@ -413,4 +420,64 @@ void main() {
       }
     },
   );
+
+  test('yearly_reviews 数据层全家桶 round-trip(v20 新表)', () async {
+    final db = await AppDatabase.open(path: ':memory:');
+    try {
+      // 未写 → null;upsert 两次 → revision 递增 + pending。
+      expect(await db.yearlyReviewContent('2026'), isNull);
+      await db.upsertYearlyReview(
+        year: '2026',
+        content: '今年要持续输出',
+        originDevice: 'dev-a',
+        userId: 'u-1',
+      );
+      await db.upsertYearlyReview(
+        year: '2026',
+        content: '今年要持续输出(改)',
+        originDevice: 'dev-a',
+        userId: 'u-1',
+      );
+      expect(await db.yearlyReviewContent('2026'), '今年要持续输出(改)');
+
+      final pending = await db.listPendingYearlyReviews();
+      expect(pending, hasLength(1));
+      expect(pending.first['year'], '2026');
+      expect((pending.first['revision'] as int), 2);
+
+      // 本地候选(冲突比较用)按行 id 可查。
+      final rowId = pending.first['id'] as String;
+      final cand = await db.localYearlyReviewCandidate(rowId);
+      expect(cand, isNotNull);
+      expect(cand!['id'], rowId);
+
+      // 远端权威落地:按自然键 year 换 id 也兼容(删旧行插新行)。
+      await db.applyRemoteYearlyReview(
+        id: 'yyyyyyyy-yyyy-4yyy-8yyy-yyyyyyyyyy01',
+        year: '2026',
+        revision: 9,
+        updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+        originDevice: 'dev-b',
+        userId: 'u-1',
+        payload: '{}',
+        fields: {'content': '远端胜出版'},
+      );
+      expect(await db.yearlyReviewContent('2026'), '远端胜出版');
+      expect(
+        (await db.listPendingYearlyReviews()).where((r) => r['year'] == '2026'),
+        isEmpty,
+        reason: 'applyRemote 落地即 synced,不再进推送队列',
+      );
+
+      // markSynced 幂等空列表不抛。
+      await db.markYearlyReviewsSynced([]);
+      await db.markYearlyReviewsSynced(['yyyyyyyy-yyyy-4yyy-8yyy-yyyyyyyyyy01']);
+      expect(
+        (await db.listPendingYearlyReviews()).where((r) => r['year'] == '2026'),
+        isEmpty,
+      );
+    } finally {
+      await db.close();
+    }
+  });
 }
