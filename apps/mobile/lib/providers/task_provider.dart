@@ -457,21 +457,27 @@ class TaskProvider extends ChangeNotifier {
 
   Future<void> addJournal(PfJournal entry) async {
     final id = entry.id.isEmpty ? await _allocateId() : entry.id;
-    final j = id == entry.id
-        ? entry
-        : PfJournal(
-            id: id,
-            kind: entry.kind,
-            title: entry.title,
-            content: entry.content,
-            tags: entry.tags,
-          );
+    final now = DateTime.now();
+    // v19:手账上云 —— 新建即 revision 1 + pending 落行(下轮同步推送)。
+    final j = PfJournal(
+      id: id,
+      kind: entry.kind,
+      title: entry.title,
+      content: entry.content,
+      tags: entry.tags,
+      createdAt: entry.createdAt ?? now,
+      syncMeta: PfSyncMeta(
+        revision: entry.syncMeta.revision,
+        updatedAt: now,
+        originDevice: _deviceIdProvider?.call() ?? '',
+        syncState: 'pending',
+        userId: _userIdProvider?.call() ?? '',
+      ),
+    );
     _journals.insert(0, j);
     final db = _db;
     if (db != null) {
-      await db.raw.insert('journals', _rowFromJournal(j));
-      // journals 表本批未加同步列,**P1 接入 Journal 同步时再 markPending 落地**;
-      // 当前 markPending 跳过 journal 列不存在的情况。
+      await db.insertJournal(j);
     }
     notifyListeners();
   }
@@ -1022,23 +1028,7 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // === 映射(把 PfJournal 转 sqflite row;PfTask 走 db._taskToRow) =============
-
-  static Map<String, Object?> _rowFromJournal(PfJournal j) {
-    String kText(JournalKind k) => switch (k) {
-      JournalKind.todo => 'todo',
-      JournalKind.wish => 'wish',
-      JournalKind.plan => 'plan',
-      JournalKind.note => 'note',
-    };
-    return {
-      'id': j.id,
-      'kind': kText(j.kind),
-      'title': j.title,
-      'content': j.content,
-      'tags_csv': j.tags.join(','),
-    };
-  }
+  // === 映射(PfJournal 已带 syncMeta,行映射收敛到 db._journalToRow) ==========
 }
 
 /// 种子任务的子任务(id 固定常量跨重启稳定;syncState synced 与任务

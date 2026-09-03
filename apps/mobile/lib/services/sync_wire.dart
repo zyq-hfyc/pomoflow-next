@@ -409,6 +409,52 @@ Map<String, Object?> mottoFieldsFromCore(Map? p) {
   return out;
 }
 
+/// journals pending 行 → core::Journal JSON(push 方向;tags_csv → tags 数组,
+/// 对齐 core serde 形态)。created_at 为 0(极老本地行)时回落 updated_at。
+Map<String, Object?> coreJournalPayload(
+  Map<String, Object?> row,
+  String userId,
+) {
+  final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
+  final createdAtMs = (row['created_at_ms'] as int?) ?? 0;
+  final deletedAtMs = (row['deleted_at_ms'] as int?) ?? 0;
+  final tagsCsv = (row['tags_csv'] as String?) ?? '';
+  return {
+    'id': row['id'],
+    'user_id': userId,
+    'kind': (row['kind'] as String?) ?? 'note',
+    'title': (row['title'] as String?) ?? '',
+    'content': (row['content'] as String?) ?? '',
+    'tags': tagsCsv.isEmpty
+        ? <String>[]
+        : tagsCsv.split(',').where((s) => s.isNotEmpty).toList(),
+    'created_at': msToIso(createdAtMs > 0 ? createdAtMs : updatedAtMs),
+    'revision': (row['revision'] as int?) ?? 1,
+    'deleted_at': deletedAtMs > 0 ? msToIso(deletedAtMs) : null,
+    'updated_at': msToIso(updatedAtMs),
+  };
+}
+
+/// core::Journal JSON → 行列(pull 方向;tags 数组 → tags_csv)。
+Map<String, Object?> journalFieldsFromCore(Map? p) {
+  if (p == null) return const {};
+  final out = <String, Object?>{};
+  if (p['kind'] is String) out['kind'] = p['kind'] as String;
+  if (p['title'] is String) out['title'] = p['title'] as String;
+  if (p['content'] is String) out['content'] = p['content'] as String;
+  if (p['tags'] is List) {
+    out['tags_csv'] = (p['tags'] as List).whereType<String>().join(',');
+  }
+  if (p['created_at'] is String?) {
+    final ms = isoToMs((p['created_at'] as String?) ?? '');
+    if (ms > 0) out['created_at_ms'] = ms;
+  }
+  if (p['deleted_at'] is String?) {
+    out['deleted_at_ms'] = isoToMs((p['deleted_at'] as String?) ?? '');
+  }
+  return out;
+}
+
 /// core::Task JSON → tasks 行业务列(pull 方向)。
 /// 只放**确定**的字段;project/tags/subtask 在 core Task 无对应,不覆盖本地列。
 Map<String, Object?> taskFieldsFromCore(Map? p) {

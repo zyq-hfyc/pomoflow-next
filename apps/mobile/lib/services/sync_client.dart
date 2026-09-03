@@ -196,6 +196,17 @@ class SyncClient {
         'payload': coreMottoPayload(row, uid),
       });
     }
+    for (final row in await db.listPendingJournals()) {
+      changes.add({
+        'id': _uuidChangeId(),
+        'device_id': deviceId,
+        'entity': 'journal',
+        'entity_id': row['id'] as String,
+        'revision': (row['revision'] as int?) ?? 1,
+        'updated_at': msToIso((row['updated_at_ms'] as int?) ?? 0),
+        'payload': coreJournalPayload(row, uid),
+      });
+    }
     for (final row in await db.listPendingSessions()) {
       changes.add({
         'id': _uuidChangeId(),
@@ -211,13 +222,10 @@ class SyncClient {
       return (pushed: 0, accepted: 0, conflicted: 0);
     }
 
-    final body = {
-      'user_id': uid,
-      'device_id': deviceId,
-      'changes': changes,
-    };
+    final body = {'user_id': uid, 'device_id': deviceId, 'changes': changes};
     final resp = await ApiClient.instance.post('/v1/sync/push', body);
-    final results = (resp['results'] as List?)?.cast<Map<String, dynamic>>() ??
+    final results =
+        (resp['results'] as List?)?.cast<Map<String, dynamic>>() ??
         const <Map<String, dynamic>>[];
     int accepted = 0;
     int conflicted = 0;
@@ -228,6 +236,7 @@ class SyncClient {
     final subtaskIdsToMark = <String>[];
     final reviewIdsToMark = <String>[];
     final mottoIdsToMark = <String>[];
+    final journalIdsToMark = <String>[];
     final sessionIdsToMark = <String>[];
     for (final r in results) {
       final outcome = _parseApplyOutcome(r);
@@ -247,9 +256,9 @@ class SyncClient {
             'weekly_review' => reviewIdsToMark,
             'monthly_review' => reviewIdsToMark,
             'motto' => mottoIdsToMark,
+            'journal' => journalIdsToMark,
             _ => taskIdsToMark,
-          })
-              .add(entityId);
+          }).add(entityId);
         case _OutcomeKind.conflicted:
           conflicted += 1;
           final winner = _nestedMap(r, ['Conflicted', 'winner']);
@@ -264,9 +273,9 @@ class SyncClient {
               'sub_task' => subtaskIdsToMark,
               'daily_review' => reviewIdsToMark,
               'motto' => mottoIdsToMark,
+              'journal' => journalIdsToMark,
               _ => taskIdsToMark,
-            })
-                .add(entityId);
+            }).add(entityId);
           }
         case _OutcomeKind.dropped:
         case _OutcomeKind.unknown:
@@ -294,6 +303,9 @@ class SyncClient {
     if (mottoIdsToMark.isNotEmpty) {
       await db.markMottosSynced(mottoIdsToMark);
     }
+    if (journalIdsToMark.isNotEmpty) {
+      await db.markJournalsSynced(journalIdsToMark);
+    }
     if (sessionIdsToMark.isNotEmpty) {
       await db.markSessionsSynced(sessionIdsToMark);
     }
@@ -302,7 +314,10 @@ class SyncClient {
 
   /// Conflicted winner 就地收敛 —— 按 winner.entity 分流到对应实体。
   Future<void> _applyWinner(
-      AppDatabase db, Map<String, dynamic> winner, String uid) async {
+    AppDatabase db,
+    Map<String, dynamic> winner,
+    String uid,
+  ) async {
     final entity = winner['entity'] as String?;
     final entityId = winner['entity_id'] as String;
     final payload = winner['payload'];
@@ -334,8 +349,16 @@ class SyncClient {
         fields: tagFieldsFromCore(payload as Map?),
       );
     } else if (entity == 'task_tag') {
-      await _applyRemoteTaskTag(db, entityId, payload as Map?, revision,
-          updatedAtMs, originDevice, uid, payloadJson);
+      await _applyRemoteTaskTag(
+        db,
+        entityId,
+        payload as Map?,
+        revision,
+        updatedAtMs,
+        originDevice,
+        uid,
+        payloadJson,
+      );
     } else if (entity == 'sub_task') {
       await db.applyRemoteSubtask(
         id: entityId,
@@ -398,6 +421,16 @@ class SyncClient {
         payload: payloadJson,
         fields: mottoFieldsFromCore(payload as Map?),
       );
+    } else if (entity == 'journal') {
+      await db.applyRemoteJournal(
+        id: entityId,
+        revision: revision,
+        updatedAtMs: updatedAtMs,
+        originDevice: originDevice,
+        userId: uid,
+        payload: payloadJson,
+        fields: journalFieldsFromCore(payload as Map?),
+      );
     } else if (entity == 'pomodoro_session') {
       await db.applyRemoteSession(
         id: entityId,
@@ -456,7 +489,10 @@ class SyncClient {
   /// 拉被覆盖方本地当前视图(payload 列是 JSON 字符串);按 entity 分流到对应表。
   /// 没命中任何表(task_tag / 未知实体)返 null,caller 直接跳过。
   Future<Map<String, Object?>?> _loadLocalForConflict(
-      AppDatabase db, String? entity, String id) async {
+    AppDatabase db,
+    String? entity,
+    String id,
+  ) async {
     switch (entity) {
       case 'task':
         return db.localTaskCandidate(id);
@@ -474,6 +510,8 @@ class SyncClient {
         return db.localMonthlyReviewCandidate(id);
       case 'motto':
         return db.localMottoCandidate(id);
+      case 'journal':
+        return db.localJournalCandidate(id);
       case 'pomodoro_session':
         return db.localSessionCandidate(id);
       case 'task_tag':
@@ -499,6 +537,12 @@ class SyncClient {
           return (json['name'] as String?) ?? '';
         case 'motto':
           return (json['content'] as String?) ?? '';
+        case 'journal':
+          {
+            final title = (json['title'] as String?) ?? '';
+            if (title.isNotEmpty) return title;
+            return ((json['content'] as String?) ?? '').trim();
+          }
         case 'daily_review':
           return (json['date'] as String?) ?? '';
         case 'weekly_review':
@@ -533,7 +577,8 @@ class SyncClient {
       'since': {'last_seq': cursor},
     };
     final resp = await ApiClient.instance.post('/v1/sync/pull', body);
-    final changes = (resp['changes'] as List?)?.cast<Map<String, dynamic>>() ??
+    final changes =
+        (resp['changes'] as List?)?.cast<Map<String, dynamic>>() ??
         const <Map<String, dynamic>>[];
     final nextCursor = resp['next_cursor'] as Map<String, dynamic>?;
     int applied = 0;
@@ -598,8 +643,7 @@ class SyncClient {
         final pid = (change['payload'] as Map?)?['project_id'] as String?;
         if (pid != null && pid.isNotEmpty) {
           final proj = await db.localProjectCandidate(pid);
-          final name =
-              proj == null ? null : await db.findProjectNameById(pid);
+          final name = proj == null ? null : await db.findProjectNameById(pid);
           if (name != null && name.isNotEmpty) fields['project'] = name;
         }
         await db.applyRemoteTask(
@@ -666,9 +710,16 @@ class SyncClient {
         final remote = _extractChangeTimestamps(change);
         final local = await db.localTaskTagCandidate(entityId);
         if (local != null && _localWinsLww(local, remote)) return false;
-        await _applyRemoteTaskTag(db, entityId, change['payload'] as Map?,
-            (change['revision'] as int?) ?? 1, remote.updatedMs,
-            remote.deviceId, uid, payloadJson);
+        await _applyRemoteTaskTag(
+          db,
+          entityId,
+          change['payload'] as Map?,
+          (change['revision'] as int?) ?? 1,
+          remote.updatedMs,
+          remote.deviceId,
+          uid,
+          payloadJson,
+        );
         return true;
       case 'sub_task':
         final remote = _extractChangeTimestamps(change);
@@ -804,6 +855,31 @@ class SyncClient {
           fields: mottoFieldsFromCore(change['payload'] as Map?),
         );
         return true;
+      case 'journal':
+        final remote = _extractChangeTimestamps(change);
+        final local = await db.localJournalCandidate(entityId);
+        if (local != null && _localWinsLww(local, remote)) return false;
+        if (local != null) {
+          await db.insertConflict(
+            entity: entity,
+            entityId: entityId,
+            entityTitle: _extractEntityTitle(entity, local['payload']),
+            direction: 'overrode',
+            remoteDevice: remote.deviceId,
+            localUpdatedMs: (local['updated_at_ms'] as int?) ?? 0,
+            remoteUpdatedMs: remote.updatedMs,
+          );
+        }
+        await db.applyRemoteJournal(
+          id: entityId,
+          revision: (change['revision'] as int?) ?? 1,
+          updatedAtMs: remote.updatedMs,
+          originDevice: remote.deviceId,
+          userId: uid,
+          payload: payloadJson,
+          fields: journalFieldsFromCore(change['payload'] as Map?),
+        );
+        return true;
       case 'pomodoro_session':
         final remote = _extractChangeTimestamps(change);
         final local = await db.localSessionCandidate(entityId);
@@ -850,7 +926,8 @@ Future<void> _applyRemoteTaskTag(
   String uid,
   String payloadJson,
 ) async {
-  final ids = (payload?['tag_ids'] as List?)
+  final ids =
+      (payload?['tag_ids'] as List?)
           ?.map((e) => e.toString())
           .where((e) => e.isNotEmpty)
           .toList() ??
@@ -888,8 +965,7 @@ String? _nestedStr(Map<String, dynamic> m, List<String> path) {
   return cur is String ? cur : null;
 }
 
-Map<String, dynamic>? _nestedMap(
-    Map<String, dynamic> m, List<String> path) {
+Map<String, dynamic>? _nestedMap(Map<String, dynamic> m, List<String> path) {
   dynamic cur = m;
   for (final k in path) {
     if (cur is Map && cur.containsKey(k)) {
