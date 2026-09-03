@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 
 use chrono::{NaiveDate, Utc};
 use pomoflow_core::model::{
-    DailyReview, Id, MonthlyReview, Motto, NotificationTemplate, PomodoroSession, Project, SubTask,
-    Tag, Task, TaskStatus, TaskView, Timestamp, WeeklyReview,
+    DailyReview, Id, Journal, MonthlyReview, Motto, NotificationTemplate, PomodoroSession, Project,
+    SubTask, Tag, Task, TaskStatus, TaskView, Timestamp, WeeklyReview,
 };
 use pomoflow_core::stats::{self, OverviewStats, RangeStats, StatsGroup};
 use pomoflow_core::store::{SqliteStore, Store, TaskQuery};
@@ -617,6 +617,77 @@ pub fn upsert_motto(motto: Motto, state: State<'_, AppState>) -> Result<Motto, S
 pub fn delete_motto(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     state.store.delete_motto(&id).map_err(map_err)
+}
+
+// === Journal commands(随手记 —— 四类手账,v2 新实体)========================
+//
+// 移动端 P3f 起手账已上云,桌面此前只随同步落库无 UI;P3i 补「随手记」
+// 视图的命令层。store.upsert_journal 内部自动标 pending 进推送队列、
+// delete_journal 落墓碑 —— 与任务/清单族同款,自动同步循环接管上云。
+
+/// 列出全部随手记(活行,created_at 倒序 —— 与移动端 listJournals 同口径;
+/// core 的 list_journals 是 ASC,这里反转)。
+#[tauri::command]
+pub fn list_journals(state: State<'_, AppState>) -> Result<Vec<Journal>, String> {
+    let mut list = state.store.list_journals().map_err(map_err)?;
+    list.sort_by_key(|j| std::cmp::Reverse(j.created_at.0));
+    Ok(list)
+}
+
+/// 新建 / 编辑随手记。编辑按库内现值保留 created_at / user_id 并 revision+1;
+/// 新建走 `Journal::new`(revision=1)。校验口径 = 标题/内容至少一项非空。
+#[tauri::command]
+pub fn upsert_journal(
+    id: Option<String>,
+    kind: String,
+    title: String,
+    content: String,
+    tags: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Journal, String> {
+    let existing = match id.as_deref().and_then(Id::parse) {
+        Some(jid) => {
+            let found = state
+                .store
+                .list_journals()
+                .map_err(map_err)?
+                .into_iter()
+                .find(|j| j.id == jid);
+            // 库里没有 = 前端拿着过期列表编辑,让上层报错刷新而不是静默新建
+            // (否则旧 id 落库会造出一条永远同步不出去的孤儿行)
+            Some(found.ok_or_else(|| format!("journal not found: {}", jid.as_str()))?)
+        }
+        None => None,
+    };
+
+    let mut journal = match &existing {
+        Some(e) => {
+            let mut j = e.clone();
+            j.kind = kind;
+            j.title = title;
+            j.content = content;
+            j.tags = tags;
+            j.revision = e.revision.saturating_add(1);
+            j
+        }
+        None => {
+            let mut j = Journal::new(&kind, &title);
+            j.content = content;
+            j.tags = tags;
+            j
+        }
+    };
+    validate::validate_journal(&journal).map_err(map_err)?;
+    journal.updated_at = Timestamp::now();
+    state.store.upsert_journal(journal).map_err(map_err)
+}
+
+/// 软删除随手记(墓碑 + pending,随同步收敛;与移动端 deleteJournal 同语义,
+/// 不进垃圾箱 —— 手账是轻量随手记,删除由前端二次确认把守)。
+#[tauri::command]
+pub fn delete_journal(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
+    state.store.delete_journal(&id).map_err(map_err)
 }
 
 // === NotificationTemplate commands(通知文案模板,单行配置) ===
