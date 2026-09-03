@@ -594,20 +594,7 @@ class _OtherMenuCard extends StatelessWidget {
   }
 
   void _openReview(BuildContext context) {
-    Navigator.push(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (_, _, _) => const ReviewPage(),
-        transitionsBuilder: (_, anim, _, child) => SlideTransition(
-          position: Tween(
-            begin: const Offset(1, 0),
-            end: Offset.zero,
-          ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
-          child: child,
-        ),
-        transitionDuration: const Duration(milliseconds: 300),
-      ),
-    );
+    ReviewPage.open(context);
   }
 
   void _openSettings(BuildContext context) {

@@ -1,70 +1,162 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/review_period.dart';
 import '../providers/task_provider.dart';
+import '../sheets/review_period_picker.dart';
 import '../theme/tokens.dart';
 
-/// 复盘中心(P3):日 / 周 / 月 三栏,每栏一个可编辑文本区。
-/// 日复盘内容与 focus 页「今日回顾」卡共享同一行(按日期 upsert);
-/// 周/月复盘与桌面端同步(v1 + core 已支持)。
+/// 复盘中心:日 / 周 / 月 / 年 四栏,每栏独立导航(‹ › 步进 + 跳日期)。
+///
+/// 每栏有自己的「当前周期键」(自然键,见 review_period.dart),‹ › 或跳日期
+/// 换键后重载内容;编辑按击键即存(fire-and-forget),换键前内容已落库,
+/// 无丢失窗口。入口:「+新建 → 复盘」(带初始键)与「我的」页(默认当前)。
 class ReviewPage extends StatefulWidget {
-  const ReviewPage({super.key});
+  const ReviewPage({
+    super.key,
+    this.initialPeriod = ReviewPeriod.daily,
+    this.initialKey,
+  });
+
+  /// 打开时的初始栏位。
+  final ReviewPeriod initialPeriod;
+
+  /// 初始栏位的初始键(非法键忽略,回退当前周期)。
+  final String? initialKey;
+
+  /// 统一入口(滑入动画与「我的」页历史一致)。
+  static void open(
+    BuildContext context, {
+    ReviewPeriod period = ReviewPeriod.daily,
+    String? key,
+  }) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (_, _, _) => ReviewPage(
+          initialPeriod: period,
+          initialKey: key,
+        ),
+        transitionsBuilder: (_, anim, _, child) => SlideTransition(
+          position: Tween(
+            begin: const Offset(1, 0),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
+          child: child,
+        ),
+        transitionDuration: const Duration(milliseconds: 300),
+      ),
+    );
+  }
 
   @override
   State<ReviewPage> createState() => _ReviewPageState();
 }
 
-class _ReviewPageState extends State<ReviewPage> with SingleTickerProviderStateMixin {
+class _ReviewPageState extends State<ReviewPage>
+    with SingleTickerProviderStateMixin {
   late final TabController _tabCtrl;
-  final _dailyCtrl = TextEditingController();
-  final _weeklyCtrl = TextEditingController();
-  final _monthlyCtrl = TextEditingController();
+  final _ctrls = {
+    for (final p in ReviewPeriod.values) p: TextEditingController(),
+  };
+  late final Map<ReviewPeriod, String> _keys;
   bool _loaded = false;
 
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: 3, vsync: this);
+    _tabCtrl = TabController(
+      length: ReviewPeriod.values.length,
+      vsync: this,
+      initialIndex: widget.initialPeriod.index,
+    );
+    _keys = {
+      for (final p in ReviewPeriod.values) p: currentReviewKey(p),
+    };
+    final initKey = widget.initialKey;
+    if (initKey != null &&
+        isValidReviewKey(widget.initialPeriod, initKey)) {
+      _keys[widget.initialPeriod] = initKey;
+    }
     _loadAll();
   }
 
   @override
   void dispose() {
     _tabCtrl.dispose();
-    _dailyCtrl.dispose();
-    _weeklyCtrl.dispose();
-    _monthlyCtrl.dispose();
+    for (final c in _ctrls.values) {
+      c.dispose();
+    }
     super.dispose();
   }
 
   Future<void> _loadAll() async {
     final p = context.read<TaskProvider>();
-    final daily = p.todayReview;
-    final weekly = await p.weeklyReviewContent(TaskProvider.currentWeekStart());
-    final monthly = await p.monthlyReviewContent(TaskProvider.currentYearMonth());
+    for (final period in ReviewPeriod.values) {
+      final key = _keys[period]!;
+      _ctrls[period]!.text = await _contentOf(p, period, key) ?? '';
+    }
     if (!mounted) return;
-    _dailyCtrl.text = daily;
-    _weeklyCtrl.text = weekly ?? '';
-    _monthlyCtrl.text = monthly ?? '';
     setState(() => _loaded = true);
   }
 
-  Future<void> _saveDaily(String text) async {
-    await context.read<TaskProvider>().saveReview(text);
+  Future<String?> _contentOf(
+    TaskProvider p,
+    ReviewPeriod period,
+    String key,
+  ) {
+    return switch (period) {
+      ReviewPeriod.daily => p.dailyReviewContent(key),
+      ReviewPeriod.weekly => p.weeklyReviewContent(key),
+      ReviewPeriod.monthly => p.monthlyReviewContent(key),
+      ReviewPeriod.yearly => p.yearlyReviewContent(key),
+    };
   }
 
-  Future<void> _saveWeekly(String text) async {
-    await context.read<TaskProvider>().saveWeeklyReview(
-          TaskProvider.currentWeekStart(),
-          text,
-        );
+  Future<void> _save(ReviewPeriod period, String text) async {
+    final p = context.read<TaskProvider>();
+    final key = _keys[period]!;
+    switch (period) {
+      case ReviewPeriod.daily:
+        await p.saveDailyReview(key, text);
+      case ReviewPeriod.weekly:
+        await p.saveWeeklyReview(key, text);
+      case ReviewPeriod.monthly:
+        await p.saveMonthlyReview(key, text);
+      case ReviewPeriod.yearly:
+        await p.saveYearlyReview(key, text);
+    }
   }
 
-  Future<void> _saveMonthly(String text) async {
-    await context.read<TaskProvider>().saveMonthlyReview(
-          TaskProvider.currentYearMonth(),
-          text,
-        );
+  ReviewPeriod get _period => ReviewPeriod.values[_tabCtrl.index];
+
+  /// ‹ › 步进:换键 → 重载该栏内容(击键即存,换键无丢失)。
+  Future<void> _step(int delta) async {
+    final period = _period;
+    final newKey = stepReviewKey(period, _keys[period]!, delta);
+    _keys[period] = newKey;
+    final p = context.read<TaskProvider>();
+    final content = await _contentOf(p, period, newKey);
+    if (!mounted || _keys[period] != newKey) return;
+    _ctrls[period]!.text = content ?? '';
+    setState(() {});
+  }
+
+  /// 跳日期:弹周期对应选择器,确认后与步进同路径换键。
+  Future<void> _jump() async {
+    final period = _period;
+    final anchor =
+        parseReviewKey(period, _keys[period]!) ?? DateTime.now();
+    final picked = await pickReviewDate(context, period, initial: anchor);
+    if (picked == null || !mounted) return;
+    final newKey = reviewKeyOf(period, picked);
+    if (newKey == _keys[period]) return;
+    _keys[period] = newKey;
+    final p = context.read<TaskProvider>();
+    final content = await _contentOf(p, period, newKey);
+    if (!mounted || _keys[period] != newKey) return;
+    _ctrls[period]!.text = content ?? '';
+    setState(() {});
   }
 
   @override
@@ -104,10 +196,8 @@ class _ReviewPageState extends State<ReviewPage> with SingleTickerProviderStateM
           labelColor: theme.pfBrand700,
           unselectedLabelColor: theme.pfMuted,
           indicatorColor: theme.pfBrand700,
-          tabs: const [
-            Tab(text: '日'),
-            Tab(text: '周'),
-            Tab(text: '月'),
+          tabs: [
+            for (final p in ReviewPeriod.values) Tab(text: p.label),
           ],
         ),
       ),
@@ -116,24 +206,17 @@ class _ReviewPageState extends State<ReviewPage> with SingleTickerProviderStateM
           : TabBarView(
               controller: _tabCtrl,
               children: [
-                _ReviewEditor(
-                  title: '今日复盘',
-                  subtitle: TaskProvider.localDay(DateTime.now()),
-                  controller: _dailyCtrl,
-                  onSave: _saveDaily,
-                ),
-                _ReviewEditor(
-                  title: '本周复盘',
-                  subtitle: '本周一 ${TaskProvider.currentWeekStart()}',
-                  controller: _weeklyCtrl,
-                  onSave: _saveWeekly,
-                ),
-                _ReviewEditor(
-                  title: '本月复盘',
-                  subtitle: TaskProvider.currentYearMonth(),
-                  controller: _monthlyCtrl,
-                  onSave: _saveMonthly,
-                ),
+                for (final p in ReviewPeriod.values)
+                  _ReviewEditor(
+                    key: ValueKey(p),
+                    period: p,
+                    keyLabel: reviewKeyLabel(p, _keys[p]!),
+                    controller: _ctrls[p]!,
+                    onPrev: () => _step(-1),
+                    onNext: () => _step(1),
+                    onJump: _jump,
+                    onSave: (text) => _save(p, text),
+                  ),
               ],
             ),
     );
@@ -142,15 +225,22 @@ class _ReviewPageState extends State<ReviewPage> with SingleTickerProviderStateM
 
 class _ReviewEditor extends StatelessWidget {
   const _ReviewEditor({
-    required this.title,
-    required this.subtitle,
+    super.key,
+    required this.period,
+    required this.keyLabel,
     required this.controller,
+    required this.onPrev,
+    required this.onNext,
+    required this.onJump,
     required this.onSave,
   });
 
-  final String title;
-  final String subtitle;
+  final ReviewPeriod period;
+  final String keyLabel;
   final TextEditingController controller;
+  final VoidCallback onPrev;
+  final VoidCallback onNext;
+  final VoidCallback onJump;
   final ValueChanged<String> onSave;
 
   @override
@@ -161,16 +251,48 @@ class _ReviewEditor extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+          Row(
+            children: [
+              Text(
+                period.title,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
+              const Spacer(),
+              _NavChip(icon: Icons.chevron_left, onTap: onPrev),
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: onJump,
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: theme.pfSurface2,
+                    borderRadius: BorderRadius.circular(PfRadii.sm),
+                    border: Border.all(color: theme.pfLine),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        keyLabel,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: theme.colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.edit_calendar, size: 15, color: theme.pfMuted),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              _NavChip(icon: Icons.chevron_right, onTap: onNext),
+            ],
           ),
-          const SizedBox(height: 2),
-          Text(
-            subtitle,
-            style: TextStyle(fontSize: 13, color: theme.pfMuted),
-          ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Expanded(
             child: Container(
               padding: const EdgeInsets.all(14),
@@ -187,7 +309,7 @@ class _ReviewEditor extends StatelessWidget {
                 expands: true,
                 textAlignVertical: TextAlignVertical.top,
                 decoration: InputDecoration(
-                  hintText: '记录这$title的收获与改进…',
+                  hintText: '记录这${period.label}的收获与改进…',
                   hintStyle: TextStyle(color: theme.pfMuted),
                   border: InputBorder.none,
                   contentPadding: EdgeInsets.zero,
@@ -196,6 +318,33 @@ class _ReviewEditor extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _NavChip extends StatelessWidget {
+  const _NavChip({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: theme.pfSurface,
+          shape: BoxShape.circle,
+          border: Border.all(color: theme.pfLine),
+        ),
+        alignment: Alignment.center,
+        child: Icon(icon, size: 18, color: theme.pfMuted),
       ),
     );
   }
