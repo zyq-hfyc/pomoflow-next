@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/task.dart';
 import '../providers/nav_provider.dart';
 import '../providers/task_provider.dart';
+import '../sheets/journal_edit_sheet.dart';
 import '../sheets/task_create_sheet.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_controls.dart';
@@ -146,7 +147,11 @@ class _TasksPageState extends State<TasksPage> {
                     separatorBuilder: (_, _) => const SizedBox(height: 10),
                     itemBuilder: (context, i) {
                       final j = tasks.journals[i];
-                      return _JournalCard(entry: j);
+                      return GestureDetector(
+                        onTap: () => showJournalEditSheet(context, j),
+                        behavior: HitTestBehavior.opaque,
+                        child: _JournalCard(entry: j),
+                      );
                     },
                   ),
                 )

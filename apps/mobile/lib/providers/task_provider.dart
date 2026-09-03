@@ -482,6 +482,78 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 编辑手账(P3g):内存 copyWith + revision bump,db 侧列更新 + pending。
+  /// 字段全量传(null = 不改);kind 四档。
+  Future<void> editJournal(
+    String id, {
+    JournalKind? kind,
+    String? title,
+    String? content,
+    List<String>? tags,
+  }) async {
+    final i = _journals.indexWhere((j) => j.id == id);
+    if (i < 0) return;
+    final old = _journals[i];
+    final next = old.copyWith(
+      kind: kind,
+      title: title,
+      content: content,
+      tags: tags,
+      syncMeta: PfSyncMeta(
+        revision: old.syncMeta.revision + 1,
+        updatedAt: DateTime.now(),
+        originDevice: _deviceIdProvider?.call() ?? '',
+        syncState: 'pending',
+        userId: _userIdProvider?.call() ?? old.syncMeta.userId,
+      ),
+    );
+    _journals[i] = next;
+    final db = _db;
+    if (db != null) {
+      try {
+        await db.updateJournalFields(
+          id: id,
+          kind: _journalKindText(next.kind),
+          title: next.title,
+          content: next.content,
+          tags: next.tags,
+          originDevice: next.syncMeta.originDevice,
+          userId: next.syncMeta.userId,
+        );
+      } on Exception catch (e) {
+        // 同 _markPending 家族:schema 级错误打日志可见,不阻塞 UI。
+        debugPrint('updateJournalFields failed for $id: $e');
+      }
+    }
+    notifyListeners();
+  }
+
+  /// 删除手账(P3g):软删墓碑(不进回收站 —— 手账是轻量随手记,
+  /// 确认弹窗在 sheet 层;桌面无手账 UI,墓碑跨端收敛)。
+  Future<void> deleteJournal(String id) async {
+    _journals.removeWhere((j) => j.id == id);
+    final db = _db;
+    if (db != null) {
+      try {
+        await db.softDeleteJournal(
+          id: id,
+          originDevice: _deviceIdProvider?.call() ?? '',
+          userId: _userIdProvider?.call() ?? '',
+        );
+      } on Exception catch (e) {
+        debugPrint('softDeleteJournal failed for $id: $e');
+      }
+    }
+    notifyListeners();
+  }
+
+  static String _journalKindText(JournalKind k) => switch (k) {
+    JournalKind.todo => 'todo',
+    JournalKind.wish => 'wish',
+    JournalKind.plan => 'plan',
+    JournalKind.note => 'note',
+  };
+
   Future<void> toggleDone(String id) async {
     final i = _tasks.indexWhere((t) => t.id == id);
     if (i < 0) return;

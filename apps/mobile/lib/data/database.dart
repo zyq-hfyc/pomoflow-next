@@ -2519,7 +2519,35 @@ class AppDatabase {
     return _db.insert('journals', row);
   }
 
-  /// 远端 tombstone / 本地软删(journals 无删除 UI,当前只有远端来源)。
+  /// 编辑落库(P3g):业务列更新 + revision+1 + pending,只动未删行。
+  Future<void> updateJournalFields({
+    required String id,
+    required String kind,
+    required String title,
+    required String content,
+    required List<String> tags,
+    required String originDevice,
+    required String userId,
+  }) async {
+    await _db.rawUpdate(
+      "UPDATE journals SET kind = ?, title = ?, content = ?, tags_csv = ?, "
+      "revision = revision + 1, sync_state = 'pending', updated_at_ms = ?, "
+      'origin_device = ?, user_id = ? '
+      'WHERE id = ? AND deleted_at_ms = 0',
+      [
+        kind,
+        title,
+        content,
+        tags.join(','),
+        DateTime.now().millisecondsSinceEpoch,
+        originDevice,
+        userId,
+        id,
+      ],
+    );
+  }
+
+  /// 远端 tombstone / 本地软删(P3g 起手账卡片有删除入口)。
   Future<void> softDeleteJournal({
     required String id,
     required String originDevice,
