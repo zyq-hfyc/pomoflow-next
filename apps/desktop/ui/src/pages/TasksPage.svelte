@@ -2,12 +2,13 @@
   // 任务管理页 —— v1 同款 3 列布局：
   //   [左] 时间筛选 + 项目树 + 搜索
   //   [中] 当前视图的标题 / 4 张统计卡 / 筛选条 / 添加表单 / 任务列表（扁平或分组）
-  //        journal 视图换成手账月视图（JournalView）
+  //        journal 视图换成手账月视图（JournalView）；notes 视图换成随手记
+  //        （NotesView,P3i —— 四类手账,与手机「手账」同一 journal 实体）
   //   [右] 选中任务的详情面板（TaskDetailPanel）；journal 视图为月度复盘面板
   //        （MonthReviewPanel）
   //
   // 视图模式：
-  //   - today / tomorrow / week / planned / completed / journal（6 档）
+  //   - today / tomorrow / week / planned / completed / journal / notes（7 档）
   //   - 或 selectedProject ≠ null（选中具体清单）
   //   - searchQuery 非空 → 跨视图搜索，忽略 filter 和 selectedProject
   //
@@ -46,13 +47,14 @@
   import TaskForm from "../components/Tasks/TaskForm.svelte";
   import JournalView from "../components/Tasks/JournalView.svelte";
   import MonthReviewPanel from "../components/Tasks/MonthReviewPanel.svelte";
+  import NotesView from "../components/Tasks/NotesView.svelte";
 
   // list_tasks 返回 TaskView(拍平 tags + subtasks);导出 xlsx 需要子任务
   type TaskWithTags = Task & {
     tags?: Tag[];
     subtasks?: { id: string; title: string; is_completed: boolean; position: number }[];
   };
-  type FilterKey = "today" | "tomorrow" | "week" | "planned" | "completed" | "journal" | "";
+  type FilterKey = "today" | "tomorrow" | "week" | "planned" | "completed" | "journal" | "notes" | "";
 
   let tasks = $state<TaskWithTags[]>([]);
   let projects = $state<Project[]>([]);
@@ -268,6 +270,7 @@
       planned: t.sidebar.planned,
       completed: t.sidebar.completed,
       journal: t.sidebar.journal,
+      notes: t.sidebar.notes,
       "": t.task.task,
     };
     return map[filter] || t.task.task;
@@ -530,6 +533,8 @@
         onReviewChange={() => (reviewVersion += 1)}
         onTasksChange={() => void refresh()}
       />
+    {:else if filter === "notes"}
+      <NotesView />
     {:else}
       <div class="inner">
         <!-- 标题 -->
@@ -681,9 +686,11 @@
     {/if}
   </div>
 
-  <!-- 右：手账模式为月度复盘面板，其余为任务详情（v1：未选中任务时显示全高空态） -->
+  <!-- 右：手账模式为月度复盘面板，随手记为提示列，其余为任务详情（v1：未选中任务时显示全高空态） -->
   {#if filter === "journal"}
     <MonthReviewPanel year={journalYear} month={journalMonth} {reviewVersion} />
+  {:else if filter === "notes"}
+    <aside class="detail-empty">{t.notes.panelHint}</aside>
   {:else if selectedTask}
     <TaskDetailPanel
       task={selectedTask}

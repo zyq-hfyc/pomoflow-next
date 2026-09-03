@@ -144,6 +144,19 @@ export interface Motto extends SyncMeta, UserScoped {
   created_at?: string;
 }
 
+/** 随手记 —— 四类手账 journal 实体(v2 新语义;桌面「随手记」= 移动端「手账」) */
+export type JournalKind = "todo" | "wish" | "plan" | "note";
+
+export interface Journal extends SyncMeta, UserScoped {
+  id: string;
+  kind: JournalKind;
+  title: string;
+  content: string;
+  /** 自由文本标签(不关联 tag 实体) */
+  tags: string[];
+  created_at?: string;
+}
+
 /** 通知文案模板(全库单行,id 固定 "1");文案字段仅 custom 风格有值 */
 export interface NotificationTemplate {
   id: string;
@@ -323,6 +336,25 @@ export const upsertMotto = (motto: Motto) =>
 
 export const deleteMotto = (id: string) =>
   invoke<void>("delete_motto", { id });
+
+// === Journal(随手记) ===
+
+/** upsert 入参:id 省略 = 新建;revision/created_at 由后端管理 */
+export interface JournalUpsertInput {
+  id?: string | null;
+  kind: JournalKind;
+  title: string;
+  content: string;
+  tags: string[];
+}
+
+export const listJournals = () => invoke<Journal[]>("list_journals");
+
+export const upsertJournal = (input: JournalUpsertInput) =>
+  invoke<Journal>("upsert_journal", { ...input });
+
+export const deleteJournal = (id: string) =>
+  invoke<void>("delete_journal", { id });
 
 // === NotificationTemplate ===
 

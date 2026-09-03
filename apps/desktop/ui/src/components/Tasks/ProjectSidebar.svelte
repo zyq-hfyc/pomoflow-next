@@ -3,13 +3,15 @@
   //
   // 设计要点:
   //   - 搜索框:onSearchChange 同步到父组件 TasksPage 的 search state
-  //   - 6 个时间筛选:今天 / 明天 / 本周 / 已计划 / 已完成 / 手账
-  //     每个按钮右侧显示「预估分钟 + 任务数」(来自 props.tasks 聚合)
+  //   - 7 个时间筛选:今天 / 明天 / 本周 / 已计划 / 已完成 / 手账 / 随手记
+  //     每个按钮右侧显示「预估分钟 + 任务数」(来自 props.tasks 聚合;
+  //     手账/随手记不参与任务统计,恒 0)
   //   - 项目树:支持 3 级嵌套;每个节点 hover 显示 ⋮ 菜单(加子 / 改名 / 删除)
   //   - 选中项目 → onSelectProject(id);选中筛选 → onSetFilter(key)
-  //   - 手账模式:任务页中栏渲染 JournalView(无独立路由)
+  //   - 手账模式:任务页中栏渲染 JournalView(无独立路由);
+  //     随手记同理渲染 NotesView(journal 实体,与手机「手账」同步)
 
-  import { Search, Sun, Sunrise, CalendarDays, CalendarCheck, CircleCheck, CalendarRange, Folder, ChevronDown, ChevronRight, Plus, MoreVertical, Pencil, Trash2 } from "lucide-svelte";
+  import { Search, Sun, Sunrise, CalendarDays, CalendarCheck, CircleCheck, CalendarRange, NotebookPen, Folder, ChevronDown, ChevronRight, Plus, MoreVertical, Pencil, Trash2 } from "lucide-svelte";
   import type { Component } from "svelte";
   import type { Project, Task } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
@@ -17,7 +19,7 @@
 
   const t = $derived(getDict());
 
-  type FilterKey = "today" | "tomorrow" | "week" | "planned" | "completed" | "journal" | "";
+  type FilterKey = "today" | "tomorrow" | "week" | "planned" | "completed" | "journal" | "notes" | "";
 
   interface Props {
     projects: Project[];
@@ -80,7 +82,7 @@
   }
 
   function getTaskStats(items: Task[], key: FilterKey): TaskStats {
-    if (key === "journal") return { timeStr: "", count: 0 };
+    if (key === "journal" || key === "notes") return { timeStr: "", count: 0 };
     const today = todayStr();
     const tomorrow = tomorrowStr();
     const sow = startOfWeek(new Date());
@@ -164,6 +166,7 @@
     { key: "planned", icon: CalendarCheck as any, label: t.sidebar.planned },
     { key: "completed", icon: CircleCheck as any, label: t.sidebar.completed },
     { key: "journal", icon: CalendarRange as any, label: t.sidebar.journal },
+    { key: "notes", icon: NotebookPen as any, label: t.sidebar.notes },
   ]);
 
   const activeFilter = $derived(selectedProject === null ? filter : "");
