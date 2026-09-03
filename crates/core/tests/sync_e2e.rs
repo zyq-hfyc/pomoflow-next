@@ -487,3 +487,46 @@ fn task_tag_links_sync_across_devices() {
     assert!(p.tag_ids.is_empty(), "删除任务后关联载荷应为空集");
     assert_eq!(p.revision, 3, "打标1 → 远端清空2 → 本地删除3");
 }
+
+/// 7. 手账(v2 新实体):两设备同步 + 删除墓碑传播 + list 过滤软删行。
+#[test]
+fn journal_syncs_and_tombstone_propagates() {
+    use pomoflow_core::model::Journal;
+
+    let user = Id::new();
+    let a = InMemoryStore::with_user_device(user.clone(), "dev-a");
+    let b = InMemoryStore::with_user_device(user.clone(), "dev-b");
+    let mut cloud = FakeCloud::new();
+
+    let mut j = Journal::new("wish", "去北海道看雪");
+    j.content = "冬天或春天都行".into();
+    j.tags = vec!["旅行".into()];
+    let jid = j.id.clone();
+    a.upsert_journal(j).unwrap();
+    full_push(&mut cloud, &a);
+    pull_all(&cloud, &b);
+
+    let b_list = b.list_journals().unwrap();
+    assert_eq!(b_list.len(), 1, "B 应收到 A 建的手账");
+    assert_eq!(b_list[0].kind, "wish");
+    assert_eq!(b_list[0].tags, vec!["旅行".to_string()]);
+    assert_eq!(b_list[0].user_id, user, "nil user_id 写入时应盖章");
+
+    // A 删除 → 墓碑 revision+1;B pull 后 list 不再返回
+    a.delete_journal(&jid).unwrap();
+    full_push(&mut cloud, &a);
+    pull_all(&cloud, &b);
+    assert!(
+        b.list_journals().unwrap().is_empty(),
+        "B 侧手账应被墓碑收敛(不再列出)"
+    );
+
+    // 墓碑行本体还在(upsert 可复活 / 排障可查),revision 已 bump
+    let restored = b
+        .local_candidate(EntityKind::Journal, jid.as_str())
+        .unwrap()
+        .expect("墓碑行本体应可作 candidate 查出");
+    let payload: Journal = serde_json::from_value(restored.payload).unwrap();
+    assert!(payload.deleted_at.is_some());
+    assert_eq!(payload.revision, 2);
+}

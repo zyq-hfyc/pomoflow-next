@@ -26,7 +26,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, CoreResult};
 use crate::model::{
-    DailyReview, Id, MonthlyReview, Motto, NotificationTemplate, PomodoroSession, Priority,
+    DailyReview, Id, Journal, MonthlyReview, Motto, NotificationTemplate, PomodoroSession,
+    Priority,
     Project, SubTask, Tag, Task, TaskTagLink, Timestamp, WeeklyReview,
 };
 use crate::sync::{change_of, Change, ChangeLogStore, EntityKind, SyncEntity};
@@ -179,6 +180,12 @@ pub trait Store: std::fmt::Debug {
     fn upsert_motto(&self, motto: Motto) -> CoreResult<Motto>;
     fn delete_motto(&self, id: &Id) -> CoreResult<()>;
 
+    // --- Journals(手账:v2 新实体,仅移动端有 UI,桌面端只存同步) ---
+    /// 列出所有未软删的手账,按 created_at 升序(移动端列表展示序)。
+    fn list_journals(&self) -> CoreResult<Vec<Journal>>;
+    fn upsert_journal(&self, journal: Journal) -> CoreResult<Journal>;
+    fn delete_journal(&self, id: &Id) -> CoreResult<()>;
+
     // --- NotificationTemplate(全库单行配置,id 固定 "1") ---
     /// 读通知文案模板;表为空返回 None(调用方回落 `default_row()`)。
     fn get_notification_template(&self) -> CoreResult<Option<NotificationTemplate>>;
@@ -247,6 +254,7 @@ struct Inner {
     weekly_reviews: HashMap<String, WeeklyReview>,
     monthly_reviews: HashMap<String, MonthlyReview>,
     mottos: HashMap<Id, Motto>,
+    journals: HashMap<Id, Journal>,
     notification_template: Option<NotificationTemplate>,
     /// 同步:待推送行(键 "kind/<id-or-natural-key>")
     pending: std::collections::HashSet<String>,
@@ -1180,6 +1188,47 @@ impl Store for InMemoryStore {
         Ok(())
     }
 
+    fn list_journals(&self) -> CoreResult<Vec<Journal>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<Journal> = g
+            .journals
+            .values()
+            .filter(|j| j.deleted_at.is_none())
+            .cloned()
+            .collect();
+        out.sort_by_key(|j| j.created_at.0);
+        Ok(out)
+    }
+
+    fn upsert_journal(&self, mut journal: Journal) -> CoreResult<Journal> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        if journal.user_id.is_nil() {
+            journal.user_id = self.user_id.clone();
+        }
+        g.touch("journal", journal.id.as_str(), &self.device_id);
+        g.journals.insert(journal.id.clone(), journal.clone());
+        Ok(journal)
+    }
+
+    fn delete_journal(&self, id: &Id) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        if let Some(j) = g.journals.get_mut(id) {
+            j.deleted_at = Some(crate::model::Timestamp::now());
+            j.revision = j.revision.saturating_add(1);
+            g.touch("journal", id.as_str(), &self.device_id);
+        }
+        Ok(())
+    }
+
     fn get_notification_template(&self) -> CoreResult<Option<NotificationTemplate>> {
         let g = self
             .inner
@@ -1273,6 +1322,7 @@ fn kind_str(k: EntityKind) -> &'static str {
         EntityKind::SubTask => "sub_task",
         EntityKind::PomodoroSession => "pomodoro_session",
         EntityKind::Motto => "motto",
+        EntityKind::Journal => "journal",
         EntityKind::TaskTag => "task_tag",
         EntityKind::DailyReview => "daily_review",
         EntityKind::WeeklyReview => "weekly_review",
@@ -1311,6 +1361,7 @@ impl ChangeLogStore for InMemoryStore {
         collect!(g.subtasks, "sub_task", id);
         collect!(g.pomodoros, "pomodoro_session", id);
         collect!(g.mottos, "motto", id);
+        collect!(g.journals, "journal", id);
         collect!(g.daily_reviews, "daily_review", date);
         collect!(g.weekly_reviews, "weekly_review", week_start);
         collect!(g.monthly_reviews, "monthly_review", year_month);
@@ -1387,6 +1438,10 @@ impl ChangeLogStore for InMemoryStore {
                 let e = decode!(Motto);
                 g.mottos.insert(e.id.clone(), e);
             }
+            EntityKind::Journal => {
+                let e = decode!(Journal);
+                g.journals.insert(e.id.clone(), e);
+            }
             EntityKind::DailyReview => {
                 let e = decode!(DailyReview);
                 g.daily_reviews.insert(e.date.clone(), e);
@@ -1456,6 +1511,7 @@ impl ChangeLogStore for InMemoryStore {
                 probe!(g.pomodoros, "pomodoro_session", Id::parse(id).as_ref())
             }
             EntityKind::Motto => probe!(g.mottos, "motto", Id::parse(id).as_ref()),
+            EntityKind::Journal => probe!(g.journals, "journal", Id::parse(id).as_ref()),
             EntityKind::DailyReview => probe!(g.daily_reviews, "daily_review", Some(id)),
             EntityKind::WeeklyReview => probe!(g.weekly_reviews, "weekly_review", Some(id)),
             EntityKind::MonthlyReview => probe!(g.monthly_reviews, "monthly_review", Some(id)),

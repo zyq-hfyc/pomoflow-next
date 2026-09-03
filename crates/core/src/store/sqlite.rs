@@ -35,7 +35,8 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::error::{CoreError, CoreResult};
 use crate::model::{
-    DailyReview, Id, MonthlyReview, Motto, NotificationTemplate, PomodoroSession, Priority,
+    DailyReview, Id, Journal, MonthlyReview, Motto, NotificationTemplate, PomodoroSession,
+    Priority,
     Project, Reminder, Repeat, SubTask, Tag, Task, TaskStatus, TaskTagLink, Timestamp,
     WeeklyReview,
 };
@@ -264,6 +265,11 @@ impl Stamped for Motto {
         &mut self.user_id
     }
 }
+impl Stamped for Journal {
+    fn user_id(&mut self) -> &mut Id {
+        &mut self.user_id
+    }
+}
 impl Stamped for DailyReview {
     fn user_id(&mut self) -> &mut Id {
         &mut self.user_id
@@ -459,6 +465,24 @@ CREATE TABLE IF NOT EXISTS mottos (
 );
 
 CREATE INDEX IF NOT EXISTS idx_mottos_updated ON mottos(updated_at_ms DESC);
+
+-- 手账(移动端待办/愿望/年度规划/小记;v2 新实体,桌面端只存同步不做 UI)
+CREATE TABLE IF NOT EXISTS journals (
+  id TEXT PRIMARY KEY NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'note',
+  title TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  tags_csv TEXT NOT NULL DEFAULT '',
+  created_at_ms INTEGER NOT NULL DEFAULT 0,
+  revision INTEGER NOT NULL DEFAULT 1,
+  deleted_at_ms INTEGER,
+  updated_at_ms INTEGER NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  sync_state TEXT NOT NULL DEFAULT 'pending',
+  origin_device TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_journals_updated ON journals(updated_at_ms DESC);
 
 CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);
 
@@ -989,6 +1013,36 @@ fn row_to_motto(row: &Row<'_>) -> rusqlite::Result<Motto> {
         user_id,
         text: row.get("text")?,
         author: row.get::<_, Option<String>>("author")?,
+        created_at: ts_from_ms(row.get("created_at_ms")?).map_err(core_err)?,
+        revision: row.get::<_, i64>("revision")? as u64,
+        deleted_at: row
+            .get::<_, Option<i64>>("deleted_at_ms")?
+            .map(ts_from_ms)
+            .transpose()
+            .map_err(core_err)?,
+        updated_at: ts_from_ms(row.get("updated_at_ms")?).map_err(core_err)?,
+    }))
+}
+
+fn row_to_journal(row: &Row<'_>) -> rusqlite::Result<Journal> {
+    let id_s: String = row.get("id")?;
+    let id = Id::parse(&id_s)
+        .ok_or_else(|| core_err(CoreError::storage(format!("invalid journal id: {id_s}"))))?;
+    let user_id_s: String = row.get("user_id")?;
+    let user_id = Id::parse(&user_id_s).unwrap_or_else(Id::nil);
+    let tags_csv: String = row.get("tags_csv")?;
+
+    core_try(Ok(Journal {
+        id,
+        user_id,
+        kind: row.get("kind")?,
+        title: row.get("title")?,
+        content: row.get("content")?,
+        tags: if tags_csv.is_empty() {
+            Vec::new()
+        } else {
+            tags_csv.split(',').filter(|s| !s.is_empty()).map(String::from).collect()
+        },
         created_at: ts_from_ms(row.get("created_at_ms")?).map_err(core_err)?,
         revision: row.get::<_, i64>("revision")? as u64,
         deleted_at: row
@@ -1859,6 +1913,37 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    fn list_journals(&self) -> CoreResult<Vec<Journal>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare("SELECT * FROM journals WHERE deleted_at_ms IS NULL ORDER BY created_at_ms ASC")
+            .map_err(|e| CoreError::storage(format!("prepare list_journals: {e}")))?;
+        let rows = stmt
+            .query_map([], row_to_journal)
+            .map_err(|e| CoreError::storage(format!("query list_journals: {e}")))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| CoreError::storage(format!("row list_journals: {e}")))?);
+        }
+        Ok(out)
+    }
+
+    fn upsert_journal(&self, journal: Journal) -> CoreResult<Journal> {
+        self.upsert_journal_marked(journal, true)
+    }
+
+    fn delete_journal(&self, id: &Id) -> CoreResult<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "UPDATE journals SET deleted_at_ms = ?, updated_at_ms = ?,
+                revision = revision + 1, sync_state = 'pending', origin_device = ?
+             WHERE id = ? AND deleted_at_ms IS NULL",
+            params![now_ms(), now_ms(), self.device_id, id.as_str()],
+        )
+        .map_err(|e| CoreError::storage(format!("delete_journal: {e}")))?;
+        Ok(())
+    }
+
     fn today_completed_minutes(&self, start_ms: i64, end_ms: i64) -> CoreResult<u32> {
         let conn = self.lock()?;
         // 按 started_at 分桶(与 stats::overview / range 一致;v1 全部按 started_at):
@@ -2257,6 +2342,47 @@ impl SqliteStore {
         Ok(motto)
     }
 
+    /// 手账 marked 写入(pending 本地 / synced 远端权威)。
+    fn upsert_journal_marked(&self, journal: Journal, pending: bool) -> CoreResult<Journal> {
+        let journal = self.stamp(journal);
+        let mark = if pending { "pending" } else { "synced" };
+        let tags_csv = journal.tags.join(",");
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO journals
+              (id, user_id, kind, title, content, tags_csv, created_at_ms,
+               revision, deleted_at_ms, updated_at_ms, sync_state, origin_device)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET
+                kind=excluded.kind,
+                title=excluded.title,
+                content=excluded.content,
+                tags_csv=excluded.tags_csv,
+                created_at_ms=excluded.created_at_ms,
+                revision=excluded.revision,
+                deleted_at_ms=excluded.deleted_at_ms,
+                updated_at_ms=excluded.updated_at_ms,
+                user_id=excluded.user_id, sync_state=excluded.sync_state,
+                origin_device=excluded.origin_device",
+            params![
+                journal.id.as_str(),
+                journal.user_id.as_str(),
+                journal.kind,
+                journal.title,
+                journal.content,
+                tags_csv,
+                ts_to_ms(journal.created_at),
+                journal.revision as i64,
+                journal.deleted_at.map(ts_to_ms),
+                ts_to_ms(journal.updated_at),
+                mark,
+                self.device_id,
+            ],
+        )
+        .map_err(|e| CoreError::storage(format!("upsert_journal: {e}")))?;
+        Ok(journal)
+    }
+
     /// 复盘族 marked 写入。pending 路径 revision 由存储管理(插入 1、更新 +1);
     /// remote 路径按权威载荷原样落库(ADR-010)。
     fn upsert_daily_review_marked(
@@ -2449,6 +2575,7 @@ impl ChangeLogStore for SqliteStore {
         scan!("subtasks", row_to_subtask);
         scan!("pomodoros", row_to_pomodoro);
         scan!("mottos", row_to_motto);
+        scan!("journals", row_to_journal);
         scan!("daily_reviews", row_to_daily_review);
         scan!("weekly_reviews", row_to_weekly_review);
         scan!("monthly_reviews", row_to_monthly_review);
@@ -2497,6 +2624,7 @@ impl ChangeLogStore for SqliteStore {
             EntityKind::SubTask => apply!(SubTask, upsert_subtask_marked),
             EntityKind::PomodoroSession => apply!(PomodoroSession, upsert_pomodoro_marked),
             EntityKind::Motto => apply!(Motto, upsert_motto_marked),
+            EntityKind::Journal => apply!(Journal, upsert_journal_marked),
             EntityKind::DailyReview => apply!(DailyReview, upsert_daily_review_marked),
             EntityKind::WeeklyReview => apply!(WeeklyReview, upsert_weekly_review_marked),
             EntityKind::MonthlyReview => apply!(MonthlyReview, upsert_monthly_review_marked),
@@ -2551,6 +2679,7 @@ impl ChangeLogStore for SqliteStore {
                 EntityKind::SubTask => mark!("subtasks", "id", ids),
                 EntityKind::PomodoroSession => mark!("pomodoros", "id", ids),
                 EntityKind::Motto => mark!("mottos", "id", ids),
+                EntityKind::Journal => mark!("journals", "id", ids),
                 EntityKind::DailyReview => mark!("daily_reviews", "date", ids),
                 EntityKind::WeeklyReview => mark!("weekly_reviews", "week_start", ids),
                 EntityKind::MonthlyReview => mark!("monthly_reviews", "year_month", ids),
@@ -2588,6 +2717,7 @@ impl ChangeLogStore for SqliteStore {
             EntityKind::SubTask => probe!("subtasks", "id", row_to_subtask),
             EntityKind::PomodoroSession => probe!("pomodoros", "id", row_to_pomodoro),
             EntityKind::Motto => probe!("mottos", "id", row_to_motto),
+            EntityKind::Journal => probe!("journals", "id", row_to_journal),
             EntityKind::DailyReview => probe!("daily_reviews", "date", row_to_daily_review),
             EntityKind::WeeklyReview => {
                 probe!("weekly_reviews", "week_start", row_to_weekly_review)
@@ -2778,4 +2908,52 @@ fn delete_task_emits_empty_task_tag_tombstone() {
         serde_json::from_value(change.payload.clone()).unwrap();
     assert!(payload.tag_ids.is_empty(), "任务删除后关联载荷应为空集");
     assert_eq!(payload.revision, 2, "tombstone 应在原 revision 上 +1");
+}
+
+#[test]
+fn journal_sqlite_roundtrip_and_pending() {
+    use crate::sync::ChangeLogStore;
+
+    let a = SqliteStore::open_in_memory().unwrap();
+    let mut j = crate::model::Journal::new("note", "小记一条");
+    j.content = "内容带逗号,与 csv 测试".into();
+    j.tags = vec!["生活".into(), "随记".into()];
+    let jid = j.id.clone();
+    a.upsert_journal(j).unwrap();
+
+    // 行映射 roundtrip:tags_csv ↔ Vec<String>
+    let listed = a.list_journals().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].tags, vec!["生活".to_string(), "随记".to_string()]);
+    assert_eq!(listed[0].content, "内容带逗号,与 csv 测试");
+
+    // pending → Change payload 可反序列化回 Journal(push 方向)
+    let change = a
+        .list_pending(100)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.entity == EntityKind::Journal)
+        .expect("新建手账应入 pending 队列");
+    assert_eq!(change.entity_id, jid.as_str());
+    let payload: crate::model::Journal = serde_json::from_value(change.payload).unwrap();
+    assert_eq!(payload.kind, "note");
+
+    // 远端权威 apply_remote(synced 落行,不再 pending)+ 软删收敛
+    a.mark_synced(&[(EntityKind::Journal, jid.as_str().to_string())])
+        .unwrap();
+    a.delete_journal(&jid).unwrap();
+    let b = SqliteStore::open_in_memory().unwrap();
+    let tomb = a
+        .local_candidate(EntityKind::Journal, jid.as_str())
+        .unwrap()
+        .expect("墓碑行应可作 candidate 查出");
+    b.apply_remote(&tomb).unwrap();
+    assert!(b.list_journals().unwrap().is_empty(), "B 应用墓碑后不再列出");
+    let row = b
+        .local_candidate(EntityKind::Journal, jid.as_str())
+        .unwrap()
+        .expect("墓碑行本体保留");
+    let after: crate::model::Journal = serde_json::from_value(row.payload).unwrap();
+    assert!(after.deleted_at.is_some());
+    assert!(after.revision >= 2);
 }

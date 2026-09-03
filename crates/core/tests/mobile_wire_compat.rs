@@ -9,7 +9,7 @@
 //! `completed_at` / `id` / `user_id` / `title`)必须**显式出现**,哪怕是 null。
 
 use chrono::{DateTime, Utc};
-use pomoflow_core::model::{PomodoroSession, Reminder, Repeat, Task};
+use pomoflow_core::model::{Journal, PomodoroSession, Reminder, Repeat, Task};
 use pomoflow_core::repeat::compute_repeat_dates;
 
 /// `sync_wire.dart coreTaskPayload` 的合法产物样例。
@@ -200,4 +200,46 @@ fn session_missing_required_fields_is_rejected() {
         let err = serde_json::from_value::<PomodoroSession>(serde_json::Value::Object(obj));
         assert!(err.is_err(), "缺 {key} 应被拒收");
     }
+}
+
+/// `sync_wire.dart coreJournalPayload` 的合法产物样例(v19 手账同步)。
+const JOURNAL_JSON: &str = r#"{
+  "id": "jrn0000000zzz",
+  "user_id": "u-7",
+  "kind": "wish",
+  "title": "去北海道看雪",
+  "content": "冬天 或 春天都行",
+  "tags": ["旅行", "长期"],
+  "created_at": "2026-09-01T08:00:00.000Z",
+  "revision": 1,
+  "deleted_at": null,
+  "updated_at": "2026-09-01T08:00:00.000Z"
+}"#;
+
+#[test]
+fn mobile_journal_payload_deserializes() {
+    let v: serde_json::Value = serde_json::from_str(JOURNAL_JSON).unwrap();
+    let j: Journal =
+        serde_json::from_value(v).expect("mobile payload 必须能反序列化为 core::Journal");
+    assert_eq!(j.id.as_str(), "jrn0000000zzz");
+    assert_eq!(j.kind, "wish");
+    assert_eq!(j.title, "去北海道看雪");
+    assert_eq!(j.tags, vec!["旅行".to_string(), "长期".to_string()]);
+    assert_eq!(j.revision, 1);
+    assert!(j.deleted_at.is_none());
+}
+
+#[test]
+fn journal_tombstone_payload_deserializes() {
+    // 远端删除 = deleted_at 有值的完整快照(LWW 墓碑),core 必须原样可收。
+    let v: serde_json::Value = serde_json::from_str(JOURNAL_JSON).unwrap();
+    let mut obj = v.as_object().unwrap().clone();
+    obj.insert(
+        "deleted_at".into(),
+        serde_json::json!("2026-09-02T09:00:00.000Z"),
+    );
+    obj.insert("revision".into(), serde_json::json!(2));
+    let j: Journal = serde_json::from_value(serde_json::Value::Object(obj)).unwrap();
+    assert!(j.deleted_at.is_some());
+    assert_eq!(j.revision, 2);
 }

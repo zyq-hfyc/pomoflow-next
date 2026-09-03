@@ -15,6 +15,7 @@
 //! 本阶段只实现最简骨架(每个实体一个 struct + 默认值 + Debug/Clone/Serialize),
 //! 字段集合按 v1 `models.py` 一一对应。**业务方法(如"完成一个任务")放到 P1**。
 
+pub mod journal;
 pub mod motto;
 pub mod notification_template;
 pub mod pomodoro;
@@ -24,6 +25,7 @@ pub mod subtask;
 pub mod tag;
 pub mod task;
 
+pub use journal::{Journal, JOURNAL_KINDS};
 pub use motto::Motto;
 pub use notification_template::NotificationTemplate;
 pub use pomodoro::PomodoroSession;

@@ -13,11 +13,12 @@
 //! | project.name / tag.name | 1–200 |
 //! | subtask.title | 1–500 |
 //! | motto.text | 1–500;motto.author ≤64 |
+//! | journal.kind | todo/wish/plan/note;title 1–200;content ≤5000(v2) |
 //! | session.duration | 1–1000 分钟 |
 //! | list limit | ≤5000(v1 default 1000) |
 
 use crate::error::{CoreError, CoreResult};
-use crate::model::{Motto, Project, SubTask, Tag, Task};
+use crate::model::{Journal, Motto, Project, SubTask, Tag, Task, JOURNAL_KINDS};
 
 /// 任务必填项与取值范围(v1 `TaskBase` 对齐)。
 pub fn validate_task(task: &Task) -> CoreResult<()> {
@@ -63,6 +64,23 @@ pub fn validate_motto(motto: &Motto) -> CoreResult<()> {
         if author.chars().count() > 64 {
             return Err(CoreError::validation("motto.author 不能超过 64 字符"));
         }
+    }
+    Ok(())
+}
+
+/// 手账校验(v2 新实体;上限沿 v1 task 口径:title 1–200 / content ≤5000)。
+pub fn validate_journal(journal: &Journal) -> CoreResult<()> {
+    if !JOURNAL_KINDS.contains(&journal.kind.as_str()) {
+        return Err(CoreError::validation(format!(
+            "journal.kind 必须是 {:?} 之一,当前 {}",
+            JOURNAL_KINDS, journal.kind
+        )));
+    }
+    validate_title(&journal.title, "journal.title", 200)?;
+    if journal.content.chars().count() > 5000 {
+        return Err(CoreError::validation(
+            "journal.content 不能超过 5000 字符",
+        ));
     }
     Ok(())
 }

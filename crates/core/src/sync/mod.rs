@@ -54,6 +54,8 @@ pub enum EntityKind {
     SubTask,
     PomodoroSession,
     Motto,
+    /// 手账(移动端待办/愿望/年度规划/小记,v2 新语义 —— v1 无此实体)
+    Journal,
     DailyReview,
     WeeklyReview,
     MonthlyReview,
@@ -293,6 +295,7 @@ impl_sync_entity!(
     key id
 );
 impl_sync_entity!(crate::model::Motto, EntityKind::Motto, key id);
+impl_sync_entity!(crate::model::Journal, EntityKind::Journal, key id);
 impl_sync_entity!(
     crate::model::DailyReview,
     EntityKind::DailyReview,

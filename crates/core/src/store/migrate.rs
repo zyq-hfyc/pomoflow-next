@@ -33,6 +33,7 @@ const MIGRATIONS: &[MigrationFn] = &[
     migration_002_sync_foundation,
     migration_003_task_tag_sync,
     migration_004_conflict_log,
+    migration_005_journal,
 ];
 
 /// 当前代码支持的最新 schema 版号(= 已应用迁移数)。
@@ -350,6 +351,31 @@ fn migration_004_conflict_log(conn: &Connection) -> CoreResult<()> {
            ON conflict_log(occurred_at_ms DESC);",
     )
     .map_err(|e| CoreError::storage(format!("conflict_log: {e}")))?;
+    Ok(())
+}
+
+/// v4 → v5:手账表(v2 新实体,移动端待办/愿望/年度规划/小记)。
+/// 桌面端旧库没有这张表;新库由 SCHEMA_SQL 一次建成,此处幂等兜底。
+fn migration_005_journal(conn: &Connection) -> CoreResult<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS journals (
+           id TEXT PRIMARY KEY NOT NULL,
+           kind TEXT NOT NULL DEFAULT 'note',
+           title TEXT NOT NULL DEFAULT '',
+           content TEXT NOT NULL DEFAULT '',
+           tags_csv TEXT NOT NULL DEFAULT '',
+           created_at_ms INTEGER NOT NULL DEFAULT 0,
+           revision INTEGER NOT NULL DEFAULT 1,
+           deleted_at_ms INTEGER,
+           updated_at_ms INTEGER NOT NULL,
+           user_id TEXT NOT NULL DEFAULT '',
+           sync_state TEXT NOT NULL DEFAULT 'pending',
+           origin_device TEXT NOT NULL DEFAULT ''
+         );
+         CREATE INDEX IF NOT EXISTS idx_journals_updated
+           ON journals(updated_at_ms DESC);",
+    )
+    .map_err(|e| CoreError::storage(format!("journal: {e}")))?;
     Ok(())
 }
 
