@@ -74,7 +74,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::info!(
         "sync-server listening on 0.0.0.0:{port}, user={}, auth={}, mail={}",
         user_id.as_str(),
-        if jwt_secret.is_some() { "jwt+static" } else { "static" },
+        if jwt_secret.is_some() {
+            "jwt+static"
+        } else {
+            "static"
+        },
         mailer.mode()
     );
 
@@ -85,22 +89,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/auth/login", post(auth_handlers::login))
         .route("/v1/auth/refresh", post(auth_handlers::refresh))
         .route("/v1/auth/logout", post(auth_handlers::logout))
-        .route("/v1/auth/change-password", post(auth_handlers::change_password))
+        .route(
+            "/v1/auth/change-password",
+            post(auth_handlers::change_password),
+        )
         .route("/v1/auth/sessions", post(auth_handlers::sessions))
-        .route("/v1/auth/sessions/revoke", post(auth_handlers::revoke_session))
+        .route(
+            "/v1/auth/sessions/revoke",
+            post(auth_handlers::revoke_session),
+        )
         .route(
             "/v1/auth/sessions/revoke-others",
             post(auth_handlers::revoke_others),
         )
         .route("/v1/auth/email/send-code", post(email_handlers::send_code))
-        .route("/v1/auth/register-email", post(email_handlers::register_email))
+        .route(
+            "/v1/auth/register-email",
+            post(email_handlers::register_email),
+        )
         .route("/v1/auth/login-email", post(email_handlers::login_email))
-        .route("/v1/auth/reset-password", post(email_handlers::reset_password))
+        .route(
+            "/v1/auth/reset-password",
+            post(email_handlers::reset_password),
+        )
         .route("/v1/auth/email/bind", post(email_handlers::bind_email))
-        .route("/v1/auth/profile", get(email_handlers::get_profile).post(email_handlers::update_profile))
+        .route(
+            "/v1/auth/profile",
+            get(email_handlers::get_profile).post(email_handlers::update_profile),
+        )
         .route("/v1/auth/username", post(email_handlers::update_username))
-        .route("/v1/auth/deletion/request", post(email_handlers::deletion_request))
-        .route("/v1/auth/deletion/cancel", post(email_handlers::deletion_cancel))
+        .route(
+            "/v1/auth/deletion/request",
+            post(email_handlers::deletion_request),
+        )
+        .route(
+            "/v1/auth/deletion/cancel",
+            post(email_handlers::deletion_cancel),
+        )
         .route(
             "/v1/auth/avatar",
             get(email_handlers::get_avatar)
@@ -187,14 +212,12 @@ async fn cleanup_task(pool: sqlx::PgPool) {
                 "snapshots",
                 "changelog",
             ] {
-                let n = sqlx::query(&format!(
-                    "DELETE FROM {table} WHERE user_id = ANY($1)"
-                ))
-                .bind(&due)
-                .execute(&pool)
-                .await
-                .map(|r| r.rows_affected())
-                .unwrap_or(0);
+                let n = sqlx::query(&format!("DELETE FROM {table} WHERE user_id = ANY($1)"))
+                    .bind(&due)
+                    .execute(&pool)
+                    .await
+                    .map(|r| r.rows_affected())
+                    .unwrap_or(0);
                 log::info!("deletion sweep: {table} removed {n} rows");
             }
             // 该批账号邮箱的历史验证码一并清掉

@@ -7,7 +7,9 @@
 //!
 //! 全部纯函数/纯计算,单测不打 DB。
 
-use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::{
+    rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
+};
 use argon2::Argon2;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use rand::RngCore;

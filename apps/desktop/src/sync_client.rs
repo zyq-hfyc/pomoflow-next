@@ -22,11 +22,11 @@ use std::time::{Duration, Instant};
 
 use pomoflow_core::store::{ConflictRecord, SqliteStore, Store};
 use pomoflow_core::sync::engine::{apply_pull_response, apply_push_outcomes, build_push_request};
+use pomoflow_core::sync::ChangeLogStore;
+use pomoflow_core::sync::{resolve_conflict, Resolution};
 use pomoflow_core::sync::{
     ApplyOutcome, Change, PullRequest, PullResponse, PushRequest, PushResponse, SyncCursor,
 };
-use pomoflow_core::sync::{resolve_conflict, Resolution};
-use pomoflow_core::sync::ChangeLogStore;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
 
@@ -156,12 +156,7 @@ pub fn get_sync_config(state: State<'_, AppState>) -> Result<SyncConfig, String>
     Ok(SyncConfig {
         server_url: meta_nonempty(&state.store, META_URL)?,
         token: meta_nonempty(&state.store, META_TOKEN)?,
-        auto_sync: state
-            .store
-            .get_meta(META_AUTO)
-            .map_err(es)?
-            .as_deref()
-            == Some("1"),
+        auto_sync: state.store.get_meta(META_AUTO).map_err(es)?.as_deref() == Some("1"),
         interval_min: state
             .store
             .get_meta(META_INTERVAL)
@@ -169,12 +164,14 @@ pub fn get_sync_config(state: State<'_, AppState>) -> Result<SyncConfig, String>
             .and_then(|v| v.parse().ok())
             .map(clamp_interval)
             .unwrap_or(INTERVAL_DEFAULT),
-        auth: state.store.get_meta(META_AUTH_USER).map_err(es)?.map(|u| {
-            AuthAccount {
+        auth: state
+            .store
+            .get_meta(META_AUTH_USER)
+            .map_err(es)?
+            .map(|u| AuthAccount {
                 username: u,
                 user_id: state.store.local_user_id().to_string(),
-            }
-        }),
+            }),
     })
 }
 
@@ -313,14 +310,10 @@ pub fn spawn_auto_sync(
                 .unwrap_or(INTERVAL_DEFAULT);
             // 配置不全(未保存地址/令牌)时静默跳过,不报错 —— 自动同步
             // 是可选功能,首次使用只配地址不开启很正常
-            let configured = meta_nonempty(&store, META_URL)
-                .ok()
-                .flatten()
-                .is_some()
+            let configured = meta_nonempty(&store, META_URL).ok().flatten().is_some()
                 && meta_nonempty(&store, META_TOKEN).ok().flatten().is_some();
-            let due = last_run.is_none_or(|t| {
-                t.elapsed() >= Duration::from_secs(u64::from(interval_min) * 60)
-            });
+            let due = last_run
+                .is_none_or(|t| t.elapsed() >= Duration::from_secs(u64::from(interval_min) * 60));
 
             if auto_on && configured && due {
                 let evt = match run_sync_locked(&store, &lock).await {
@@ -378,9 +371,14 @@ async fn run_sync(store: &SqliteStore) -> Result<SyncReport, String> {
         if req.changes.is_empty() {
             break;
         }
-        let resp: PushResponse =
-            post_with_auto_refresh(&client, &format!("{url}/v1/sync/push"), store, &static_token, &req)
-                .await?;
+        let resp: PushResponse = post_with_auto_refresh(
+            &client,
+            &format!("{url}/v1/sync/push"),
+            store,
+            &static_token,
+            &req,
+        )
+        .await?;
         for outcome in &resp.results {
             match outcome {
                 ApplyOutcome::Accepted { .. } => report.pushed += 1,
@@ -404,9 +402,14 @@ async fn run_sync(store: &SqliteStore) -> Result<SyncReport, String> {
             device_id: device.clone(),
             since: cursor,
         };
-        let resp: PullResponse =
-            post_with_auto_refresh(&client, &format!("{url}/v1/sync/pull"), store, &static_token, &req)
-                .await?;
+        let resp: PullResponse = post_with_auto_refresh(
+            &client,
+            &format!("{url}/v1/sync/pull"),
+            store,
+            &static_token,
+            &req,
+        )
+        .await?;
         let n = resp.changes.len();
         record_pull_conflicts(store, &resp.changes).map_err(|e| e.to_string())?;
         apply_pull_response(store, &resp.changes).map_err(es)?;
@@ -546,15 +549,21 @@ fn entity_title(change: &Change) -> String {
     use serde_json::Value;
     match &change.payload {
         Value::Object(m) => match change.entity {
-            pomoflow_core::sync::EntityKind::Task | pomoflow_core::sync::EntityKind::SubTask => {
-                m.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string()
-            }
-            pomoflow_core::sync::EntityKind::Project | pomoflow_core::sync::EntityKind::Tag => {
-                m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string()
-            }
-            pomoflow_core::sync::EntityKind::Motto => {
-                m.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string()
-            }
+            pomoflow_core::sync::EntityKind::Task | pomoflow_core::sync::EntityKind::SubTask => m
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            pomoflow_core::sync::EntityKind::Project | pomoflow_core::sync::EntityKind::Tag => m
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            pomoflow_core::sync::EntityKind::Motto => m
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             // 手账:title 优先,空则回落 content 首段(移动端小记常无标题)
             pomoflow_core::sync::EntityKind::Journal => {
                 let t = m.get("title").and_then(|v| v.as_str()).unwrap_or("");
@@ -569,18 +578,26 @@ fn entity_title(change: &Change) -> String {
                         .collect()
                 }
             }
-            pomoflow_core::sync::EntityKind::DailyReview => {
-                m.get("date").and_then(|v| v.as_str()).unwrap_or("").to_string()
-            }
-            pomoflow_core::sync::EntityKind::WeeklyReview => {
-                m.get("week_start").and_then(|v| v.as_str()).unwrap_or("").to_string()
-            }
-            pomoflow_core::sync::EntityKind::MonthlyReview => {
-                m.get("year_month").and_then(|v| v.as_str()).unwrap_or("").to_string()
-            }
-            pomoflow_core::sync::EntityKind::YearlyReview => {
-                m.get("year").and_then(|v| v.as_str()).unwrap_or("").to_string()
-            }
+            pomoflow_core::sync::EntityKind::DailyReview => m
+                .get("date")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            pomoflow_core::sync::EntityKind::WeeklyReview => m
+                .get("week_start")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            pomoflow_core::sync::EntityKind::MonthlyReview => m
+                .get("year_month")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            pomoflow_core::sync::EntityKind::YearlyReview => m
+                .get("year")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             _ => String::new(),
         },
         _ => String::new(),
@@ -629,17 +646,22 @@ async fn auth_request(
         .build()
         .map_err(|e| e.to_string())?;
     let (device_id, device_name) = device_report(store);
-    let mut req = client.post(format!("{url}{path}")).json(&serde_json::json!({
-        "username": username, "password": password,
-        "device_id": device_id, "device_name": device_name,
-    }));
+    let mut req = client
+        .post(format!("{url}{path}"))
+        .json(&serde_json::json!({
+            "username": username, "password": password,
+            "device_id": device_id, "device_name": device_name,
+        }));
     if let Some(op) = operator_token {
         // 注册首账号:静态 Token 作为运维凭证随请求 → 服务端采纳 SYNC_USER_ID
         req = req.bearer_auth(op);
     }
     let resp = req.send().await.map_err(|e| format!("网络错误: {e}"))?;
     let status = resp.status();
-    let text = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取响应失败: {e}"))?;
     if !status.is_success() {
         return Err(format!("服务器返回 {status}: {text}"));
     }
@@ -657,11 +679,15 @@ fn save_tokens(store: &SqliteStore, tokens: AuthTokensResp) -> Result<AuthStatus
             tokens.user_id
         ));
     }
-    store.set_meta(META_ACCESS, &tokens.access_token).map_err(es)?;
+    store
+        .set_meta(META_ACCESS, &tokens.access_token)
+        .map_err(es)?;
     store
         .set_meta(META_REFRESH, &tokens.refresh_token)
         .map_err(es)?;
-    store.set_meta(META_AUTH_USER, &tokens.username).map_err(es)?;
+    store
+        .set_meta(META_AUTH_USER, &tokens.username)
+        .map_err(es)?;
     Ok(AuthStatus {
         username: tokens.username,
         user_id: tokens.user_id,
@@ -684,7 +710,14 @@ pub async fn auth_register(
 ) -> Result<AuthStatus, String> {
     let store = state.store.clone();
     let op = meta_nonempty(&store, META_TOKEN)?;
-    auth_request(&store, "/v1/auth/register", &username, &password, op.as_deref()).await
+    auth_request(
+        &store,
+        "/v1/auth/register",
+        &username,
+        &password,
+        op.as_deref(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -722,8 +755,7 @@ pub async fn auth_logout(state: State<'_, AppState>) -> Result<(), String> {
 /// 失败清空本地登录态(强制重新登录)。
 async fn refresh_access(client: &reqwest::Client, store: &SqliteStore) -> Result<String, String> {
     let url = meta_nonempty(store, META_URL)?.ok_or("未配置同步服务器")?;
-    let refresh =
-        meta_nonempty(store, META_REFRESH)?.ok_or("登录已过期,请重新登录".to_string())?;
+    let refresh = meta_nonempty(store, META_REFRESH)?.ok_or("登录已过期,请重新登录".to_string())?;
     let resp = client
         .post(format!("{url}/v1/auth/refresh"))
         .json(&serde_json::json!({ "refresh_token": refresh }))
@@ -736,10 +768,14 @@ async fn refresh_access(client: &reqwest::Client, store: &SqliteStore) -> Result
         clear_auth(store)?;
         return Err("登录已过期,请到「账号」页重新登录".to_string());
     }
-    let tokens: AuthTokensResp = serde_json::from_str(&text)
-        .map_err(|e| format!("刷新响应解析失败: {e}"))?;
-    store.set_meta(META_ACCESS, &tokens.access_token).map_err(es)?;
-    store.set_meta(META_REFRESH, &tokens.refresh_token).map_err(es)?;
+    let tokens: AuthTokensResp =
+        serde_json::from_str(&text).map_err(|e| format!("刷新响应解析失败: {e}"))?;
+    store
+        .set_meta(META_ACCESS, &tokens.access_token)
+        .map_err(es)?;
+    store
+        .set_meta(META_REFRESH, &tokens.refresh_token)
+        .map_err(es)?;
     Ok(tokens.access_token)
 }
 
@@ -794,13 +830,10 @@ where
             msg: format!("网络错误: {e}"),
         })?;
     let status = resp.status();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| ReqErr {
-            status: None,
-            msg: format!("读取响应失败: {e}"),
-        })?;
+    let text = resp.text().await.map_err(|e| ReqErr {
+        status: None,
+        msg: format!("读取响应失败: {e}"),
+    })?;
     if !status.is_success() {
         return Err(ReqErr {
             status: Some(status.as_u16()),
@@ -828,9 +861,7 @@ pub struct SessionInfo {
 }
 
 /// 会话类请求的公共前奏:拿 url/client/refresh,refresh 缺失 = 未登录。
-async fn session_context(
-    store: &SqliteStore,
-) -> Result<(String, reqwest::Client, String), String> {
+async fn session_context(store: &SqliteStore) -> Result<(String, reqwest::Client, String), String> {
     let url = meta_nonempty(store, META_URL)?.ok_or("未配置同步服务器")?;
     let refresh = meta_nonempty(store, META_REFRESH)?.ok_or("尚未登录账号".to_string())?;
     let client = reqwest::Client::builder()
@@ -848,8 +879,7 @@ pub async fn auth_change_password(
 ) -> Result<AuthStatus, String> {
     let store = state.store.clone();
     let url = meta_nonempty(&store, META_URL)?.ok_or("未配置同步服务器")?;
-    let access =
-        meta_nonempty(&store, META_ACCESS)?.ok_or("尚未登录账号".to_string())?;
+    let access = meta_nonempty(&store, META_ACCESS)?.ok_or("尚未登录账号".to_string())?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
@@ -859,15 +889,24 @@ pub async fn auth_change_password(
         "old_password": old_password, "new_password": new_password,
         "device_id": device_id, "device_name": device_name,
     });
-    let resp = post_json::<_, AuthTokensResp>(&client, &format!("{url}/v1/auth/change-password"), &access, &body)
-        .await
-        .map_err(|e| e.msg)?;
+    let resp = post_json::<_, AuthTokensResp>(
+        &client,
+        &format!("{url}/v1/auth/change-password"),
+        &access,
+        &body,
+    )
+    .await
+    .map_err(|e| e.msg)?;
     // 服务端已全端踢出并给本机签发新对:替换本地令牌,自己不掉线
     if resp.user_id != store.local_user_id().to_string() {
         return Err("服务端返回了异常的账号归属,已忽略".to_string());
     }
-    store.set_meta(META_ACCESS, &resp.access_token).map_err(es)?;
-    store.set_meta(META_REFRESH, &resp.refresh_token).map_err(es)?;
+    store
+        .set_meta(META_ACCESS, &resp.access_token)
+        .map_err(es)?;
+    store
+        .set_meta(META_REFRESH, &resp.refresh_token)
+        .map_err(es)?;
     store.set_meta(META_AUTH_USER, &resp.username).map_err(es)?;
     Ok(AuthStatus {
         username: resp.username,
@@ -876,20 +915,14 @@ pub async fn auth_change_password(
 }
 
 #[tauri::command]
-pub async fn auth_list_sessions(
-    state: State<'_, AppState>,
-) -> Result<Vec<SessionInfo>, String> {
+pub async fn auth_list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, String> {
     let store = state.store.clone();
     let (url, client, refresh) = session_context(&store).await?;
     let body = serde_json::json!({ "refresh_token": refresh });
-    let sessions = post_json::<_, Vec<SessionInfo>>(
-        &client,
-        &format!("{url}/v1/auth/sessions"),
-        "",
-        &body,
-    )
-    .await
-    .map_err(|e| e.msg)?;
+    let sessions =
+        post_json::<_, Vec<SessionInfo>>(&client, &format!("{url}/v1/auth/sessions"), "", &body)
+            .await
+            .map_err(|e| e.msg)?;
     Ok(sessions)
 }
 
@@ -922,10 +955,7 @@ pub async fn auth_revoke_others(state: State<'_, AppState>) -> Result<u64, Strin
     )
     .await
     .map_err(|e| e.msg)?;
-    Ok(resp
-        .get("revoked")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0))
+    Ok(resp.get("revoked").and_then(|v| v.as_u64()).unwrap_or(0))
 }
 
 // === P1d:邮箱渠道命令(验证码/邮箱注册登录/找回/换绑/资料/用户名) ==============
@@ -1005,10 +1035,7 @@ where
     if let Some(b) = bearer {
         req = req.bearer_auth(b);
     }
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("网络错误: {e}"))?;
+    let resp = req.send().await.map_err(|e| format!("网络错误: {e}"))?;
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
@@ -1067,8 +1094,7 @@ where
     R: serde::de::DeserializeOwned,
 {
     let value = serde_json::to_value(body).map_err(|e| format!("请求序列化失败: {e}"))?;
-    let (status, text) =
-        authed_fetch(store, reqwest::Method::POST, path, Some(&value)).await?;
+    let (status, text) = authed_fetch(store, reqwest::Method::POST, path, Some(&value)).await?;
     if !status.is_success() {
         return Err(api_error_text(status, &text));
     }
@@ -1104,8 +1130,13 @@ pub async fn auth_register_email(
     // 设为 SYNC_USER_ID(首账号采纳,存量数据免迁移)。漏带会开出全新 UUID
     // 账号,被本机归属守卫拒绝(2026-08-22 实测踩坑)。
     let op_token = meta_nonempty(&store, META_TOKEN)?;
-    let tokens: AuthTokensResp =
-        post_account(&store, "/v1/auth/register-email", &body, op_token.as_deref()).await?;
+    let tokens: AuthTokensResp = post_account(
+        &store,
+        "/v1/auth/register-email",
+        &body,
+        op_token.as_deref(),
+    )
+    .await?;
     save_tokens(&store, tokens)
 }
 
@@ -1156,9 +1187,7 @@ pub async fn auth_bind_email(
 }
 
 #[tauri::command]
-pub async fn auth_get_profile(
-    state: State<'_, AppState>,
-) -> Result<AccountProfile, String> {
+pub async fn auth_get_profile(state: State<'_, AppState>) -> Result<AccountProfile, String> {
     let store = state.store.clone();
     let (status, text) =
         authed_fetch(&store, reqwest::Method::GET, "/v1/auth/profile", None).await?;
@@ -1190,8 +1219,7 @@ pub async fn auth_request_deletion(
 ) -> Result<(), String> {
     let store = state.store.clone();
     let body = serde_json::json!({ "password": password, "code": code });
-    post_account_authed::<_, serde_json::Value>(&store, "/v1/auth/deletion/request", &body)
-        .await?;
+    post_account_authed::<_, serde_json::Value>(&store, "/v1/auth/deletion/request", &body).await?;
     Ok(())
 }
 
@@ -1203,8 +1231,7 @@ pub async fn auth_cancel_deletion(
 ) -> Result<(), String> {
     let store = state.store.clone();
     let body = serde_json::json!({ "password": password });
-    post_account_authed::<_, serde_json::Value>(&store, "/v1/auth/deletion/cancel", &body)
-        .await?;
+    post_account_authed::<_, serde_json::Value>(&store, "/v1/auth/deletion/cancel", &body).await?;
     Ok(())
 }
 
@@ -1217,8 +1244,7 @@ pub async fn auth_update_username(
     let store = state.store.clone();
     let body = serde_json::json!({ "username": username.trim(), "password": password });
     // 服务端:验密码 + 其他设备全下线 + 给本机新令牌对 → 落库替换
-    let tokens: AuthTokensResp =
-        post_account_authed(&store, "/v1/auth/username", &body).await?;
+    let tokens: AuthTokensResp = post_account_authed(&store, "/v1/auth/username", &body).await?;
     save_tokens(&store, tokens)
 }
 

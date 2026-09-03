@@ -127,9 +127,10 @@ pub struct AuthTokens {
 }
 
 pub(crate) fn require_jwt(app: &AppState) -> Result<&str, ApiError> {
-    app.jwt_secret
-        .as_deref()
-        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "JWT_SECRET 未配置,账号体系未启用".into()))
+    app.jwt_secret.as_deref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "JWT_SECRET 未配置,账号体系未启用".into(),
+    ))
 }
 
 /// 签发一对新 token 并把 refresh 落库。
@@ -142,9 +143,8 @@ pub(crate) async fn issue_tokens(
     device_name: &str,
 ) -> Result<AuthTokens, ApiError> {
     let secret = require_jwt(app)?;
-    let access = auth::issue_access(secret, user_id).map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, e)
-    })?;
+    let access =
+        auth::issue_access(secret, user_id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let refresh = auth::new_refresh_token();
     let now = chrono::Utc::now().timestamp_millis();
     sqlx::query(
@@ -180,29 +180,33 @@ pub async fn register(
     require_jwt(&app)?;
     let username = req.username.trim().to_string();
     if !auth::valid_username(&username) {
-        return Err((StatusCode::BAD_REQUEST, "用户名需 3-32 位字母/数字/_/-".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "用户名需 3-32 位字母/数字/_/-".into(),
+        ));
     }
     if !auth::valid_password(&req.password) {
         return Err((StatusCode::BAD_REQUEST, "密码需 8-128 位".into()));
     }
 
     // 首账号采纳:users 为空 且 请求带有效静态 Token → 继承 SYNC_USER_ID
-    let user_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM users")
-            .fetch_one(&app.pool)
-            .await
-            .map_err(internal)?;
+    let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&app.pool)
+        .await
+        .map_err(internal)?;
     let operator_ok = bearer(&headers) == Some(app.token.as_str());
     let user_id = if user_count == 0 && operator_ok {
-        log::info!("first account adopts legacy SYNC_USER_ID {}", app.user_str());
+        log::info!(
+            "first account adopts legacy SYNC_USER_ID {}",
+            app.user_str()
+        );
         app.user_id.to_string()
     } else {
         Uuid::new_v4().to_string()
     };
 
-    let hash = auth::hash_password(&req.password).map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, e)
-    })?;
+    let hash =
+        auth::hash_password(&req.password).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let now = chrono::Utc::now().timestamp_millis();
     let inserted = sqlx::query(
         "INSERT INTO users (id, username, password_hash, created_ms) VALUES ($1, $2, $3, $4)",
@@ -252,25 +256,43 @@ pub async fn login(
 ) -> Result<Json<AuthTokens>, ApiError> {
     require_jwt(&app)?;
     let username = req.username.trim().to_string();
-    let row: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT id, username, password_hash FROM users WHERE username = $1",
-    )
-    .bind(&username)
-    .fetch_optional(&app.pool)
-    .await
-    .map_err(internal)?;
+    let row: Option<(String, String, String)> =
+        sqlx::query_as("SELECT id, username, password_hash FROM users WHERE username = $1")
+            .bind(&username)
+            .fetch_optional(&app.pool)
+            .await
+            .map_err(internal)?;
 
     let ip = addr.ip().to_string();
     let dev_id = req.device_id.as_deref().unwrap_or("");
     let dev_name = req.device_name.as_deref().unwrap_or("");
     // 统一返回"用户名或密码错误",不给探测口子
     let Some((user_id, username, password_hash)) = row else {
-        log_login(&app, "", dev_id, dev_name, &ip, "username", false, "账号不存在")
-            .await;
+        log_login(
+            &app,
+            "",
+            dev_id,
+            dev_name,
+            &ip,
+            "username",
+            false,
+            "账号不存在",
+        )
+        .await;
         return Err((StatusCode::UNAUTHORIZED, "用户名或密码错误".into()));
     };
     if !auth::verify_password(&req.password, &password_hash) {
-        log_login(&app, &user_id, dev_id, dev_name, &ip, "username", false, "密码错误").await;
+        log_login(
+            &app,
+            &user_id,
+            dev_id,
+            dev_name,
+            &ip,
+            "username",
+            false,
+            "密码错误",
+        )
+        .await;
         return Err((StatusCode::UNAUTHORIZED, "用户名或密码错误".into()));
     }
     log_login(&app, &user_id, dev_id, dev_name, &ip, "username", true, "").await;
@@ -304,7 +326,10 @@ pub async fn refresh(
     .map_err(internal)?;
 
     let Some((user_id, username, device_id, device_name)) = row else {
-        return Err((StatusCode::UNAUTHORIZED, "refresh token 无效或已过期".into()));
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "refresh token 无效或已过期".into(),
+        ));
     };
     // 轮换:吊销旧的(已吊销/过期的不可能走到这里)
     sqlx::query("UPDATE refresh_tokens SET revoked_ms = $1 WHERE token_hash = $2")
@@ -325,12 +350,14 @@ pub async fn logout(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_jwt(&app)?;
     let now = chrono::Utc::now().timestamp_millis();
-    sqlx::query("UPDATE refresh_tokens SET revoked_ms = $1 WHERE token_hash = $2 AND revoked_ms IS NULL")
-        .bind(now)
-        .bind(auth::sha256_hex(&req.refresh_token))
-        .execute(&app.pool)
-        .await
-        .map_err(internal)?;
+    sqlx::query(
+        "UPDATE refresh_tokens SET revoked_ms = $1 WHERE token_hash = $2 AND revoked_ms IS NULL",
+    )
+    .bind(now)
+    .bind(auth::sha256_hex(&req.refresh_token))
+    .execute(&app.pool)
+    .await
+    .map_err(internal)?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -346,12 +373,11 @@ pub async fn change_password(
 ) -> Result<Json<AuthTokens>, ApiError> {
     let auth_user = authenticate(&app, &headers)?;
     let user_str = auth_user.as_str();
-    let hash: Option<String> =
-        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
-            .bind(user_str)
-            .fetch_optional(&app.pool)
-            .await
-            .map_err(internal)?;
+    let hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        .bind(user_str)
+        .fetch_optional(&app.pool)
+        .await
+        .map_err(internal)?;
     let Some(hash) = hash else {
         return Err((StatusCode::NOT_FOUND, "账号不存在".into()));
     };
@@ -396,10 +422,7 @@ pub async fn change_password(
 }
 
 /// 会话请求的公共内核:用调用方 refresh token 定位用户与当前行 id。
-async fn resolve_session(
-    app: &AppState,
-    refresh_token: &str,
-) -> Result<(String, i64), ApiError> {
+async fn resolve_session(app: &AppState, refresh_token: &str) -> Result<(String, i64), ApiError> {
     let now = chrono::Utc::now().timestamp_millis();
     let row: Option<(String, i64)> = sqlx::query_as(
         "SELECT user_id, id FROM refresh_tokens
@@ -410,7 +433,10 @@ async fn resolve_session(
     .fetch_optional(&app.pool)
     .await
     .map_err(internal)?;
-    row.ok_or((StatusCode::UNAUTHORIZED, "refresh token 无效或已过期".into()))
+    row.ok_or((
+        StatusCode::UNAUTHORIZED,
+        "refresh token 无效或已过期".into(),
+    ))
 }
 
 /// POST /v1/auth/sessions —— 有效会话列表(current 标记调用方自己)。
@@ -433,14 +459,16 @@ pub async fn sessions(
     .map_err(internal)?;
     let out = rows
         .into_iter()
-        .map(|(id, device_id, device_name, created_ms, expires_ms)| SessionInfo {
-            id,
-            device_id,
-            device_name,
-            created_ms,
-            expires_ms,
-            current: id == current_id,
-        })
+        .map(
+            |(id, device_id, device_name, created_ms, expires_ms)| SessionInfo {
+                id,
+                device_id,
+                device_name,
+                created_ms,
+                expires_ms,
+                current: id == current_id,
+            },
+        )
         .collect();
     Ok(Json(out))
 }

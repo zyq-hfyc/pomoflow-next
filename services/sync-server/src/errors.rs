@@ -77,10 +77,7 @@ impl IntoResponse for ApiErr {
         let mut resp = (self.status, Json(body)).into_response();
         if let Some(secs) = self.retry_after_secs {
             if let Ok(v) = secs.to_string().parse() {
-                resp.headers_mut().insert(
-                    "Retry-After",
-                    v,
-                );
+                resp.headers_mut().insert("Retry-After", v);
             }
         }
         resp

@@ -63,9 +63,7 @@ impl MailSender for SmtpSender {
                         .parse()
                         .map_err(|e| format!("SMTP_FROM 非法({}): {e}", self.from))?,
                 )
-                .to(to
-                    .parse()
-                    .map_err(|e| format!("收件地址非法({to}): {e}"))?)
+                .to(to.parse().map_err(|e| format!("收件地址非法({to}): {e}"))?)
                 .subject(subject)
                 .header(ContentType::TEXT_PLAIN)
                 .body(body.to_string())
@@ -106,7 +104,9 @@ impl MailSender for LogSender {
 
 /// 按环境变量构建:SMTP_HOST 配置了 → SMTP;否则 → 日志模式。
 pub fn build_from_env() -> Result<Arc<dyn MailSender>, String> {
-    let host = std::env::var("SMTP_HOST").ok().filter(|v| !v.trim().is_empty());
+    let host = std::env::var("SMTP_HOST")
+        .ok()
+        .filter(|v| !v.trim().is_empty());
     match host {
         Some(host) => {
             let port: u16 = std::env::var("SMTP_PORT")

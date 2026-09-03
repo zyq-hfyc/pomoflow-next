@@ -166,7 +166,10 @@ async fn verify_code(app: &AppState, email: &str, purpose: &str, code: &str) -> 
         return Err(ApiErr::bad_request("CODE_INVALID", "验证码错误或已过期"));
     };
     if attempts >= ec::CODE_MAX_ATTEMPTS {
-        return Err(ApiErr::bad_request("CODE_EXHAUSTED", "尝试次数过多,请重新获取验证码"));
+        return Err(ApiErr::bad_request(
+            "CODE_EXHAUSTED",
+            "尝试次数过多,请重新获取验证码",
+        ));
     }
     if ec::code_hash(&app.code_pepper, email, code) == hash {
         sqlx::query("UPDATE email_codes SET used_ms = $1 WHERE id = $2")
@@ -183,7 +186,10 @@ async fn verify_code(app: &AppState, email: &str, purpose: &str, code: &str) -> 
             .await
             .map_err(ApiErr::db)?;
         if attempts + 1 >= ec::CODE_MAX_ATTEMPTS {
-            Err(ApiErr::bad_request("CODE_EXHAUSTED", "尝试次数过多,请重新获取验证码"))
+            Err(ApiErr::bad_request(
+                "CODE_EXHAUSTED",
+                "尝试次数过多,请重新获取验证码",
+            ))
         } else {
             Err(ApiErr::bad_request("CODE_INVALID", "验证码错误或已过期"))
         }
@@ -213,26 +219,24 @@ async fn check_rate_limit(
         return Err(ApiErr::rate_limited("发送过于频繁,请稍后再试", 60));
     }
 
-    let last_hour: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM email_codes WHERE email = $1 AND created_ms > $2",
-    )
-    .bind(email)
-    .bind(now - 3_600_000)
-    .fetch_one(&app.pool)
-    .await
-    .map_err(ApiErr::db)?;
+    let last_hour: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM email_codes WHERE email = $1 AND created_ms > $2")
+            .bind(email)
+            .bind(now - 3_600_000)
+            .fetch_one(&app.pool)
+            .await
+            .map_err(ApiErr::db)?;
     if last_hour >= ec::PER_EMAIL_PER_HOUR {
         return Err(ApiErr::rate_limited("该邮箱每小时发送已达上限", 3600));
     }
 
-    let last_day: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM email_codes WHERE email = $1 AND created_ms > $2",
-    )
-    .bind(email)
-    .bind(now - 86_400_000)
-    .fetch_one(&app.pool)
-    .await
-    .map_err(ApiErr::db)?;
+    let last_day: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM email_codes WHERE email = $1 AND created_ms > $2")
+            .bind(email)
+            .bind(now - 86_400_000)
+            .fetch_one(&app.pool)
+            .await
+            .map_err(ApiErr::db)?;
     if last_day >= ec::PER_EMAIL_PER_DAY {
         return Err(ApiErr::rate_limited("该邮箱今日发送已达上限", 86_400));
     }
@@ -272,24 +276,29 @@ pub async fn send_code(
     match purpose {
         // 注册/换绑:目标邮箱已被占用 → 409(可接受的 UX 取舍,ADR-012 记录)
         "register" | "bind" => {
-            let taken: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
-                .bind(&email)
-                .fetch_one(&app.pool)
-                .await
-                .map_err(ApiErr::db)?;
+            let taken: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
+                    .bind(&email)
+                    .fetch_one(&app.pool)
+                    .await
+                    .map_err(ApiErr::db)?;
             if taken {
                 return Err(ApiErr::conflict("EMAIL_TAKEN", "该邮箱已被使用"));
             }
         }
         // 找回:账号不存在 → 静默 202(不泄露注册情况,也不发信)
         "reset" => {
-            let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
-                .bind(&email)
-                .fetch_one(&app.pool)
-                .await
-                .map_err(ApiErr::db)?;
+            let exists: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
+                    .bind(&email)
+                    .fetch_one(&app.pool)
+                    .await
+                    .map_err(ApiErr::db)?;
             if !exists {
-                return Ok((StatusCode::ACCEPTED, Json(json!({ "ok": true, "expires_in": 600 }))));
+                return Ok((
+                    StatusCode::ACCEPTED,
+                    Json(json!({ "ok": true, "expires_in": 600 })),
+                ));
             }
         }
         _ => unreachable!("上面已过滤"),
@@ -341,7 +350,10 @@ pub async fn send_code(
     }
     log::info!("code sent: email={email} purpose={purpose} ip={ip}");
 
-    Ok((StatusCode::ACCEPTED, Json(json!({ "ok": true, "expires_in": ec::CODE_TTL_MS / 1000 }))))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({ "ok": true, "expires_in": ec::CODE_TTL_MS / 1000 })),
+    ))
 }
 
 /// POST /v1/auth/register-email —— 邮箱注册(首账号采纳同用户名注册)。
@@ -360,12 +372,11 @@ pub async fn register_email(
     }
     verify_code(&app, &email, "register", &req.code).await?;
 
-    let taken: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
-            .bind(&email)
-            .fetch_one(&app.pool)
-            .await
-            .map_err(ApiErr::db)?;
+    let taken: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
+        .bind(&email)
+        .fetch_one(&app.pool)
+        .await
+        .map_err(ApiErr::db)?;
     if taken {
         return Err(ApiErr::conflict("EMAIL_TAKEN", "该邮箱已被注册"));
     }
@@ -376,7 +387,10 @@ pub async fn register_email(
         .await
         .map_err(ApiErr::db)?;
     let user_id = if user_count == 0 && bearer_static(&app, &headers) {
-        log::info!("first email account adopts legacy SYNC_USER_ID {}", app.user_str());
+        log::info!(
+            "first email account adopts legacy SYNC_USER_ID {}",
+            app.user_str()
+        );
         app.user_id.to_string()
     } else {
         Uuid::new_v4().to_string()
@@ -459,11 +473,31 @@ pub async fn login_email(
     let dev_name = req.device_name.as_deref().unwrap_or("");
     // 统一错误文案,不给"邮箱是否存在"的探测口子
     let Some((user_id, display, password_hash)) = row else {
-        log_login(&app, "", dev_id, dev_name, &ip, "email", false, "账号不存在").await;
+        log_login(
+            &app,
+            "",
+            dev_id,
+            dev_name,
+            &ip,
+            "email",
+            false,
+            "账号不存在",
+        )
+        .await;
         return Err(ApiErr::unauthorized("邮箱或密码错误"));
     };
     if !auth::verify_password(&req.password, &password_hash) {
-        log_login(&app, &user_id, dev_id, dev_name, &ip, "email", false, "密码错误").await;
+        log_login(
+            &app,
+            &user_id,
+            dev_id,
+            dev_name,
+            &ip,
+            "email",
+            false,
+            "密码错误",
+        )
+        .await;
         return Err(ApiErr::unauthorized("邮箱或密码错误"));
     }
     log_login(&app, &user_id, dev_id, dev_name, &ip, "email", true, "").await;
@@ -491,7 +525,10 @@ pub async fn reset_password(
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     let email = ec::normalize_email(&req.email);
     if !auth::valid_password(&req.new_password) {
-        return Err(ApiErr::bad_request("INVALID_PASSWORD", "新密码需 8 位及以上"));
+        return Err(ApiErr::bad_request(
+            "INVALID_PASSWORD",
+            "新密码需 8 位及以上",
+        ));
     }
     // 无码行(含"账号不存在导致从未发码")与错码同错误,不泄露注册情况
     verify_code(&app, &email, "reset", &req.code).await?;
@@ -537,12 +574,11 @@ pub async fn bind_email(
     if !ec::valid_email(&email) {
         return Err(ApiErr::bad_request("INVALID_EMAIL", "邮箱格式不正确"));
     }
-    let hash: Option<String> =
-        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
-            .bind(user.as_str())
-            .fetch_optional(&app.pool)
-            .await
-            .map_err(ApiErr::db)?;
+    let hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        .bind(user.as_str())
+        .fetch_optional(&app.pool)
+        .await
+        .map_err(ApiErr::db)?;
     let Some(hash) = hash else {
         return Err(ApiErr::not_found("账号不存在"));
     };
@@ -581,19 +617,26 @@ pub async fn get_profile(
     /// (id, username, display_name, bio, email, email_verified_ms, created_ms,
     ///  password_changed_ms, deletion_requested_ms)
     type ProfileRow = (
-        String, String, String, String, Option<String>, Option<i64>, i64, Option<i64>, Option<i64>,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<i64>,
+        i64,
+        Option<i64>,
+        Option<i64>,
     );
     let user = auth_user(&app, &headers)?;
-    let row: Option<ProfileRow> =
-        sqlx::query_as(
-            "SELECT id, username, display_name, bio, email, email_verified_ms, created_ms,
+    let row: Option<ProfileRow> = sqlx::query_as(
+        "SELECT id, username, display_name, bio, email, email_verified_ms, created_ms,
                     password_changed_ms, deletion_requested_ms
              FROM users WHERE id = $1",
-        )
-        .bind(user.as_str())
-        .fetch_optional(&app.pool)
-        .await
-        .map_err(ApiErr::db)?;
+    )
+    .bind(user.as_str())
+    .fetch_optional(&app.pool)
+    .await
+    .map_err(ApiErr::db)?;
     let Some((
         user_id,
         username,
@@ -661,12 +704,11 @@ pub const DELETION_COOLDOWN_MS: i64 = 15 * 86_400_000;
 
 /// 校验当前密码(注销类操作的公共前置)。
 async fn verify_user_password(app: &AppState, user: &str, password: &str) -> Result<(), ApiErr> {
-    let hash: Option<String> =
-        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
-            .bind(user)
-            .fetch_optional(&app.pool)
-            .await
-            .map_err(ApiErr::db)?;
+    let hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        .bind(user)
+        .fetch_optional(&app.pool)
+        .await
+        .map_err(ApiErr::db)?;
     let Some(hash) = hash else {
         return Err(ApiErr::not_found("账号不存在"));
     };
@@ -688,13 +730,12 @@ pub async fn deletion_request(
     let user = auth_user(&app, &headers)?;
     verify_user_password(&app, user.as_str(), &req.password).await?;
 
-    let row: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
-        "SELECT email, email_verified_ms FROM users WHERE id = $1",
-    )
-    .bind(user.as_str())
-    .fetch_optional(&app.pool)
-    .await
-    .map_err(ApiErr::db)?;
+    let row: Option<(Option<String>, Option<i64>)> =
+        sqlx::query_as("SELECT email, email_verified_ms FROM users WHERE id = $1")
+            .bind(user.as_str())
+            .fetch_optional(&app.pool)
+            .await
+            .map_err(ApiErr::db)?;
     let Some((email, verified)) = row else {
         return Err(ApiErr::not_found("账号不存在"));
     };
@@ -755,7 +796,10 @@ pub async fn deletion_cancel(
     .map_err(ApiErr::db)?
     .rows_affected();
     if n == 0 {
-        return Err(ApiErr::bad_request("NO_PENDING_DELETION", "没有待生效的注销申请"));
+        return Err(ApiErr::bad_request(
+            "NO_PENDING_DELETION",
+            "没有待生效的注销申请",
+        ));
     }
     log::info!("deletion cancelled: user={}", user.as_str());
     Ok(Json(json!({ "ok": true })))
@@ -771,14 +815,16 @@ pub async fn update_username(
     let user = auth_user(&app, &headers)?;
     let username = req.username.trim().to_string();
     if !auth::valid_username(&username) {
-        return Err(ApiErr::bad_request("INVALID_USERNAME", "用户名需 3-32 位字母/数字/_/-"));
+        return Err(ApiErr::bad_request(
+            "INVALID_USERNAME",
+            "用户名需 3-32 位字母/数字/_/-",
+        ));
     }
-    let hash: Option<String> =
-        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
-            .bind(user.as_str())
-            .fetch_optional(&app.pool)
-            .await
-            .map_err(ApiErr::db)?;
+    let hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        .bind(user.as_str())
+        .fetch_optional(&app.pool)
+        .await
+        .map_err(ApiErr::db)?;
     let Some(hash) = hash else {
         return Err(ApiErr::not_found("账号不存在"));
     };
@@ -846,7 +892,10 @@ pub async fn set_avatar(
         _ => false,
     };
     if !ok {
-        return Err(ApiErr::bad_request("INVALID_AVATAR", "文件内容与格式不符(仅 JPG/PNG)"));
+        return Err(ApiErr::bad_request(
+            "INVALID_AVATAR",
+            "文件内容与格式不符(仅 JPG/PNG)",
+        ));
     }
     sqlx::query("UPDATE users SET avatar = $1, avatar_mime = $2 WHERE id = $3")
         .bind(&bytes)
@@ -865,19 +914,17 @@ pub async fn get_avatar(
 ) -> Result<Json<AvatarResponse>, ApiErr> {
     use base64::Engine as _;
     let user = auth_user(&app, &headers)?;
-    let row: Option<(Option<Vec<u8>>, Option<String>)> = sqlx::query_as(
-        "SELECT avatar, avatar_mime FROM users WHERE id = $1",
-    )
-    .bind(user.as_str())
-    .fetch_optional(&app.pool)
-    .await
-    .map_err(ApiErr::db)?;
+    let row: Option<(Option<Vec<u8>>, Option<String>)> =
+        sqlx::query_as("SELECT avatar, avatar_mime FROM users WHERE id = $1")
+            .bind(user.as_str())
+            .fetch_optional(&app.pool)
+            .await
+            .map_err(ApiErr::db)?;
     let Some((avatar, mime)) = row else {
         return Err(ApiErr::not_found("账号不存在"));
     };
     Ok(Json(AvatarResponse {
-        avatar_base64: avatar
-            .map(|b| base64::engine::general_purpose::STANDARD.encode(b)),
+        avatar_base64: avatar.map(|b| base64::engine::general_purpose::STANDARD.encode(b)),
         mime,
     }))
 }
@@ -939,13 +986,18 @@ pub async fn export_data(
 }
 
 /// get_profile 的内部复用形(export 需要同一份数据)。
-async fn get_profile_inner(
-    app: &AppState,
-    headers: &HeaderMap,
-) -> Result<ProfileResponse, ApiErr> {
+async fn get_profile_inner(app: &AppState, headers: &HeaderMap) -> Result<ProfileResponse, ApiErr> {
     let user = auth_user(app, headers)?;
     type ProfileRow = (
-        String, String, String, String, Option<String>, Option<i64>, i64, Option<i64>, Option<i64>,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<i64>,
+        i64,
+        Option<i64>,
+        Option<i64>,
     );
     let row: Option<ProfileRow> = sqlx::query_as(
         "SELECT id, username, display_name, bio, email, email_verified_ms, created_ms,
@@ -956,8 +1008,17 @@ async fn get_profile_inner(
     .fetch_optional(&app.pool)
     .await
     .map_err(ApiErr::db)?;
-    let Some((user_id, username, display_name, bio, email, verified, created, pw_changed, deletion)) =
-        row
+    let Some((
+        user_id,
+        username,
+        display_name,
+        bio,
+        email,
+        verified,
+        created,
+        pw_changed,
+        deletion,
+    )) = row
     else {
         return Err(ApiErr::not_found("账号不存在"));
     };
@@ -1003,15 +1064,17 @@ pub async fn login_logs(
     .map_err(ApiErr::db)?;
     let out = rows
         .into_iter()
-        .map(|(created_ms, device_id, device_name, ip, method, ok, detail)| LoginLogItem {
-            created_ms,
-            device_id,
-            device_name,
-            ip,
-            method,
-            ok,
-            detail,
-        })
+        .map(
+            |(created_ms, device_id, device_name, ip, method, ok, detail)| LoginLogItem {
+                created_ms,
+                device_id,
+                device_name,
+                ip,
+                method,
+                ok,
+                detail,
+            },
+        )
         .collect();
     Ok(Json(out))
 }

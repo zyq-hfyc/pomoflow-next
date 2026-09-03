@@ -65,8 +65,7 @@ pub fn gen_code() -> String {
 
 /// 验证码摘要:HMAC-SHA256(pepper, "{email}:{code}") 的 hex。
 pub fn code_hash(pepper: &str, email: &str, code: &str) -> String {
-    let mut mac = HmacSha256::new_from_slice(pepper.as_bytes())
-        .expect("HMAC 可接受任意长度密钥");
+    let mut mac = HmacSha256::new_from_slice(pepper.as_bytes()).expect("HMAC 可接受任意长度密钥");
     mac.update(format!("{email}:{code}").as_bytes());
     let out = mac.finalize().into_bytes();
     let mut s = String::with_capacity(out.len() * 2);
