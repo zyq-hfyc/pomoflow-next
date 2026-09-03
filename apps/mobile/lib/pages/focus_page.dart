@@ -56,12 +56,10 @@ class _FocusPageState extends State<FocusPage> {
   bool _started = false; // 是否进入过运行(区分「开始」与「继续」)
   bool _notificationsEnabled = true;
   Timer? _timer;
-  final _reviewCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _reviewCtrl.text = context.read<TaskProvider>().todayReview;
     _loadNotificationState();
   }
 
@@ -87,7 +85,6 @@ class _FocusPageState extends State<FocusPage> {
   @override
   void dispose() {
     _timer?.cancel();
-    _reviewCtrl.dispose();
     super.dispose();
   }
 
@@ -280,7 +277,6 @@ class _FocusPageState extends State<FocusPage> {
             ),
           ),
           SliverToBoxAdapter(child: _todayPill(theme, tasks.todayPomos)),
-          SliverToBoxAdapter(child: _reviewCard(theme)),
           const SliverToBoxAdapter(child: _Motto()),
           const SliverToBoxAdapter(child: SizedBox(height: 14)),
         ],
@@ -464,68 +460,6 @@ class _FocusPageState extends State<FocusPage> {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  /// 今日复盘卡(.review-card):textarea + 保存。
-  Widget _reviewCard(ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
-      child: PfCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                '今日复盘',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: theme.pfMuted,
-                ),
-              ),
-            ),
-            TextField(
-              controller: _reviewCtrl,
-              maxLines: 2,
-              decoration: InputDecoration(
-                hintText: '今天专注得怎么样？记一笔…',
-                filled: true,
-                fillColor: theme.pfSurface2,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(PfRadii.sm),
-                  borderSide: BorderSide(color: theme.pfLine),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(PfRadii.sm),
-                  borderSide: BorderSide(color: theme.pfLine),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(PfRadii.sm),
-                  borderSide: BorderSide(color: theme.pfBrand),
-                ),
-                contentPadding: const EdgeInsets.all(11),
-              ),
-              style: const TextStyle(fontSize: 14),
-            ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: PfPrimaryButton(
-                  label: '保存',
-                  height: 36,
-                  onTap: () {
-                    context.read<TaskProvider>().saveReview(_reviewCtrl.text);
-                    _hint('复盘已保存');
-                  },
-                ),
-              ),
-            ),
-          ],
         ),
       ),
     );
