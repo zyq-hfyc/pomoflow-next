@@ -61,7 +61,7 @@ class AppDatabase {
   /// 与桌面端同步对齐,3 级嵌套 + 拖拽改父)。
   /// schema v17 → v18:tasks 补 repeat_parent_id / repeat_end_date_ms 列
   /// (重复实例引擎:实例指向模板 + 模板终止时间;''/0 = 非实例/未设)。
-  static const _schemaVersion = 18;
+  static const _schemaVersion = 19;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -148,6 +148,11 @@ class AppDatabase {
           if (oldVersion < 18) {
             await _v17ToV18(db);
           }
+          // v18 → v19:journals 补 8 同步列(手账跨端同步,对齐 core::Journal;
+          //存量行回填 created_at = 迁移时刻、标 pending,下轮同步全量上云)。
+          if (oldVersion < 19) {
+            await _v18ToV19(db);
+          }
         },
       ),
     );
@@ -213,7 +218,15 @@ class AppDatabase {
         kind TEXT NOT NULL,
         title TEXT NOT NULL DEFAULT '',
         content TEXT NOT NULL DEFAULT '',
-        tags_csv TEXT NOT NULL DEFAULT ''
+        tags_csv TEXT NOT NULL DEFAULT '',
+        created_at_ms INTEGER NOT NULL DEFAULT 0,
+        revision INTEGER NOT NULL DEFAULT 1,
+        sync_state TEXT NOT NULL DEFAULT 'synced',
+        updated_at_ms INTEGER NOT NULL DEFAULT 0,
+        origin_device TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT '',
+        deleted_at_ms INTEGER NOT NULL DEFAULT 0,
+        payload TEXT NOT NULL DEFAULT ''
       )
     ''');
     await db.execute('''
@@ -500,6 +513,35 @@ class AppDatabase {
     await db.insert('meta', {
       'k': 'schema_version',
       'v': '18',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// v18 → v19 升级:journals 补 8 同步列 + payload 缓存列(手账跨端同步)。
+  /// 存量本地行:created_at 回填迁移时刻(原排序按 id,同刻 + id 兜底不乱序)、
+  /// sync_state 标 pending → 下轮同步把既有手账全量推上服务端(数据晋升)。
+  static Future<void> _v18ToV19(Database db) async {
+    const alters = [
+      "ALTER TABLE journals ADD COLUMN created_at_ms INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE journals ADD COLUMN revision INTEGER NOT NULL DEFAULT 1",
+      "ALTER TABLE journals ADD COLUMN sync_state TEXT NOT NULL DEFAULT 'pending'",
+      "ALTER TABLE journals ADD COLUMN updated_at_ms INTEGER NOT NULL DEFAULT 0",
+      'ALTER TABLE journals ADD COLUMN origin_device TEXT NOT NULL DEFAULT \'\'',
+      'ALTER TABLE journals ADD COLUMN user_id TEXT NOT NULL DEFAULT \'\'',
+      "ALTER TABLE journals ADD COLUMN deleted_at_ms INTEGER NOT NULL DEFAULT 0",
+      'ALTER TABLE journals ADD COLUMN payload TEXT NOT NULL DEFAULT \'\'',
+    ];
+    for (final sql in alters) {
+      await _addColumnIfMissing(db, 'journals', sql);
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await db.execute(
+      "UPDATE journals SET created_at_ms = ?, updated_at_ms = ?, "
+      "sync_state = 'pending' WHERE created_at_ms = 0",
+      [now, now],
+    );
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '19',
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -2459,17 +2501,109 @@ class AppDatabase {
   }
 
   // === journals ================================================================
-  // PfJournal.id 字符串化已在 models/task.dart 完成;schema v3 不动 journals
-  // 表,等 P1 Journal 同步批一次性 ALTER(避免本批 commit 3 UI 调用点爆炸)。
+  // v19 起接入跨端同步(对齐 core::Journal):8 同步列 + payload 缓存列。
+  // mobile 是手账唯一 UI 入口;桌面端只存同步数据。
 
   Future<List<PfJournal>> listJournals() async {
-    final rows = await _db.query('journals', orderBy: 'id ASC');
+    final rows = await _db.query(
+      'journals',
+      where: 'deleted_at_ms = 0',
+      // 新建在前(provider _journals.insert(0) 同语义;core 侧 ASC 供导出)
+      orderBy: 'created_at_ms DESC, id DESC',
+    );
     return rows.map(_journalFromRow).toList();
   }
 
   Future<int> insertJournal(PfJournal j) async {
     final row = _journalToRow(j);
     return _db.insert('journals', row);
+  }
+
+  /// 远端 tombstone / 本地软删(journals 无删除 UI,当前只有远端来源)。
+  Future<void> softDeleteJournal({
+    required String id,
+    required String originDevice,
+    required String userId,
+  }) async {
+    await _db.rawUpdate(
+      'UPDATE journals SET deleted_at_ms = ?, revision = revision + 1, '
+      "sync_state = 'pending', updated_at_ms = ?, origin_device = ?, user_id = ? "
+      'WHERE id = ? AND deleted_at_ms = 0',
+      [
+        DateTime.now().millisecondsSinceEpoch,
+        DateTime.now().millisecondsSinceEpoch,
+        originDevice,
+        userId,
+        id,
+      ],
+    );
+  }
+
+  Future<List<Map<String, Object?>>> listPendingJournals({
+    int limit = 200,
+  }) async {
+    return _db.rawQuery(
+      '''SELECT id, kind, title, content, tags_csv, created_at_ms,
+                revision, updated_at_ms, deleted_at_ms,
+                origin_device, user_id, payload
+         FROM journals WHERE sync_state = 'pending'
+         ORDER BY updated_at_ms ASC LIMIT ?''',
+      [limit],
+    );
+  }
+
+  Future<void> applyRemoteJournal({
+    required String id,
+    required int revision,
+    required int updatedAtMs,
+    required String originDevice,
+    required String userId,
+    required String payload,
+    required Map<String, Object?> fields,
+  }) async {
+    await _db.transaction((txn) async {
+      final exists = (await txn.query(
+        'journals',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      )).isNotEmpty;
+      final row = <String, Object?>{
+        ...fields,
+        'revision': revision,
+        'updated_at_ms': updatedAtMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+        'payload': payload,
+        'sync_state': 'synced',
+      };
+      if (exists) {
+        await txn.update('journals', row, where: 'id = ?', whereArgs: [id]);
+      } else {
+        row['id'] = id;
+        await txn.insert('journals', row);
+      }
+    });
+  }
+
+  Future<void> markJournalsSynced(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await _db.rawUpdate(
+      "UPDATE journals SET sync_state = 'synced' WHERE id IN ($placeholders)",
+      ids,
+    );
+  }
+
+  Future<Map<String, Object?>?> localJournalCandidate(String id) async {
+    final rows = await _db.query(
+      'journals',
+      columns: ['id', 'revision', 'updated_at_ms', 'origin_device', 'payload'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
   }
 
   // === Row mappers =============================================================
@@ -2584,6 +2718,14 @@ class AppDatabase {
     'title': j.title,
     'content': j.content,
     'tags_csv': _csv(j.tags),
+    'created_at_ms': j.createdAt?.millisecondsSinceEpoch ?? 0,
+    'revision': j.syncMeta.revision,
+    'sync_state': j.syncMeta.syncState,
+    'updated_at_ms': j.syncMeta.updatedAt?.millisecondsSinceEpoch ?? 0,
+    'origin_device': j.syncMeta.originDevice,
+    'user_id': j.syncMeta.userId,
+    'deleted_at_ms': j.deletedAt?.millisecondsSinceEpoch ?? 0,
+    'payload': '',
   };
 
   Map<String, Object?> _sessionToRow(PfSession s) => {
@@ -2632,6 +2774,23 @@ class AppDatabase {
     title: (r['title'] as String?) ?? '',
     content: (r['content'] as String?) ?? '',
     tags: _splitCsv((r['tags_csv'] as String?) ?? ''),
+    createdAt:
+        (r['created_at_ms'] as int?) != null && (r['created_at_ms'] as int) > 0
+        ? DateTime.fromMillisecondsSinceEpoch(r['created_at_ms'] as int)
+        : null,
+    deletedAt:
+        (r['deleted_at_ms'] as int?) != null && (r['deleted_at_ms'] as int) > 0
+        ? DateTime.fromMillisecondsSinceEpoch(r['deleted_at_ms'] as int)
+        : null,
+    syncMeta: PfSyncMeta(
+      revision: (r['revision'] as int?) ?? 1,
+      updatedAt: r['updated_at_ms'] != null && (r['updated_at_ms'] as int) > 0
+          ? DateTime.fromMillisecondsSinceEpoch(r['updated_at_ms'] as int)
+          : null,
+      originDevice: (r['origin_device'] as String?) ?? '',
+      syncState: (r['sync_state'] as String?) ?? 'synced',
+      userId: (r['user_id'] as String?) ?? '',
+    ),
   );
 
   // payload 列语义(P1 起):**远端权威 JSON 的缓存**,只在 applyRemoteTask /

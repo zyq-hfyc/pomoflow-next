@@ -257,12 +257,41 @@ class PfJournal {
     required this.title,
     this.content = '',
     this.tags = const [],
+    this.createdAt,
+    this.deletedAt,
+    this.syncMeta = const PfSyncMeta(),
   });
 
-  /// P3d-B-Phase-2 顺手切 String(下批 Journal 同步时不返工)。
+  /// P3d-B-Phase-2 顺手切 String(Journal 同步批已接上,对齐 core `Journal.id`)。
   final String id;
   final JournalKind kind;
   final String title;
   final String content;
   final List<String> tags;
+
+  /// 创建时间(列表展示序;core created_at,老本地行 = epoch 0 不参与排序失真)
+  final DateTime? createdAt;
+
+  /// 软删除墓碑(远端 tombstone 收敛用;本地 UI 永远读未删行)
+  final DateTime? deletedAt;
+  final PfSyncMeta syncMeta;
+
+  PfJournal copyWith({
+    JournalKind? kind,
+    String? title,
+    String? content,
+    List<String>? tags,
+    DateTime? createdAt,
+    DateTime? deletedAt,
+    PfSyncMeta? syncMeta,
+  }) => PfJournal(
+    id: id,
+    kind: kind ?? this.kind,
+    title: title ?? this.title,
+    content: content ?? this.content,
+    tags: tags ?? this.tags,
+    createdAt: createdAt ?? this.createdAt,
+    deletedAt: deletedAt ?? this.deletedAt,
+    syncMeta: syncMeta ?? this.syncMeta,
+  );
 }
