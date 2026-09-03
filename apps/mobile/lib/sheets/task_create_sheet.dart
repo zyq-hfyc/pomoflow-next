@@ -938,20 +938,32 @@ class _DropdownField extends StatelessWidget {
       constraints: const BoxConstraints(minWidth: 220),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       color: theme.pfSurface,
-      itemBuilder: (_) => [
-        for (final o in options)
-          PopupMenuItem(
-            value: o,
-            height: 44,
-            child: Text(
-              o,
-              style: TextStyle(
-                fontSize: 15,
-                color: o == value ? theme.pfBrand : theme.colorScheme.onSurface,
+      itemBuilder: (_) => options.isEmpty
+          // 空选项兜底:否则弹出零内容菜单,真机上形如一层点不开的
+          // 透明蒙层(所属项目在 provider 未加载完时会短暂为空)。
+          ? [
+              const PopupMenuItem(
+                enabled: false,
+                height: 44,
+                child: Text('暂无选项', style: TextStyle(fontSize: 14)),
               ),
-            ),
-          ),
-      ],
+            ]
+          : [
+              for (final o in options)
+                PopupMenuItem(
+                  value: o,
+                  height: 44,
+                  child: Text(
+                    o,
+                    style: TextStyle(
+                      fontSize: 15,
+                      color: o == value
+                          ? theme.pfBrand
+                          : theme.colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+            ],
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
