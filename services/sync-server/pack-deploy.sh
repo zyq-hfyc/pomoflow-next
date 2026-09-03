@@ -4,6 +4,8 @@
 # 背景:服务器只需要 源码子集 + 预编译二进制 + docker compose 物料即可部署;
 #       服务器端编译会吃 10-20G 磁盘(2026-08-22 事故),默认不走。
 # 产物:artifacts/pomoflow-sync-deploy-<日期>.tar.gz(有预编译二进制时约 15-20M)
+# 排除本地构建噪音:根/nested target、mobile build/.dart_tool/.gradle、
+# node_modules/dist —— 2026-09-03 修复:mobile 构建目录 3.1G 曾把包撑到 1.2G。
 #
 # 用法(仓库根或任意目录均可,脚本自定位):
 #   bash services/sync-server/build-local.sh    # ① 先在本地交叉编译出二进制(改代码后需重跑)
@@ -35,6 +37,10 @@ fi
 
 tar -czf "$OUT" \
   --exclude='pomoflow-next/target' \
+  --exclude='pomoflow-next/apps/desktop/target' \
+  --exclude='pomoflow-next/tools/migrate-v1/target' \
+  --exclude='pomoflow-next/apps/mobile/build' \
+  --exclude='pomoflow-next/apps/mobile/.dart_tool' \
   --exclude='pomoflow-next/.git' \
   --exclude='pomoflow-next/.claude' \
   --exclude='pomoflow-next/.github' \
@@ -43,6 +49,7 @@ tar -czf "$OUT" \
   --exclude='*/.env' \
   --exclude='*/node_modules' \
   --exclude='*/dist' \
+  --exclude='*/.gradle' \
   -C .. pomoflow-next
 
 SIZE="$(du -h "$OUT" | cut -f1)"
