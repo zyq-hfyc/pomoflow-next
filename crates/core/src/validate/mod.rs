@@ -13,7 +13,7 @@
 //! | project.name / tag.name | 1–200 |
 //! | subtask.title | 1–500 |
 //! | motto.text | 1–500;motto.author ≤64 |
-//! | journal.kind | todo/wish/plan/note;title 1–200;content ≤5000(v2) |
+//! | journal.kind | todo/wish/plan/note;标题/内容至少一项非空;title ≤200;content ≤5000(v2) |
 //! | session.duration | 1–1000 分钟 |
 //! | list limit | ≤5000(v1 default 1000) |
 
@@ -68,7 +68,12 @@ pub fn validate_motto(motto: &Motto) -> CoreResult<()> {
     Ok(())
 }
 
-/// 手账校验(v2 新实体;上限沿 v1 task 口径:title 1–200 / content ≤5000)。
+/// 手账校验(v2 新实体;上限沿 v1 task 口径:title ≤200 / content ≤5000)。
+///
+/// 空标题口径对齐移动端「标题和内容至少填一项」(item_create_sheet /
+/// journal_edit_sheet 同文案)—— 小记常为空标题 + 纯内容,v1 task 的
+/// title 必填语义不适用于本实体。此前误沿 task 口径要求 title 非空,
+/// 移动端空标题小记在桌面侧校验会被拒(P3i 订正,跨端语义锁)。
 pub fn validate_journal(journal: &Journal) -> CoreResult<()> {
     if !JOURNAL_KINDS.contains(&journal.kind.as_str()) {
         return Err(CoreError::validation(format!(
@@ -76,11 +81,16 @@ pub fn validate_journal(journal: &Journal) -> CoreResult<()> {
             JOURNAL_KINDS, journal.kind
         )));
     }
-    validate_title(&journal.title, "journal.title", 200)?;
-    if journal.content.chars().count() > 5000 {
+    if journal.title.trim().is_empty() && journal.content.trim().is_empty() {
         return Err(CoreError::validation(
-            "journal.content 不能超过 5000 字符",
+            "journal.title 与 journal.content 至少填一项",
         ));
+    }
+    if journal.title.chars().count() > 200 {
+        return Err(CoreError::validation("journal.title 不能超过 200 字符"));
+    }
+    if journal.content.chars().count() > 5000 {
+        return Err(CoreError::validation("journal.content 不能超过 5000 字符"));
     }
     Ok(())
 }
@@ -137,6 +147,35 @@ fn validate_title(value: &str, field: &str, max_chars: usize) -> CoreResult<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn journal_empty_title_with_content_accepted() {
+        // 移动端口径:小记常为空标题 + 纯内容(P3i 订正,此前误沿 task 必填)
+        let mut j = Journal::new("note", "");
+        j.content = "今天走了八千步".into();
+        validate_journal(&j).unwrap();
+    }
+
+    #[test]
+    fn journal_title_and_content_both_empty_rejected() {
+        let j = Journal::new("note", "   ");
+        assert!(validate_journal(&j).is_err());
+    }
+
+    #[test]
+    fn journal_title_over_200_rejected() {
+        let mut j = Journal::new("wish", "ok");
+        j.title = "长".repeat(201);
+        assert!(validate_journal(&j).is_err());
+        j.title = "长".repeat(200);
+        validate_journal(&j).unwrap();
+    }
+
+    #[test]
+    fn journal_bad_kind_rejected() {
+        let j = Journal::new("diary", "ok");
+        assert!(validate_journal(&j).is_err());
+    }
 
     #[test]
     fn empty_title_rejected() {
