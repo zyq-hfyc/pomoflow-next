@@ -528,8 +528,16 @@ class _ConflictRow extends StatelessWidget {
         return '子任务';
       case 'daily_review':
         return '日复盘';
+      case 'weekly_review':
+        return '周复盘';
+      case 'monthly_review':
+        return '月复盘';
+      case 'yearly_review':
+        return '年复盘';
       case 'motto':
         return '座右铭';
+      case 'journal':
+        return '手账';
       case 'pomodoro_session':
         return '番茄';
       case 'task_tag':
