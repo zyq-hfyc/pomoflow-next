@@ -615,6 +615,8 @@ export const en: Dict = {
     empty: '(empty)',
     monthlyReview: '📋 Monthly review',
     monthlyPlaceholder: 'Monthly summary…',
+    yearlyTitle: '🏆 {year} Yearly review',
+    yearlyPlaceholder: 'Yearly summary and next-year direction…',
   },
   help: {
     tab: { manual: 'User Manual', faq: 'FAQ', contact: 'Contact Us' },
@@ -667,7 +669,7 @@ export const en: Dict = {
         items: [
           { text: 'Monthly view, grouped by natural weeks (Mon–Sun); each week is laid out in a 3+3+1 row split.' },
           { text: 'Each day cell shows that day’s tasks (a square checkbox toggles completion) plus a daily-review text box.' },
-          { text: 'Each week has a weekly-review box at the bottom. The right panel shows the month’s weekly reviews (read-only) + a monthly review (editable).' },
+          { text: 'Each week has a weekly-review box at the bottom. The right panel shows the month’s weekly reviews (read-only) + a monthly review (editable) + a yearly review (editable).' },
           { text: 'Supports previous/next month and year/month dropdowns.' },
           { text: 'The “daily review” on the timer page syncs with the same day’s daily review in Journal mode.' },
         ],
@@ -716,7 +718,7 @@ export const en: Dict = {
         { q: 'Why do task reminders not fire during focus?', a: 'By design. During focus, all task reminders are suppressed so your focus isn’t interrupted. Skipped reminders are shown after focus ends.' },
         { q: 'What if task reminders don’t show a notification?', a: 'On first use the browser asks for notification permission — click “Allow”. If you denied it, re-enable notifications via the settings icon on the left of the address bar. Also, a reminder only fires when the task has a due date with a specific time (HH:MM) and a reminder option set.' },
         { q: 'In custom repeat, what’s the difference between interval 0 and interval 1?', a: 'Interval 0 = repeat every cycle (e.g. appears every day). Interval 1 = every other cycle (e.g. weeks 1, 3, 5, skipping 2 and 4). Interval N = skip N cycles, then repeat.' },
-        { q: 'Where do I edit weekly and monthly reviews in Journal mode?', a: 'Weekly reviews are edited in the text box at the bottom of each week block (auto-saved on blur). Monthly reviews are edited in the “📋 Monthly review” box on the right panel. Edits on the left refresh the right panel automatically.' },
+        { q: 'Where do I edit weekly, monthly, and yearly reviews in Journal mode?', a: 'Weekly reviews are edited in the text box at the bottom of each week block (auto-saved on blur). Monthly reviews are edited in the “📋 Monthly review” box on the right panel; yearly reviews sit at the bottom of the same panel (keyed by year, unaffected by month navigation). Edits on the left refresh the right panel automatically.' },
         { q: 'Where are custom mottos stored? Lost on refresh?', a: 'Custom mottos are stored in the database (pomoflow.db) and survive refreshes. The 50 built-in mottos ship with the app. The motto card on the timer page prefers custom mottos (cycling without repeats) and restarts after one full loop.' },
         { q: 'Does focus keep timing after I switch pages? Do auto-breaks still fire?', a: 'Yes. The timer and all auto logic (auto-start break, auto-start next pomodoro, focus-end notification) live in global state, so switching to Tasks/Stats/Settings doesn’t affect them. Focus completions still notify and transition.' },
         { q: 'What if an uploaded background image is too large?', a: 'Uploads are auto-compressed (scaled to 1920px wide, JPEG quality 0.8), so storage isn’t blown up. If an image is still too large to persist, a prompt tells you to reset after refresh.' },

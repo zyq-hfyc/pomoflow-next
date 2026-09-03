@@ -4,7 +4,9 @@
   // 结构:
   //   - 标题 "YYYY年M月 · 复盘"
   //   - 上方:按自然周展示当月各周的周复盘(只读)
-  //   - 下方:月度复盘可编辑 ReviewTextarea(upsert/delete by "YYYY-MM")
+  //   - 中部:月度复盘可编辑 ReviewTextarea(upsert/delete by "YYYY-MM")
+  //   - 底部:年度复盘可编辑 ReviewTextarea(upsert/delete by "YYYY",
+  //     2026-09 复盘入口重构批补齐第四粒度;切月不重置,切年才换)
   //
   // 周序号由周一在当月的位置计算(与左侧手账区块一致),未写复盘的周显示为空 ——
   // 不能按"已保存复盘的下标"编号,否则第一周未写时第二周的复盘会被错标成
@@ -14,9 +16,10 @@
   // 本组件监听变化重新拉取。
 
   import * as api from "../../lib/api";
-  import type { MonthlyReview, WeeklyReview } from "../../lib/api";
+  import type { MonthlyReview, WeeklyReview, YearlyReview } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
   import { getMondays, toISO, pad } from "../../lib/calendar";
+  import { syncState } from "../../lib/syncState.svelte";
   import ReviewTextarea from "../Timer/ReviewTextarea.svelte";
 
   const t = $derived(getDict());
@@ -31,16 +34,19 @@
 
   let weeklyReviews = $state<WeeklyReview[]>([]);
   let monthly = $state<MonthlyReview | null>(null);
+  let yearly = $state<YearlyReview | null>(null);
 
   async function load(y: number, m: number) {
     try {
-      const [w, mr] = await Promise.all([
+      const [w, mr, yr] = await Promise.all([
         api.listWeeklyReviews(y, m),
         api.getMonthlyReview(`${y}-${pad(m)}`),
+        api.getYearlyReview(`${y}`),
       ]);
       if (y !== year || m !== month) return; // 请求期间已切月 → 丢弃过期响应
       weeklyReviews = w;
       monthly = mr;
+      yearly = yr;
     } catch (e) {
       console.warn("month panel load failed", e);
     }
@@ -50,6 +56,7 @@
     const y = year;
     const m = month;
     void reviewVersion; // 周复盘变化后强制重拉
+    void syncState().rev; // 同步完成 → 重拉(与 JournalView 同款,远端编辑可见)
     void load(y, m);
   });
 
@@ -87,6 +94,32 @@
       console.warn("month panel delete failed", e);
     }
   }
+
+  async function saveYearly(text: string) {
+    try {
+      const r: YearlyReview = yearly
+        ? { ...yearly, content: text }
+        : {
+            id: crypto.randomUUID(),
+            year: `${year}`,
+            content: text,
+            updated_at: new Date().toISOString(),
+          };
+      await api.upsertYearlyReview(r);
+      await load(year, month);
+    } catch (e) {
+      console.warn("month panel yearly save failed", e);
+    }
+  }
+
+  async function removeYearly() {
+    try {
+      await api.deleteYearlyReview(`${year}`);
+      await load(year, month);
+    } catch (e) {
+      console.warn("month panel yearly delete failed", e);
+    }
+  }
 </script>
 
 <aside class="panel" aria-label={fmt(t.monthPanel.title, { year, month })}>
@@ -120,6 +153,18 @@
       rows={6}
       onSave={saveMonthly}
       onDelete={removeMonthly}
+    />
+  </div>
+
+  <!-- 年度复盘(可编辑;键为年份,切月不变) -->
+  <div class="yearly-block">
+    <div class="label">{fmt(t.monthPanel.yearlyTitle, { year })}</div>
+    <ReviewTextarea
+      value={yearly?.content || null}
+      placeholder={t.monthPanel.yearlyPlaceholder}
+      rows={8}
+      onSave={saveYearly}
+      onDelete={removeYearly}
     />
   </div>
 </aside>
@@ -182,7 +227,8 @@
     word-break: break-word;
   }
 
-  .monthly-block {
+  .monthly-block,
+  .yearly-block {
     border-top: 1px solid var(--color-border, #e5e2dd);
     padding-top: 0.75rem;
   }
