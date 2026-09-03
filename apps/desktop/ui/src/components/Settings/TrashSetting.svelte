@@ -6,7 +6,7 @@
   // 走 push 通道让其他端收敛;`purge_task` 物理删除,不可恢复 —— 与 LWW 同步
   // 收敛后多端都不再有该行。
 
-  import { onMount } from "svelte";
+  import { syncState } from "../../lib/syncState.svelte";
   import { listDeletedTasks, restoreTask, purgeTask } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
   import type { TaskView } from "../../lib/api";
@@ -17,7 +17,12 @@
   let busy = $state(false);
   let error = $state<string | null>(null);
 
-  onMount(() => void load());
+  // 同步完成 → 重拉:远端增删在「本页开着不动」时也能看到
+  //(设置页切走会卸载重进,这里补的是同步落地瞬间本页仍打开的场景)。
+  $effect(() => {
+    void syncState().rev;
+    void load();
+  });
 
   async function load() {
     busy = true;

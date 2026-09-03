@@ -4,7 +4,7 @@
   // 添加(text 校验 1-500 字,author ≤ 64 字)+ 列表 + 删除。
   // 数据走后端 motto 命令(list/upsert/delete),番茄钟页 MottoCard 优先轮播。
 
-  import { onMount } from "svelte";
+  import { syncState } from "../../lib/syncState.svelte";
   import { Plus, Trash2 } from "lucide-svelte";
   import * as api from "../../lib/api";
   import type { Motto } from "../../lib/api";
@@ -34,7 +34,10 @@
     }
   }
 
-  onMount(() => {
+  // 同步完成 → 重拉:远端增删在「本页开着不动」时也能看到
+  //(设置页切走会卸载重进,这里补的是同步落地瞬间本页仍打开的场景)。
+  $effect(() => {
+    void syncState().rev;
     void load();
   });
 

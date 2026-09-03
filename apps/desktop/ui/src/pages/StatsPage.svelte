@@ -26,6 +26,7 @@
     Award,
   } from "lucide-svelte";
   import { statsRange } from "../lib/api";
+  import { syncState } from "../lib/syncState.svelte";
   import type { RangeStats } from "../lib/api";
   import { getDict, fmt } from "../lib/i18n.svelte";
   import {
@@ -119,8 +120,9 @@
     highlights ? highlights.projects : [],
   );
 
-  // === 拉数:维度变化 → 当前区间 + 上一区间 ===
+  // === 拉数:维度变化或同步完成 → 当前区间 + 上一区间 ===
   $effect(() => {
+    void syncState().rev; // 同步拉下别端番茄 → 统计不重进页面即刷新
     const r = getRange(dim);
     const p = getPrevRange(dim);
     const seq = ++loadSeq;

@@ -7,7 +7,7 @@
   //     (arrayMove 语义),乐观更新 → reorderTags,失败回滚 + 3 秒错误条
   //   - 行内改名 / 换色 / 删除(v1 行为;编辑态禁用拖拽避免误拖表单)
 
-  import { onMount } from "svelte";
+  import { syncState } from "../../lib/syncState.svelte";
   import { GripVertical } from "lucide-svelte";
   import * as api from "../../lib/api";
   import type { Tag } from "../../lib/api";
@@ -47,7 +47,10 @@
     }
   }
 
-  onMount(() => {
+  // 同步完成 → 重拉:远端增删在「本页开着不动」时也能看到
+  //(设置页切走会卸载重进,这里补的是同步落地瞬间本页仍打开的场景)。
+  $effect(() => {
+    void syncState().rev;
     void load();
   });
 

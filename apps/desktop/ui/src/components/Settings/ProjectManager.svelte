@@ -12,7 +12,7 @@
   //   - 兄弟顺序:本地按 parent_id + display_order 排,整树 flatten 成
   //     ReorderItem[] 调 reorderProjects(乐观更新,失败重载 + 3 秒错误条)
 
-  import { onMount } from "svelte";
+  import { syncState } from "../../lib/syncState.svelte";
   import { ChevronDown, ChevronRight, Plus, Pencil, Trash2 } from "lucide-svelte";
   import * as api from "../../lib/api";
   import type { Project, ReorderItem } from "../../lib/api";
@@ -47,7 +47,10 @@
     }
   }
 
-  onMount(() => {
+  // 同步完成 → 重拉:远端增删在「本页开着不动」时也能看到
+  //(设置页切走会卸载重进,这里补的是同步落地瞬间本页仍打开的场景)。
+  $effect(() => {
+    void syncState().rev;
     void load();
   });
 

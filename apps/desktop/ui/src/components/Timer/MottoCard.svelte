@@ -13,6 +13,7 @@
   import type { Motto as ApiMotto } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
   import { mottoVersion } from "../../lib/mottoVersion.svelte";
+import { syncState } from "../../lib/syncState.svelte";
 
   const t = $derived(getDict());
 
@@ -32,9 +33,11 @@
     loadCustom();
   });
 
-  // 设置页增删自定义名言 → 立即重拉(v1 storage 事件广播语义)
+  // 设置页增删自定义名言 → 立即重拉(v1 storage 事件广播语义);
+  // 同步拉到别端的名言库变化 → 也重拉
   $effect(() => {
     void mottoVersion.n;
+    void syncState().rev;
     void loadCustom();
   });
 
