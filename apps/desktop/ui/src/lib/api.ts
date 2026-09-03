@@ -137,6 +137,11 @@ export interface MonthlyReview extends ReviewBase {
   year_month: string;
 }
 
+export interface YearlyReview extends ReviewBase {
+  id: string;
+  year: string;
+}
+
 export interface Motto extends SyncMeta, UserScoped {
   id: string;
   text: string;
@@ -315,6 +320,16 @@ export const upsertMonthlyReview = (review: MonthlyReview) =>
 /** 删除某月复盘(硬删) */
 export const deleteMonthlyReview = (yearMonth: string) =>
   invoke<void>("delete_monthly_review", { yearMonth });
+
+export const getYearlyReview = (year: string) =>
+  invoke<YearlyReview | null>("get_yearly_review", { year });
+
+export const upsertYearlyReview = (review: YearlyReview) =>
+  invoke<YearlyReview>("upsert_yearly_review", { review });
+
+/** 删除某年复盘(硬删) */
+export const deleteYearlyReview = (year: string) =>
+  invoke<void>("delete_yearly_review", { year });
 
 // === SubTask ===
 

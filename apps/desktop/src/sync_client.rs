@@ -536,6 +536,7 @@ fn entity_kind_name(entity: pomoflow_core::sync::EntityKind) -> String {
         EntityKind::DailyReview => "daily_review",
         EntityKind::WeeklyReview => "weekly_review",
         EntityKind::MonthlyReview => "monthly_review",
+        EntityKind::YearlyReview => "yearly_review",
     }
     .to_string()
 }
@@ -576,6 +577,9 @@ fn entity_title(change: &Change) -> String {
             }
             pomoflow_core::sync::EntityKind::MonthlyReview => {
                 m.get("year_month").and_then(|v| v.as_str()).unwrap_or("").to_string()
+            }
+            pomoflow_core::sync::EntityKind::YearlyReview => {
+                m.get("year").and_then(|v| v.as_str()).unwrap_or("").to_string()
             }
             _ => String::new(),
         },

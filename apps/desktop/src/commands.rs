@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use chrono::{NaiveDate, Utc};
 use pomoflow_core::model::{
     DailyReview, Id, Journal, MonthlyReview, Motto, NotificationTemplate, PomodoroSession, Project,
-    SubTask, Tag, Task, TaskStatus, TaskView, Timestamp, WeeklyReview,
+    SubTask, Tag, Task, TaskStatus, TaskView, Timestamp, WeeklyReview, YearlyReview,
 };
 use pomoflow_core::stats::{self, OverviewStats, RangeStats, StatsGroup};
 use pomoflow_core::store::{SqliteStore, Store, TaskQuery};
@@ -567,6 +567,28 @@ pub fn delete_monthly_review(year_month: String, state: State<'_, AppState>) -> 
         .store
         .delete_monthly_review(&year_month)
         .map_err(map_err)
+}
+
+#[tauri::command]
+pub fn get_yearly_review(
+    year: String,
+    state: State<'_, AppState>,
+) -> Result<Option<YearlyReview>, String> {
+    state.store.get_yearly_review(&year).map_err(map_err)
+}
+
+#[tauri::command]
+pub fn upsert_yearly_review(
+    review: YearlyReview,
+    state: State<'_, AppState>,
+) -> Result<YearlyReview, String> {
+    state.store.upsert_yearly_review(review).map_err(map_err)
+}
+
+/// 删除某年复盘(硬删)。
+#[tauri::command]
+pub fn delete_yearly_review(year: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.store.delete_yearly_review(&year).map_err(map_err)
 }
 
 // === SubTask commands ===

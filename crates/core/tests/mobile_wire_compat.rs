@@ -76,7 +76,10 @@ fn mobile_due_at_reminder_custom_repeat_payload_deserializes() {
         .as_object()
         .unwrap()
         .clone();
-    obj.insert("due_date".into(), serde_json::json!("2026-09-02T10:00:00.000Z"));
+    obj.insert(
+        "due_date".into(),
+        serde_json::json!("2026-09-02T10:00:00.000Z"),
+    );
     obj.insert("reminder".into(), serde_json::json!("minutes30"));
     obj.insert("repeat".into(), serde_json::json!("custom"));
     obj.insert(
@@ -95,12 +98,7 @@ fn mobile_due_at_reminder_custom_repeat_payload_deserializes() {
 
     // repeat_config 必须能被 repeat 引擎消费并产出实例(东八区墙钟)。
     let due: DateTime<Utc> = "2026-09-02T10:00:00Z".parse().unwrap();
-    let dates = compute_repeat_dates(
-        t.repeat,
-        Some(due),
-        t.repeat_config.as_deref(),
-        8 * 60,
-    );
+    let dates = compute_repeat_dates(t.repeat, Some(due), t.repeat_config.as_deref(), 8 * 60);
     assert!(!dates.is_empty(), "weekdays 1/3/5 自定义规则应生成实例");
 }
 
@@ -135,7 +133,15 @@ fn mobile_repeat_instance_payload_deserializes() {
 fn mobile_reminder_all_variants_deserialize() {
     // Reminder serde 名无下划线前缀数字(minutes5/hour1/days2 …),
     // mobile `_reminderOptions` 的 key 必须逐个能收。
-    for name in ["none", "on_time", "minutes5", "minutes30", "hour1", "day1", "days2"] {
+    for name in [
+        "none",
+        "on_time",
+        "minutes5",
+        "minutes30",
+        "hour1",
+        "day1",
+        "days2",
+    ] {
         let mut obj = serde_json::from_str::<serde_json::Value>(TASK_JSON)
             .unwrap()
             .as_object()
@@ -144,7 +150,10 @@ fn mobile_reminder_all_variants_deserialize() {
         obj.insert("reminder".into(), serde_json::json!(name));
         let t: Task = serde_json::from_value(serde_json::Value::Object(obj))
             .unwrap_or_else(|e| panic!("reminder={name} 应可反序列化: {e}"));
-        assert_eq!(serde_json::to_string(&t.reminder).unwrap(), format!("\"{name}\""));
+        assert_eq!(
+            serde_json::to_string(&t.reminder).unwrap(),
+            format!("\"{name}\"")
+        );
     }
 }
 
