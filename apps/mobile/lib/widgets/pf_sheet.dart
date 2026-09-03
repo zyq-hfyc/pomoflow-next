@@ -43,14 +43,18 @@ class _SheetScaffold extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // .grab 把手 38×5
-        Container(
-          width: 38,
-          height: 5,
-          margin: const EdgeInsets.only(top: 10, bottom: 4),
-          decoration: BoxDecoration(
-            color: theme.pfLine,
-            borderRadius: BorderRadius.circular(3),
+        // .grab 把手 38×5。Column 是 stretch(标题行需满宽),会把紧约束
+        // 下发给子节点、覆盖声明的 width —— 必须套 Center 转成松约束,
+        // 否则把手被拉成满宽横线(Bug 6)。
+        Center(
+          child: Container(
+            width: 38,
+            height: 5,
+            margin: const EdgeInsets.only(top: 10, bottom: 4),
+            decoration: BoxDecoration(
+              color: theme.pfLine,
+              borderRadius: BorderRadius.circular(3),
+            ),
           ),
         ),
         Padding(
