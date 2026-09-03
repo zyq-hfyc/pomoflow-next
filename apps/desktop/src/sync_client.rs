@@ -531,6 +531,7 @@ fn entity_kind_name(entity: pomoflow_core::sync::EntityKind) -> String {
         EntityKind::SubTask => "sub_task",
         EntityKind::PomodoroSession => "pomodoro_session",
         EntityKind::Motto => "motto",
+        EntityKind::Journal => "journal",
         EntityKind::TaskTag => "task_tag",
         EntityKind::DailyReview => "daily_review",
         EntityKind::WeeklyReview => "weekly_review",
@@ -552,6 +553,20 @@ fn entity_title(change: &Change) -> String {
             }
             pomoflow_core::sync::EntityKind::Motto => {
                 m.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string()
+            }
+            // 手账:title 优先,空则回落 content 首段(移动端小记常无标题)
+            pomoflow_core::sync::EntityKind::Journal => {
+                let t = m.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                if !t.is_empty() {
+                    t.to_string()
+                } else {
+                    m.get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .chars()
+                        .take(30)
+                        .collect()
+                }
             }
             pomoflow_core::sync::EntityKind::DailyReview => {
                 m.get("date").and_then(|v| v.as_str()).unwrap_or("").to_string()
