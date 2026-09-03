@@ -6,6 +6,7 @@ import '../widgets/pf_controls.dart';
 import '../widgets/pf_sheet.dart';
 import 'item_create_sheet.dart';
 import 'note_pad_sheet.dart';
+import 'review_create_sheet.dart';
 import 'task_create_sheet.dart';
 
 /// 快速新建菜单(§5.4,Dock 中间「新建」唤起):3 列网格 5 类 + 说明块。
@@ -69,7 +70,14 @@ Future<void> showQuickCreateSheet(BuildContext context) {
               ),
             ),
             SizedBox(width: 12),
-            Expanded(child: SizedBox()),
+            Expanded(
+              child: _CreateOption(
+                emoji: '🪞',
+                title: '复盘',
+                desc: '日/周/月/年回顾',
+                type: _CreateType.review,
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 12),
@@ -79,7 +87,7 @@ Future<void> showQuickCreateSheet(BuildContext context) {
   );
 }
 
-enum _CreateType { task, todo, wish, plan, note }
+enum _CreateType { task, todo, wish, plan, note, review }
 
 class _CreateOption extends StatelessWidget {
   const _CreateOption({
@@ -119,6 +127,8 @@ class _CreateOption extends StatelessWidget {
           kind: JournalKind.plan,
           sheetTitle: '新建年度规划',
         );
+      case _CreateType.review:
+        showReviewCreateSheet(context);
     }
   }
 
