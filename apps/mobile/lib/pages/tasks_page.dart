@@ -25,6 +25,8 @@ class _TasksPageState extends State<TasksPage> {
   String? _filterProject; // null = 全部
   PfPriority? _filterPriority; // null = 全部
   String? _filterTag; // null = 全部
+  JournalKind? _journalKind; // 手账视图四类筛选,null = 全部
+  String? _journalTag; // 手账自由文本标签筛选,null = 全部
 
   @override
   Widget build(BuildContext context) {
@@ -35,20 +37,42 @@ class _TasksPageState extends State<TasksPage> {
     final filtered = _applyFilters(
       isJournal ? const <PfTask>[] : tasks.viewTasks(_view),
     );
-    // 4 统计从**当前视图任务**实时算(此前 _viewStats 硬编码 demo):
-    // 预计/已专注分钟 = 番茄数 ×(任务级时长 || 25)。
+    // 手账视图 → kind/tag/搜索 同套叠加语义。
+    final journals = isJournal
+        ? applyJournalFilters(
+            tasks.journals,
+            kind: _journalKind,
+            tag: _journalTag,
+            query: _query,
+          )
+        : const <PfJournal>[];
+    // 4 统计卡:任务视图从当前视图任务实时算(预计/已专注分钟 =
+    // 番茄数 ×(任务级时长 || 25));手账视图显示四类条数(随筛选联动)。
     int minutesPer(PfTask t) =>
         t.pomodoroDuration > 0 ? t.pomodoroDuration : 25;
-    final estMinutes = filtered.fold<int>(
-      0,
-      (a, t) => a + t.estimatedPomos * minutesPer(t),
-    );
-    final doing = filtered.where((t) => !t.completed).length;
-    final focusedMinutes = filtered.fold<int>(
-      0,
-      (a, t) => a + t.completedPomos * minutesPer(t),
-    );
-    final done = filtered.where((t) => t.completed).length;
+    final List<(String, String)> statCells = isJournal
+        ? [
+            for (final k in JournalKind.values)
+              ('${journals.where((j) => j.kind == k).length}', k.label),
+          ]
+        : () {
+            final estMinutes = filtered.fold<int>(
+              0,
+              (a, t) => a + t.estimatedPomos * minutesPer(t),
+            );
+            final doing = filtered.where((t) => !t.completed).length;
+            final focusedMinutes = filtered.fold<int>(
+              0,
+              (a, t) => a + t.completedPomos * minutesPer(t),
+            );
+            final done = filtered.where((t) => t.completed).length;
+            return [
+              ('$estMinutes', '预计分钟'),
+              ('$doing', '进行中'),
+              ('$focusedMinutes', '已专注'),
+              ('$done', '已完成'),
+            ];
+          }();
 
     return Container(
       color: theme.pfBg,
@@ -97,56 +121,96 @@ class _TasksPageState extends State<TasksPage> {
                   ),
                 ),
               ),
+              // 手账视图:四类二级筛选 chips(与视图 chips 同形态)。
+              if (isJournal)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: PfChipsRow<JournalKind?>(
+                      options: [
+                        (null, '全部'),
+                        for (final k in JournalKind.values)
+                          (k, '${k.emoji} ${k.label}'),
+                      ],
+                      selected: _journalKind,
+                      onSelect: (v) => setState(() => _journalKind = v),
+                    ),
+                  ),
+                ),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                   child: Row(
                     children: [
-                      _StatCell(value: '$estMinutes', label: '预计分钟'),
-                      const SizedBox(width: 9),
-                      _StatCell(value: '$doing', label: '进行中'),
-                      const SizedBox(width: 9),
-                      _StatCell(value: '$focusedMinutes', label: '已专注'),
-                      const SizedBox(width: 9),
-                      _StatCell(value: '$done', label: '已完成'),
+                      for (final (i, cell) in statCells.indexed) ...[
+                        if (i > 0) const SizedBox(width: 9),
+                        Expanded(
+                          child: _StatCell(value: cell.$1, label: cell.$2),
+                        ),
+                      ],
                     ],
                   ),
                 ),
               ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      _FilterChip(
-                        label: '📁 ${_filterProject ?? '全部项目'}',
-                        active: _filterProject != null,
-                        onTap: () => _pickProject(tasks),
-                      ),
-                      _FilterChip(
-                        label: '🔥 ${_filterPriority?.label ?? '优先级'}',
-                        active: _filterPriority != null,
-                        onTap: () => _pickPriority(),
-                      ),
-                      _FilterChip(
-                        label: '🏷 ${_filterTag ?? '标签'}',
-                        active: _filterTag != null,
-                        onTap: () => _pickTag(tasks),
-                      ),
-                    ],
+              // 任务视图:项目/优先级/标签三筛选;手账视图:标签单筛选
+              //(手账标签是自由文本,不关联 tag 实体)。
+              if (!isJournal)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _FilterChip(
+                          label: '📁 ${_filterProject ?? '全部项目'}',
+                          active: _filterProject != null,
+                          onTap: () => _pickProject(tasks),
+                        ),
+                        _FilterChip(
+                          label: '🔥 ${_filterPriority?.label ?? '优先级'}',
+                          active: _filterPriority != null,
+                          onTap: () => _pickPriority(),
+                        ),
+                        _FilterChip(
+                          label: '🏷 ${_filterTag ?? '标签'}',
+                          active: _filterTag != null,
+                          onTap: () => _pickTag(tasks),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _FilterChip(
+                          label: '🏷 ${_journalTag ?? '标签'}',
+                          active: _journalTag != null,
+                          onTap: () => _pickJournalTag(tasks),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              if (isJournal)
+              if (isJournal && journals.isEmpty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _EmptyView(view: '手账'),
+                )
+              else if (isJournal)
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
                   sliver: SliverList.separated(
-                    itemCount: tasks.journals.length,
+                    itemCount: journals.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 10),
                     itemBuilder: (context, i) {
-                      final j = tasks.journals[i];
+                      final j = journals[i];
                       return GestureDetector(
                         onTap: () => showJournalEditSheet(context, j),
                         behavior: HitTestBehavior.opaque,
@@ -248,6 +312,20 @@ class _TasksPageState extends State<TasksPage> {
     );
     if (picked != null) {
       setState(() => _filterTag = picked.$1);
+    }
+  }
+
+  /// 手账标签来自**全量**手账(不受当前 kind 筛选限制),便于换类不清筛选。
+  Future<void> _pickJournalTag(TaskProvider tasks) async {
+    final tags = tasks.journals.expand((j) => j.tags).toSet().toList()..sort();
+    final picked = await _pickSheet<String?>(
+      title: '按标签筛选',
+      options: [null, ...tags],
+      selected: _journalTag,
+      labelOf: (t) => t ?? '全部标签',
+    );
+    if (picked != null) {
+      setState(() => _journalTag = picked.$1);
     }
   }
 
@@ -593,6 +671,25 @@ class _TaskCard extends StatelessWidget {
 void _goFocus(BuildContext context) {
   // 切到 Dock Tab 0(专注)—— 经 NavProvider,跨屏动作统一入口。
   context.read<NavProvider>().select(0);
+}
+
+/// 手账筛选(手账视图):kind/tag 精确 + 搜索标题/内容/标签模糊,
+/// 多条件叠加(对齐 _applyFilters 语义)。纯函数供单测。
+List<PfJournal> applyJournalFilters(
+  List<PfJournal> src, {
+  JournalKind? kind,
+  String? tag,
+  String query = '',
+}) {
+  final q = query.trim().toLowerCase();
+  return src.where((j) {
+    if (kind != null && j.kind != kind) return false;
+    if (tag != null && !j.tags.contains(tag)) return false;
+    if (q.isEmpty) return true;
+    return j.title.toLowerCase().contains(q) ||
+        j.content.toLowerCase().contains(q) ||
+        j.tags.any((t) => t.toLowerCase().contains(q));
+  }).toList();
 }
 
 /// 手账条目卡:类型 emoji + 标题/内容 + 标签。
