@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/motto_engine.dart';
 import '../models/task.dart';
 import '../providers/settings_provider.dart';
 import '../providers/task_provider.dart';
@@ -470,18 +471,38 @@ class _FocusPageState extends State<FocusPage> {
   }
 }
 
-/// 座右铭卡(.motto)—— 专注屏底部。
-class _Motto extends StatelessWidget {
+/// 座右铭卡(.motto)—— 专注屏底部,严格对齐桌面 MottoCard:
+/// 名言文本 + 右对齐作者署名 + 刷新按钮手动换一条。
+/// 轮播语义见 [MottoPicker];自定义池来自桌面编辑/同步,空池回退内置。
+class _Motto extends StatefulWidget {
   const _Motto();
+
+  @override
+  State<_Motto> createState() => _MottoState();
+}
+
+class _MottoState extends State<_Motto> {
+  final MottoPicker _picker = MottoPicker();
+  Motto? _current;
+  bool _fromCustom = false;
+
+  void _maybeInit(List<Motto> mottos) {
+    // 当前条仍有效 = 来自内置且池仍空,或来自自定义且仍在池中;
+    // 失效(首帧 / 池首次加载 / 当前条被删 / 池清空)→ 重选初始条。
+    final valid =
+        _current != null &&
+        (_fromCustom ? mottos.contains(_current!) : mottos.isEmpty);
+    if (valid) return;
+    _fromCustom = mottos.isNotEmpty;
+    _current = _picker.initial(mottos);
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // 座右铭池(桌面编辑,同步而来);空池保底静态文案。
     final mottos = context.watch<TaskProvider>().mottos;
-    final motto = mottos.isEmpty
-        ? ('专注当下，方得始终。', '今日座右铭')
-        : mottos[DateTime.now().millisecond % mottos.length];
+    _maybeInit(mottos);
+    final motto = _current!;
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
       padding: const EdgeInsets.all(16),
@@ -491,6 +512,7 @@ class _Motto extends StatelessWidget {
         border: Border.all(color: theme.pfBrand100),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             '“',
@@ -498,12 +520,41 @@ class _Motto extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              motto.$1 + (motto.$2.isEmpty ? '' : '—— ${motto.$2}'),
-              style: PfType.secondary.copyWith(
-                fontSize: 14,
-                color: theme.colorScheme.onSurface,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  motto.$1,
+                  style: PfType.secondary.copyWith(
+                    fontSize: 14,
+                    height: 1.5,
+                    color: theme.colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    '—— ${motto.$2}',
+                    style: PfType.secondary.copyWith(
+                      fontSize: 12,
+                      color: theme.pfMuted,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: () => setState(() {
+              _fromCustom = mottos.isNotEmpty;
+              _current = _picker.next(mottos);
+            }),
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(Icons.refresh, size: 18, color: theme.pfMuted),
             ),
           ),
         ],
