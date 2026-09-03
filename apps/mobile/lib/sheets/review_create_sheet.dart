@@ -23,7 +23,7 @@ Future<void> showReviewCreateSheet(BuildContext context) {
           title: '日复盘',
           desc: '回顾某一天的专注与收获',
           period: ReviewPeriod.daily,
-          onTap: () => _pickAndOpen(ctx, context, ReviewPeriod.daily),
+          onTap: () => _pickAndOpen(ctx, ReviewPeriod.daily),
         ),
         const SizedBox(height: 10),
         _PeriodRow(
@@ -31,7 +31,7 @@ Future<void> showReviewCreateSheet(BuildContext context) {
           title: '周复盘',
           desc: '按周总结节奏,选日自动对齐周一',
           period: ReviewPeriod.weekly,
-          onTap: () => _pickAndOpen(ctx, context, ReviewPeriod.weekly),
+          onTap: () => _pickAndOpen(ctx, ReviewPeriod.weekly),
         ),
         const SizedBox(height: 10),
         _PeriodRow(
@@ -39,7 +39,7 @@ Future<void> showReviewCreateSheet(BuildContext context) {
           title: '月复盘',
           desc: '按月盘点趋势与偏差',
           period: ReviewPeriod.monthly,
-          onTap: () => _pickAndOpen(ctx, context, ReviewPeriod.monthly),
+          onTap: () => _pickAndOpen(ctx, ReviewPeriod.monthly),
         ),
         const SizedBox(height: 10),
         _PeriodRow(
@@ -47,7 +47,7 @@ Future<void> showReviewCreateSheet(BuildContext context) {
           title: '年复盘',
           desc: '年度总结与来年方向',
           period: ReviewPeriod.yearly,
-          onTap: () => _pickAndOpen(ctx, context, ReviewPeriod.yearly),
+          onTap: () => _pickAndOpen(ctx, ReviewPeriod.yearly),
         ),
         const SizedBox(height: 12),
         const PfNote(text: '四种粒度都可选日期;写过的日期再进入会带出内容继续编辑。'),
@@ -56,17 +56,24 @@ Future<void> showReviewCreateSheet(BuildContext context) {
   );
 }
 
-/// 关 sheet(用 body ctx)→ 用外层 context 弹选日期 → 跳复盘页。
-Future<void> _pickAndOpen(
-  BuildContext sheetCtx,
-  BuildContext outerCtx,
-  ReviewPeriod period,
-) async {
+/// 关 sheet(用 body ctx)→ 弹选日期 → 跳复盘页。
+///
+/// pop 前先捕获 Navigator:本 sheet 的调用方(快速新建)是「先 pop 自己
+/// 再开本 sheet」的,传进来的外层 context 在用户点行时早已随旧路由销毁,
+/// 直接用它弹日期器会抛「deactivated widget」异常(Bug 8)。
+/// `nav.context` 是 Navigator 自己的 context,常驻有效且其上有
+/// Theme/Localizations,弹对话框/推页面都安全。
+Future<void> _pickAndOpen(BuildContext sheetCtx, ReviewPeriod period) async {
+  final nav = Navigator.of(sheetCtx);
   Navigator.pop(sheetCtx);
-  final picked = await pickReviewDate(outerCtx, period, initial: DateTime.now());
-  if (picked == null || !outerCtx.mounted) return;
+  final picked = await pickReviewDate(
+    nav.context,
+    period,
+    initial: DateTime.now(),
+  );
+  if (picked == null || !nav.mounted) return;
   ReviewPage.open(
-    outerCtx,
+    nav.context,
     period: period,
     key: reviewKeyOf(period, picked),
   );

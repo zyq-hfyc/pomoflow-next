@@ -18,7 +18,7 @@ void main() {
               child: TextButton(
                 onPressed: () => showQuickCreateSheet(ctx),
                 child: const Text('open'),
-            ),
+              ),
             ),
           ),
         ),
@@ -42,7 +42,7 @@ void main() {
               child: TextButton(
                 onPressed: () => showReviewCreateSheet(ctx),
                 child: const Text('open'),
-            ),
+              ),
             ),
           ),
         ),
@@ -74,7 +74,7 @@ void main() {
                   );
                 },
                 child: const Text('pick'),
-            ),
+              ),
             ),
           ),
         ),
@@ -111,7 +111,7 @@ void main() {
                   );
                 },
                 child: const Text('pick'),
-            ),
+              ),
             ),
           ),
         ),
@@ -125,5 +125,40 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(await picked, isNull);
+  });
+
+  // Bug 8(2026-09)回归锁:快速新建先 pop 自己再开复盘 sheet,复盘行
+  // 再 pop 后弹日期器 —— 旧代码把已销毁路由的 context 传给 showDatePicker,
+  // 抛 deactivated-widget 异常,表现为「点日/周复盘无反应」。
+  // 此测试在旧代码上失败(日期器不出现)。
+  testWidgets('tapping 日复盘 from quick-create chain opens the date picker', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(),
+        home: Builder(
+          builder: (ctx) => Scaffold(
+            body: Center(
+              child: TextButton(
+                onPressed: () => showQuickCreateSheet(ctx),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('复盘'));
+    await tester.pumpAndSettle(); // 快速新建已出栈销毁,复盘 sheet 打开
+    expect(find.text('日复盘'), findsOneWidget);
+
+    await tester.tap(find.text('日复盘'));
+    await tester.pumpAndSettle(); // 复盘 sheet 出栈,日期器应当出现
+    // 日粒度走 Material 日历;测试环境无 zh locale,断言日历本体而非按钮文案。
+    expect(find.byType(CalendarDatePicker), findsOneWidget);
   });
 }

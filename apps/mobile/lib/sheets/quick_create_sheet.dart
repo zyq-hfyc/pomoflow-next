@@ -103,32 +103,36 @@ class _CreateOption extends StatelessWidget {
   final _CreateType type;
 
   void _open(BuildContext context) {
+    // pop 前捕获 Navigator,后续 sheet 一律用 nav.context:
+    // 本 context 属于正在出栈的快速新建路由,交给后续异步流程
+    // (如复盘 sheet 再弹日期器)会踩「deactivated widget」(Bug 8)。
+    final nav = Navigator.of(context);
     Navigator.pop(context);
     switch (type) {
       case _CreateType.task:
-        showTaskCreateSheet(context);
+        showTaskCreateSheet(nav.context);
       case _CreateType.note:
-        showNotePadSheet(context);
+        showNotePadSheet(nav.context);
       case _CreateType.todo:
         showItemCreateSheet(
-          context,
+          nav.context,
           kind: JournalKind.todo,
           sheetTitle: '新建待办',
         );
       case _CreateType.wish:
         showItemCreateSheet(
-          context,
+          nav.context,
           kind: JournalKind.wish,
           sheetTitle: '新建愿望',
         );
       case _CreateType.plan:
         showItemCreateSheet(
-          context,
+          nav.context,
           kind: JournalKind.plan,
           sheetTitle: '新建年度规划',
         );
       case _CreateType.review:
-        showReviewCreateSheet(context);
+        showReviewCreateSheet(nav.context);
     }
   }
 
