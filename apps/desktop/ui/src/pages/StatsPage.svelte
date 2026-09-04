@@ -271,12 +271,6 @@
     max-width: 1040px;
     margin: 0 auto;
   }
-  .page h2 {
-    margin: 0;
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: var(--color-text);
-  }
 
   .dims {
     display: flex;

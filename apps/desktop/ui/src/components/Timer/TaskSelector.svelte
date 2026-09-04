@@ -126,11 +126,14 @@
     white-space: nowrap;
     font-size: 0.9rem;
   }
-  .chev {
+  /* chev 挂在 lucide ChevronDown 的 svg 上(子组件内),本组件作用域
+     选择器编译期判 unused 直接裁掉 —— 箭头从不旋转。父级 .trigger 保持
+     作用域 + 子级 :global 才能命中 */
+  .trigger :global(.chev) {
     transition: transform 0.15s;
     flex-shrink: 0;
   }
-  .chev.open {
+  .trigger :global(.chev.open) {
     transform: rotate(180deg);
   }
 

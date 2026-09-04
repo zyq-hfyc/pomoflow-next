@@ -188,7 +188,7 @@
     } catch (e) {
       error = String(e);
     } finally {
-      busy = null;
+      busy = false;
     }
   }
 
@@ -256,7 +256,7 @@
     } catch (e) {
       error = String(e);
     } finally {
-      busy = null;
+      busy = false;
     }
   }
 
@@ -1125,13 +1125,6 @@
     color: var(--color-text-muted);
   }
 
-  .ac-nav-item.danger {
-    color: #a32d2d;
-  }
-  .ac-nav-item.danger.active {
-    background: #fcebeb;
-    color: #a32d2d;
-  }
   .danger-text {
     color: #a32d2d;
   }

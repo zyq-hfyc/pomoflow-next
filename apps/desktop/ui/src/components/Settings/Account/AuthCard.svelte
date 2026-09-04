@@ -185,12 +185,12 @@
 
       {#if loginTab === "account"}
         <div class="form-group">
-          <label class="form-label">{t.settings.account.username}</label>
-          <input class="form-input" placeholder={t.settings.account.usernamePh} bind:value={username} autocomplete="username" />
+          <label class="form-label" for="f-username">{t.settings.account.username}</label>
+          <input id="f-username" class="form-input" placeholder={t.settings.account.usernamePh} bind:value={username} autocomplete="username" />
         </div>
         <div class="form-group">
-          <label class="form-label">{t.settings.account.password}</label>
-          <input class="form-input" type="password" placeholder={t.settings.account.passwordPh} bind:value={password} autocomplete="current-password" />
+          <label class="form-label" for="f-password">{t.settings.account.password}</label>
+          <input id="f-password" class="form-input" type="password" placeholder={t.settings.account.passwordPh} bind:value={password} autocomplete="current-password" />
         </div>
         <div class="form-row">
           <span class="link" role="button" tabindex="0" onclick={() => switchMode("forgot")} onkeydown={(e) => e.key === "Enter" && switchMode("forgot")}>
@@ -202,12 +202,12 @@
         </button>
       {:else if loginTab === "email"}
         <div class="form-group">
-          <label class="form-label">{t.settings.account.email}</label>
-          <input class="form-input" type="email" placeholder={t.settings.account.emailPh} bind:value={email} autocomplete="email" />
+          <label class="form-label" for="f-email">{t.settings.account.email}</label>
+          <input id="f-email" class="form-input" type="email" placeholder={t.settings.account.emailPh} bind:value={email} autocomplete="email" />
         </div>
         <div class="form-group">
-          <label class="form-label">{t.settings.account.password}</label>
-          <input class="form-input" type="password" placeholder={t.settings.account.passwordPh} bind:value={password} autocomplete="current-password" />
+          <label class="form-label" for="f-password">{t.settings.account.password}</label>
+          <input id="f-password" class="form-input" type="password" placeholder={t.settings.account.passwordPh} bind:value={password} autocomplete="current-password" />
         </div>
         <div class="form-row">
           <span class="link" role="button" tabindex="0" onclick={() => switchMode("forgot")} onkeydown={(e) => e.key === "Enter" && switchMode("forgot")}>
@@ -248,13 +248,13 @@
 
       {#if regTab === "email"}
         <div class="form-group">
-          <label class="form-label">{t.settings.account.email}</label>
-          <input class="form-input" type="email" placeholder={t.settings.account.emailPh} bind:value={email} autocomplete="email" />
+          <label class="form-label" for="f-email">{t.settings.account.email}</label>
+          <input id="f-email" class="form-input" type="email" placeholder={t.settings.account.emailPh} bind:value={email} autocomplete="email" />
         </div>
         <div class="form-group">
-          <label class="form-label">{t.settings.account.code}</label>
+          <label class="form-label" for="f-code">{t.settings.account.code}</label>
           <div class="code-row">
-            <input class="form-input code-input" inputmode="numeric" maxlength="6" placeholder={t.settings.account.codePh} bind:value={code} />
+            <input id="f-code" class="form-input code-input" inputmode="numeric" maxlength="6" placeholder={t.settings.account.codePh} bind:value={code} />
             <button
               type="button"
               class="send-code-btn"
@@ -270,30 +270,30 @@
           </div>
         </div>
         <div class="form-group">
-          <label class="form-label">{t.settings.account.password}</label>
-          <input class="form-input" type="password" placeholder={t.settings.account.passwordPh} bind:value={password} autocomplete="new-password" />
+          <label class="form-label" for="f-password">{t.settings.account.password}</label>
+          <input id="f-password" class="form-input" type="password" placeholder={t.settings.account.passwordPh} bind:value={password} autocomplete="new-password" />
           <StrengthBar value={password} />
         </div>
         <div class="form-group">
-          <label class="form-label">{t.settings.account.confirmPass}</label>
-          <input class="form-input" type="password" placeholder={t.settings.account.confirmPh} bind:value={password2} autocomplete="new-password" />
+          <label class="form-label" for="f-password2">{t.settings.account.confirmPass}</label>
+          <input id="f-password2" class="form-input" type="password" placeholder={t.settings.account.confirmPh} bind:value={password2} autocomplete="new-password" />
         </div>
         <button class="btn-primary" disabled={busy !== null} onclick={() => void doRegister()}>
           {busy === "register" ? t.settings.sync.working : t.settings.account.register}
         </button>
       {:else if regTab === "account"}
         <div class="form-group">
-          <label class="form-label">{t.settings.account.username}</label>
-          <input class="form-input" placeholder={t.settings.account.usernamePh} bind:value={username} autocomplete="username" />
+          <label class="form-label" for="f-username">{t.settings.account.username}</label>
+          <input id="f-username" class="form-input" placeholder={t.settings.account.usernamePh} bind:value={username} autocomplete="username" />
         </div>
         <div class="form-group">
-          <label class="form-label">{t.settings.account.password}</label>
-          <input class="form-input" type="password" placeholder={t.settings.account.passwordPh} bind:value={password} autocomplete="new-password" />
+          <label class="form-label" for="f-password">{t.settings.account.password}</label>
+          <input id="f-password" class="form-input" type="password" placeholder={t.settings.account.passwordPh} bind:value={password} autocomplete="new-password" />
           <StrengthBar value={password} />
         </div>
         <div class="form-group">
-          <label class="form-label">{t.settings.account.confirmPass}</label>
-          <input class="form-input" type="password" placeholder={t.settings.account.confirmPh} bind:value={password2} autocomplete="new-password" />
+          <label class="form-label" for="f-password2">{t.settings.account.confirmPass}</label>
+          <input id="f-password2" class="form-input" type="password" placeholder={t.settings.account.confirmPh} bind:value={password2} autocomplete="new-password" />
         </div>
         <button class="btn-primary" disabled={busy !== null} onclick={() => void doRegister()}>
           {busy === "register" ? t.settings.sync.working : t.settings.account.register}
@@ -333,13 +333,13 @@
 
       {#if forgotStep === 1}
         <div class="form-group">
-          <label class="form-label">{t.settings.account.forgotAccount}</label>
-          <input class="form-input" placeholder={t.settings.account.forgotAccountPh} bind:value={forgotAccount} autocomplete="email" />
+          <label class="form-label" for="f-forgot-account">{t.settings.account.forgotAccount}</label>
+          <input id="f-forgot-account" class="form-input" placeholder={t.settings.account.forgotAccountPh} bind:value={forgotAccount} autocomplete="email" />
         </div>
         <div class="form-group">
-          <label class="form-label">{t.settings.account.code}</label>
+          <label class="form-label" for="f-forgot-code">{t.settings.account.code}</label>
           <div class="code-row">
-            <input class="form-input code-input" inputmode="numeric" maxlength="6" placeholder={t.settings.account.codePh} bind:value={forgotCode} />
+            <input id="f-forgot-code" class="form-input code-input" inputmode="numeric" maxlength="6" placeholder={t.settings.account.codePh} bind:value={forgotCode} />
             <button
               type="button"
               class="send-code-btn"
@@ -362,12 +362,12 @@
         </button>
       {:else if forgotStep === 2}
         <div class="form-group">
-          <label class="form-label">{t.settings.account.newPass}</label>
-          <input class="form-input" type="password" placeholder={t.settings.account.passwordPh} bind:value={password} autocomplete="new-password" />
+          <label class="form-label" for="f-password">{t.settings.account.newPass}</label>
+          <input id="f-password" class="form-input" type="password" placeholder={t.settings.account.passwordPh} bind:value={password} autocomplete="new-password" />
           <StrengthBar value={password} />
         </div>
         <div class="form-group">
-          <label class="form-label">{t.settings.account.newPass2}</label>
+          <label class="form-label" for="f-password2">{t.settings.account.newPass2}</label>
           <input class="form-input" type="password" placeholder={t.settings.account.confirmPh} bind:value={password2} autocomplete="new-password" />
         </div>
         <button class="btn-primary" disabled={busy !== null} onclick={() => void doReset()}>

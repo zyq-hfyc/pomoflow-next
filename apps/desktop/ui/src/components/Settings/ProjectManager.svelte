@@ -780,57 +780,6 @@
     border-radius: var(--radius-md);
     background: var(--color-surface);
   }
-  .color-row {
-    display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    gap: 0.5rem;
-  }
-  .swatch {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    border: 2px solid var(--color-border);
-    cursor: pointer;
-    padding: 0;
-    transition: transform 0.12s, border-color 0.12s;
-  }
-  .swatch:hover {
-    transform: scale(1.08);
-  }
-  .swatch.active {
-    border-color: var(--color-neutral-800);
-    box-shadow: var(--shadow-xs);
-  }
-  .edit-actions {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    gap: 0.75rem;
-  }
-  .link-btn {
-    border: none;
-    background: transparent;
-    color: var(--color-text-muted);
-    font-size: 0.75rem;
-    padding: 0.25rem 0.5rem;
-    cursor: pointer;
-  }
-  .link-btn:hover {
-    color: var(--color-text);
-  }
-  .save-btn {
-    border: none;
-    border-radius: var(--radius-md);
-    background: var(--color-accent-500);
-    color: #fff;
-    font-size: 0.75rem;
-    padding: 0.35rem 0.85rem;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .save-btn:hover {
-    background: var(--color-accent-600);
-  }
 
   .add-child-row {
     padding: 0.25rem 0 0.25rem 24px;

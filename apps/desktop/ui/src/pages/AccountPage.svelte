@@ -8,7 +8,7 @@
   //   (登录 / 注册 / 找回密码)居中,留白充足。
   // 登录成功 / 退出登录 → 就地切换形态,不跳路由;顶栏头像同步(accountState)。
 
-  import { onMount } from "svelte";
+  import { onMount, type Component } from "svelte";
   import {
     UserRound,
     ShieldCheck,
@@ -47,12 +47,14 @@
     }
   }
 
-  const menuItems = $derived<{ key: Section; icon: unknown; label: string; danger?: boolean }[]>([
-    { key: "profile", icon: UserRound, label: t.settings.account.profile },
-    { key: "security", icon: ShieldCheck, label: t.settings.account.security },
-    { key: "thirdparty", icon: Link2, label: t.settings.account.thirdparty },
-    { key: "devices", icon: MonitorSmartphone, label: t.settings.account.devices },
-    { key: "danger", icon: TriangleAlert, label: t.settings.account.dangerZone, danger: true },
+  // lucide-svelte 1.x 导出 Svelte 4 SvelteComponentTyped,与 Svelte 5 Component
+  // 类型不兼容 —— 与 SettingsPage / ProjectSidebar 同款,赋值处 `as any` 绕过(运行期正常)。
+  const menuItems = $derived<{ key: Section; icon: Component<any>; label: string; danger?: boolean }[]>([
+    { key: "profile", icon: UserRound as any, label: t.settings.account.profile },
+    { key: "security", icon: ShieldCheck as any, label: t.settings.account.security },
+    { key: "thirdparty", icon: Link2 as any, label: t.settings.account.thirdparty },
+    { key: "devices", icon: MonitorSmartphone as any, label: t.settings.account.devices },
+    { key: "danger", icon: TriangleAlert as any, label: t.settings.account.dangerZone, danger: true },
   ]);
 
   onMount(async () => {

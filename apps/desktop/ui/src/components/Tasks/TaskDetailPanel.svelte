@@ -287,7 +287,7 @@
   // === 预计番茄数(v1:completed/ N = N 分钟) ===
   const settings = $derived(getSettings());
   const estimatedMinutes = $derived(
-    task.estimated_pomodoros * (task.pomodoro_duration ?? settings.focusDuration),
+    (task.estimated_pomodoros ?? 0) * (task.pomodoro_duration ?? settings.focusDuration),
   );
 
   function onEstimatedChange(e: Event) {
@@ -328,7 +328,7 @@
   <!-- 1. 头部:优先级点 + 标题 + 关闭 -->
   <div class="head">
     <div class="head-left">
-      <span class="pri-dot" style="background-color: {PRIORITY_COLORS[task.priority] ?? PRIORITY_COLORS.none}"></span>
+      <span class="pri-dot" style="background-color: {PRIORITY_COLORS[task.priority ?? "none"]}"></span>
       <input
         class="title-input"
         bind:value={titleDraft}
@@ -388,7 +388,7 @@
       <span class="row-label">
         <span
           class="pri-swatch"
-          style="background-color: {PRIORITY_COLORS[task.priority] ?? PRIORITY_COLORS.none}"
+          style="background-color: {PRIORITY_COLORS[task.priority ?? "none"]}"
         ></span>
         {t.task.detailPriority}
       </span>
@@ -558,7 +558,7 @@
   <!-- 重复:自定义规则弹窗 -->
   <RepeatCustomDialog
     open={repeatDialogOpen}
-    initialConfig={task.repeat_config}
+    initialConfig={task.repeat_config ?? null}
     onConfirm={(cfg) => {
       repeatDialogOpen = false;
       void patchRepeat("custom", cfg);
@@ -779,7 +779,9 @@
     gap: 0.5rem;
     margin-top: 0.5rem;
   }
-  .sub-add-icon {
+  /* 挂在 lucide Plus 的 svg 上(子组件内),作用域选择器会被编译期
+     裁掉 —— 加号吃不到弱色。父级 .sub-add 保持作用域兜住范围 */
+  .sub-add :global(.sub-add-icon) {
     color: var(--color-text-muted, #6b6864);
     flex-shrink: 0;
   }

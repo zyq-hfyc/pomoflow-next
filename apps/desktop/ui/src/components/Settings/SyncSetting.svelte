@@ -765,7 +765,9 @@
     font-size: 0.875rem;
   }
 
-  .spin {
+  /* spin 挂在 lucide RefreshCw 的 svg 上(子组件内),作用域选择器会被
+     编译期裁掉 —— 同步按钮从不转圈。父级 .action 保持作用域兜住范围 */
+  .action :global(.spin) {
     animation: spin 1s linear infinite;
   }
   @keyframes spin {
