@@ -17,6 +17,9 @@
 use notify_rust::Notification;
 
 /// 应用显示名(通知签名)。与 productName 保持一致。
+/// 唯一使用点在 register_aumid 的 windows 块内 → 常量随同 cfg,
+/// 非 Windows 编译时不存在(否则 dead_code,Linux CI -D warnings 拦)。
+#[cfg(windows)]
 const DISPLAY_NAME: &str = "PomoFlow";
 
 /// 启动时注册 AUMID 显示名(HKCU,失败仅告警不阻断启动)。
