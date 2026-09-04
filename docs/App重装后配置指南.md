@@ -10,8 +10,9 @@
 
 | 端 | 填的地址 | 为什么 |
 | ---- | ---------- | -------- |
-| **手机 App**(Wi-Fi) | `http://192.168.3.29:8080` | 走 Windows 宿主机的端口转发进来 |
-| **桌面端 App**(装在 VM 宿主机上) | `http://192.168.75.128:8080` | 与 VM 同机,直连 NAT 网段没问题 |
+| **手机 App**(Tailscale 组网后,推荐) | `http://100.x.y.z:8080` | VM 的 tailnet 固定地址,**任何网络**(流量/公司网/异地)都能连;组建见 [Tailscale组网runbook](./Tailscale组网runbook.md) |
+| **手机 App**(未组网,仅家庭 Wi-Fi) | `http://192.168.3.29:8080` | 走 Windows 宿主机的端口转发进来;**出门即断** |
+| **桌面端 App**(装在 VM 宿主机上) | `http://192.168.75.128:8080` | 与 VM 同机,直连 NAT 网段没问题(组网后也可改填 `100.x` 统一链路) |
 | **浏览器 · 移动端 Web**(宿主机 Chrome) | 登录页填 `http://192.168.75.128:8080` | 宿主机浏览器直连 VM;服务端 CORS 已放行 Web 跨域 |
 | **浏览器 · 桌面端 UI**(宿主机) | `http://localhost:1420` | Vite 开发服务器;**仅界面预览**,数据功能不可用(见下) |
 
@@ -22,6 +23,10 @@
 ## 网络链路
 
 ```
+【链路 A · Tailscale(推荐,任何网络)—— 见 Tailscale组网runbook.md】
+手机 ──(流量/公司网/任何 Wi-Fi)──▶ Tailscale 隧道(WireGuard)──▶ VM 100.x.y.z:8080
+
+【链路 B · portproxy(仅家庭 Wi-Fi 的备用路)】
 手机 ──(同一 Wi-Fi 局域网)──▶ Windows 宿主机 192.168.3.29:8080
         ──(netsh portproxy 端口转发)──▶ VM 192.168.75.128:8080(sync-server)
 ```
@@ -62,6 +67,7 @@ npm --prefix apps/desktop/ui run dev      # → http://localhost:1420
 ## 重装后操作步骤(保姆级)
 
 1. 开 App → 登录页顶部「服务器地址」填 **`http://192.168.3.29:8080`**
+   (已组建 Tailscale 则填 `http://100.x.y.z:8080` —— 在家在外都通,优先)
 2. 登录原账号(桌面端用的同一个账号)
 3. 「我的」→ 手动 **立即同步** → 任务 / 子任务 / 项目 / 标签 / 手账 /
    复盘 / 名言从服务端恢复
@@ -117,9 +123,14 @@ netsh interface portproxy add v4tov4 listenaddress=192.168.3.29 listenport=8080 
 | 点登录无任何反应 | 手机填了 `192.168.75.x`,或宿主机 IP 变了 | 改填 `192.168.3.29:8080`;ipconfig 核对 |
 | 登录报网络错误 | VM 没开 / 服务没跑 | 宿主机 curl healthz 定位 |
 | 宿主机 curl 通、手机不通 | 防火墙 8080 入站 / 不在同一 Wi-Fi | 查入站规则与 Wi-Fi |
+| 出门(流量/异地)连不上 | 没组 Tailscale,或 VPN 被杀 / VM 掉线 | 见 [Tailscale组网runbook](./Tailscale组网runbook.md) 故障排查表 |
 
 ## 变更记录
 
+- **2026-09-04**:新增 Tailscale 链路(`http://100.x.y.z:8080`,任何网络
+  可用,推荐)—— 地址表、链路图、排查表联动更新,原 `192.168.3.29:8080`
+  标注为「仅家庭 Wi-Fi 备用路」;组网步骤见
+  [`Tailscale组网runbook.md`](./Tailscale组网runbook.md)。
 - **2026-09-04**:release 0.2.0 装机实测,`http://192.168.3.29:8080` 登录
   成功;文档建立,同步修正真机验证清单 §0 与 mobile README 的地址示例
   (原先写的 `192.168.75.128:8080` 对手机是误导)。
