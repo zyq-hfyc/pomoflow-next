@@ -59,9 +59,13 @@ docs/                本仓库内文档
 
 ## 测试
 
+- **CI(`.github/workflows/ci.yml`)**:push main 即跑全仓门禁 ——
+  cargo fmt/clippy/test(workspace 全 4 crate)+ UI(svelte-check + tsc + vite
+  build)+ mobile(flutter analyze + test),Ubuntu runner。本地 cargo test
+  跑不了(下述 dlltool 问题)时,直接 push 看 CI。
 - `cargo check --all-targets` —— 类型检查,本地一定过
 - `cargo test --all-targets` —— 单元 + 集成测试,**Windows 上 WinLibs dlltool 触发文件系统 1006 错误**,
-  推荐装 VS Build Tools 或 Linux 跑
+  推荐装 VS Build Tools 或 Linux 跑(或交给 CI)
 - `cargo clippy --all-targets -- -D warnings` —— 零警告
 
 ## 开发流程

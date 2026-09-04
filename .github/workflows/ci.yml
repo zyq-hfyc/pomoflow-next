@@ -2,71 +2,54 @@ name: ci
 
 on:
   push:
+    branches: [main]
     tags:
       - "v*"
+  workflow_dispatch: {}
 
-# CI 触发策略:**只在我主动打 `v*` tag 时跑 CI**,push / PR 不再自动触发。
+# CI 触发策略(2026-09-04 修订):**push main 即跑全仓门禁**。
 #
-# 理由:本地用 `cargo check / test / clippy / fmt` 自我把关就够了,
-# CI 留给发布闸 —— tag push 时同时跑本文件(crates/core 单元闸)与
-# `release.yml`(P1.6 实装完毕:Windows / macOS / Linux 三平台 Tauri 打包 → GitHub Release)。
+# 旧策略(08-16,单 crate 时代)是「只在打 v* tag 时跑,平时本地自我把关」。
+# 此后仓库长成 4 个 cargo crate(core / desktop / migrate-v1 / sync-server)
+# + Flutter 移动端 + Svelte UI,本地门禁出现已知硬伤:Windows 上 WinLibs
+# dlltool 触发文件系统 1006 错误,cargo test 跑不全(见 CLAUDE.md)——
+# 问题要拖到打 tag 那天才在 CI 暴露。Ubuntu runner 全量跑,顺带根治;
+# tag 触发保留(与 release.yml 三平台打包互锁),另加 workflow_dispatch
+# 供手动重跑。
 #
-# 当前阶段目标:验证 crates/core 可编译 + 测试通过 + clippy 零警告 + fmt 风格。
+# 覆盖(5 job):
+#   rust fmt / clippy / test —— workspace 全 4 crate,test 是本 CI 的核心增量
+#   ui —— svelte-check(错误级)+ tsc --noEmit + vite build
+#   mobile —— flutter analyze(零 issue)+ flutter test(单测,sqflite ffi)
+
+concurrency:
+  # 同分支连续 push 时旧的自动取消(省 CI 额度)
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
 jobs:
-  check-core:
-    name: cargo check (core)
+  fmt:
+    name: rustfmt (workspace)
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Cache cargo registry & target
-        uses: actions/cache@v4
-        with:
-          path: |
-              ~/.cargo/registry
-              ~/.cargo/git
-              target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
-          restore-keys: |
-              ${{ runner.os }}-cargo-
-
-      - name: cargo check
-        working-directory: crates/core
-        run: cargo check --all-targets --locked
-
-  test-core:
-    name: cargo test (core)
-    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
-
-      - uses: actions/cache@v4
         with:
-          path: |
-              ~/.cargo/registry
-              ~/.cargo/git
-              target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          components: rustfmt
 
-      - name: cargo test
-        working-directory: crates/core
-        run: cargo test --all-targets --locked
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
 
-  clippy-core:
-    name: clippy (core)
+  clippy:
+    name: clippy (workspace)
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -74,25 +57,119 @@ jobs:
         with:
           components: clippy
 
-      - uses: actions/cache@v4
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
         with:
           path: |
-              ~/.cargo/registry
-              ~/.cargo/git
-              target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: Linux-cargo-clippy-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            Linux-cargo-clippy-
+
+      # desktop crate 链接 Tauri,Ubuntu runner 需装 webkit2gtk 等系统库
+      # (清单 crib 自 release.yml 的 Linux 平台步骤)
+      - name: Install Linux system deps (Tauri)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
 
       - name: cargo clippy
-        working-directory: crates/core
         run: cargo clippy --all-targets --locked -- -D warnings
 
-  fmt:
-    name: rustfmt check
+  test:
+    name: cargo test (workspace)
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
         with:
-          components: rustfmt
-      - name: cargo fmt --check
-        run: cargo fmt --all -- --check
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: Linux-cargo-test-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            Linux-cargo-test-
+
+      - name: Install Linux system deps (Tauri)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+
+      # core 99 + desktop 7 + server 9 + migrate-v1 —— Windows 本地跑不了的那份
+      - name: cargo test
+        run: cargo test --all-targets --locked
+
+  ui:
+    name: desktop UI (svelte-check + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/desktop/ui/package-lock.json
+
+      - name: npm ci
+        working-directory: apps/desktop/ui
+        run: npm ci
+
+      # svelte-check 只对 error 级退出非零;0 警告是本地约定,不在此强制
+      - name: svelte-check
+        working-directory: apps/desktop/ui
+        run: npm run check
+
+      # build 脚本 = tsc --noEmit && vite build,两道都在内
+      - name: tsc + vite build
+        working-directory: apps/desktop/ui
+        run: npm run build
+
+  mobile:
+    name: mobile (flutter analyze + test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.1"
+          cache: true
+
+      # sqflite_common_ffi 运行时 dlopen libsqlite3(runner 一般预装,防兜底)
+      - name: Ensure libsqlite3
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-0
+
+      - name: flutter pub get
+        working-directory: apps/mobile
+        run: flutter pub get
+
+      - name: flutter analyze
+        working-directory: apps/mobile
+        run: flutter analyze
+
+      - name: flutter test
+        working-directory: apps/mobile
+        run: flutter test
