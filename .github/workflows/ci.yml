@@ -81,6 +81,16 @@ jobs:
             libsoup-3.0-dev \
             libjavascriptcoregtk-4.1-dev
 
+      # tauri::generate_context! 在编译期校验 frontendDist(./ui/dist)存在,
+      # 目录缺失直接 proc-macro panic。ui/dist 已 gitignore,干净检出的
+      # runner 上必须先造出来(占位即可 —— 真 UI 产物由 ui job 单独门禁,
+      # rust job 只编译不跑 webview;本地能过是因为有构建残留)。
+      - name: Placeholder ui/dist for generate_context!
+        working-directory: apps/desktop
+        run: |
+          mkdir -p ui/dist
+          echo '<!doctype html><title>pomoflow</title>' > ui/dist/index.html
+
       - name: cargo clippy
         run: cargo clippy --all-targets --locked -- -D warnings
 
@@ -114,6 +124,13 @@ jobs:
             librsvg2-dev \
             libsoup-3.0-dev \
             libjavascriptcoregtk-4.1-dev
+
+      # 同 clippy job:generate_context! 编译期要求 ui/dist 存在(见上)
+      - name: Placeholder ui/dist for generate_context!
+        working-directory: apps/desktop
+        run: |
+          mkdir -p ui/dist
+          echo '<!doctype html><title>pomoflow</title>' > ui/dist/index.html
 
       # core 99 + desktop 7 + server 9 + migrate-v1 —— Windows 本地跑不了的那份
       - name: cargo test

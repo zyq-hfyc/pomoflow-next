@@ -45,7 +45,13 @@ pub fn register_aumid(identifier: &str) {
 /// 权限查询/请求仍走插件 —— Windows 上恒为已授权)。
 #[tauri::command]
 pub fn send_notification(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
+    // AUMID 是 Windows 概念,identifier 绑定只存在于 windows 配置;
+    // 非 Windows 消费掉 app 防 unused(Linux CI -D warnings 会拦),
+    // 与上方 register_aumid 的 cfg 配对同款写法。
+    #[cfg(windows)]
     let identifier = app.config().identifier.clone();
+    #[cfg(not(windows))]
+    let _ = &app;
     tauri::async_runtime::spawn(async move {
         let mut notification = Notification::new();
         #[cfg(windows)]
