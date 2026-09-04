@@ -38,7 +38,12 @@ tauri-plugin-dialog = "2"
 # 系统通知直发(与插件同一 Windows 后端,但 dev 下也显式带 AUMID,
 # 否则回落 PowerShell 标识,通知签名显示"Windows PowerShell")
 notify-rust = "4"
-# AUMID 显示名写入 HKCU(免管理员注册通知签名)
+
+# AUMID 显示名写入 HKCU(免管理员注册通知签名)。
+# winreg 只能在 Windows 编译(lib 里 compile_error!),用法点均 #[cfg(windows)] 门控
+# —— 必须声明为平台专属依赖,否则 Linux/macOS CI 与 release 打包直接挂
+# (2026-09-04 CI 首跑暴露:本地 Windows 编译从不走这条错路)。
+[target.'cfg(windows)'.dependencies]
 winreg = "0.52"
 
 # 同步客户端 HTTP 传输(P1a;rustls 避免原生 OpenSSL 依赖)
