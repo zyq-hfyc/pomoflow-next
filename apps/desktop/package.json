@@ -1,7 +1,7 @@
 {
   "name": "pomoflow-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "PomoFlow Tauri 2 桌面端 —— 启动入口",
   "scripts": {
     "dev": "tauri dev",

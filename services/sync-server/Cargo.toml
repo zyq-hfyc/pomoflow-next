@@ -1,6 +1,6 @@
 [package]
 name = "sync-server"
-version = "0.1.0"
+version = "0.2.0"
 description = "PomoFlow 云端同步服务 —— Push/Pull + LWW 合并(与桌面共享 pomoflow-core)"
 edition.workspace = true
 rust-version.workspace = true

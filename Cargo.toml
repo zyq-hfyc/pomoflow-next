@@ -11,7 +11,7 @@ members = [
 
 # 全局包元信息,被所有 members 继承(可单独覆盖)
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 # Bumped from 1.75 → 1.82 to allow `Option::is_none_or` (stable since 1.82).
 # Rust 1.82 released 2024-10; this is a conservative floor for "modern stable".

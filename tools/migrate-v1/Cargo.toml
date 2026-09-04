@@ -1,6 +1,6 @@
 [package]
 name = "migrate-v1"
-version = "0.1.0"
+version = "0.2.0"
 description = "v1 pomoflow.db → v2 store.db 一键迁移 CLI"
 edition.workspace = true
 rust-version.workspace = true

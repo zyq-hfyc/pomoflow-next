@@ -1,6 +1,6 @@
 [package]
 name = "pomoflow-desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "PomoFlow 桌面端 —— Tauri 2 + Svelte 5"
 edition.workspace = true
 rust-version.workspace = true

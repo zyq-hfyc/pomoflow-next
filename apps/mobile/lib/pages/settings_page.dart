@@ -161,7 +161,7 @@ class SettingsPage extends StatelessWidget {
                     style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                   ),
                   subtitle: Text(
-                    'PomoFlow Mobile · v0.1.0 · 本地优先 + 云端同步',
+                    'PomoFlow Mobile · v0.2.0 · 本地优先 + 云端同步',
                     style: TextStyle(fontSize: 12, color: theme.pfMuted),
                   ),
                 ),
