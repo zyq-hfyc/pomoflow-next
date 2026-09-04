@@ -39,13 +39,6 @@ tauri-plugin-dialog = "2"
 # 否则回落 PowerShell 标识,通知签名显示"Windows PowerShell")
 notify-rust = "4"
 
-# AUMID 显示名写入 HKCU(免管理员注册通知签名)。
-# winreg 只能在 Windows 编译(lib 里 compile_error!),用法点均 #[cfg(windows)] 门控
-# —— 必须声明为平台专属依赖,否则 Linux/macOS CI 与 release 打包直接挂
-# (2026-09-04 CI 首跑暴露:本地 Windows 编译从不走这条错路)。
-[target.'cfg(windows)'.dependencies]
-winreg = "0.52"
-
 # 同步客户端 HTTP 传输(P1a;rustls 避免原生 OpenSSL 依赖)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
@@ -73,6 +66,14 @@ env_logger = { workspace = true }
 # - tauri-plugin-* (notification/autostart/fs/dialog/store):P1.4 才加
 # - tauri-plugin-sql:不打算用,直接 rusqlite 自写
 # - sqlx:不打算用,race condition 没必要
+
+# AUMID 显示名写入 HKCU(免管理员注册通知签名)。
+# winreg 只能在 Windows 编译(lib 里 compile_error!),用法点均 #[cfg(windows)] 门控
+# —— 必须声明为平台专属依赖(且放段尾:TOML 段头终结 [dependencies] 表,
+# 插中间会把后面的依赖全部吞进 windows 专属段,Linux 上凭空消失,
+# 2026-09-04 CI 第二跑实测踩过)。
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
 
 [features]
 # 默认开启;P1.2 / P1.4 阶段会按需扩展。
