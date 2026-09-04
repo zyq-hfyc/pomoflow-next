@@ -21,7 +21,9 @@ flutter run -d chrome          # Web 预览(推荐,无需 Android SDK)
 # flutter run -d <device-id>   # Android 需装对应 SDK
 ```
 
-首次使用:登录页顶部填服务器地址(如 `http://192.168.75.128:8080`)→ 保存 → 登录/注册。
+首次使用:登录页顶部填服务器地址 —— 手机(Wi-Fi)填 `http://192.168.3.29:8080`
+(宿主机端口转发;`192.168.75.x` 是 VMware NAT 网段,手机不可达),
+链路与排查见 `docs/App重装后配置指南.md`。
 
 ## 验证
 
