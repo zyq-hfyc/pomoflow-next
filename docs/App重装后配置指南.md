@@ -9,9 +9,11 @@
 ## 一句话结论:该填哪个地址
 
 | 端 | 填的地址 | 为什么 |
-|----|----------|--------|
-| **手机**(Wi-Fi) | `http://192.168.3.29:8080` | 走 Windows 宿主机的端口转发进来 |
-| **桌面端**(装在 VM 宿主机上) | `http://192.168.75.128:8080` | 与 VM 同机,直连 NAT 网段没问题 |
+| ---- | ---------- | -------- |
+| **手机 App**(Wi-Fi) | `http://192.168.3.29:8080` | 走 Windows 宿主机的端口转发进来 |
+| **桌面端 App**(装在 VM 宿主机上) | `http://192.168.75.128:8080` | 与 VM 同机,直连 NAT 网段没问题 |
+| **浏览器 · 移动端 Web**(宿主机 Chrome) | 登录页填 `http://192.168.75.128:8080` | 宿主机浏览器直连 VM;服务端 CORS 已放行 Web 跨域 |
+| **浏览器 · 桌面端 UI**(宿主机) | `http://localhost:1420` | Vite 开发服务器;**仅界面预览**,数据功能不可用(见下) |
 
 > ⚠️ **手机上填 `192.168.75.x` 一定「无反应」** —— 那是 VMware 的 NAT
 > 内网段,只有宿主机自己路由得到;手机在 Wi-Fi 上发的包根本到不了。
@@ -26,6 +28,36 @@
 
 桌面端 App 与 VM 同在宿主机上,直接填 `http://192.168.75.128:8080`,
 不经过转发。
+
+## 浏览器访问(开发预览)
+
+### 移动端 Web(Flutter Web)
+
+```bash
+export PATH="/d/SoftWareInstall/flutter_3.47.1/bin:$PATH"
+cd apps/mobile
+flutter run -d chrome                    # 开发预览,自动开 Chrome(随机端口)
+# 或固定端口: flutter run -d chrome --web-port=8090
+```
+
+- **登录页服务器地址**:`http://192.168.75.128:8080` —— 宿主机上的浏览器
+  直连 VM 即可,不用绕转发(填 `192.168.3.29:8080` 也通,但多一跳)
+- 跨域没问题:服务端 CORS `allow_origin(Any)` 专为 Flutter Web 预览放行
+  (`services/sync-server/src/main.rs` 的 CorsLayer)
+- 正式产物 `flutter build web --release` 出在 `build/web/`,是静态文件,
+  需要时自行起静态服务器(如 `python -m http.server -d build/web 8090`)
+
+### 桌面端 UI(Svelte,Vite dev)
+
+```bash
+npm --prefix apps/desktop/ui run dev      # → http://localhost:1420
+```
+
+- 端口固定 **1420**(Tauri 约定,`ui/vite.config.ts`,改了 Tauri 就找不到)
+- ⚠️ **只能看界面壳**:UI 的数据层全是 Tauri `invoke`(Rust 命令,
+  `ui/src/lib/api.ts`),纯浏览器里没有 Tauri 运行时,**所有数据操作
+  不可用** —— 它是 Tauri 窗口内嵌页面的开发预览口,不是「Web 版桌面端」
+- 桌面端不需要填服务器地址(同步后端在本机 Rust 进程内,不走浏览器 HTTP)
 
 ## 重装后操作步骤(保姆级)
 
@@ -91,3 +123,6 @@ netsh interface portproxy add v4tov4 listenaddress=192.168.3.29 listenport=8080 
 - **2026-09-04**:release 0.2.0 装机实测,`http://192.168.3.29:8080` 登录
   成功;文档建立,同步修正真机验证清单 §0 与 mobile README 的地址示例
   (原先写的 `192.168.75.128:8080` 对手机是误导)。
+- **2026-09-04**:补「浏览器访问」两节 —— 移动端 Web(`flutter run -d
+  chrome`,登录地址直连 `192.168.75.128:8080`)与桌面端 UI
+  (`localhost:1420`,仅界面壳、数据功能需 Tauri 环境)。
