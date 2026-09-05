@@ -177,6 +177,108 @@ class PfChipsRow<T> extends StatelessWidget {
   }
 }
 
+/// 胶囊分段(手账页「月历/记录/复盘」原型样式):白底胶囊容器 +
+/// 选中段橙底白字(可带 emoji)。与 [PfSegmented.filled] 并存 ——
+/// 本组件用于页级主切换(手账 segment / 专注模式),形态更大更圆。
+class PfCapsuleTabs extends StatelessWidget {
+  const PfCapsuleTabs({
+    super.key,
+    required this.options,
+    required this.selected,
+    required this.onSelect,
+    this.height = 48,
+  });
+
+  /// (emoji, 标签);emoji 传 '' 即纯文字(专注模式三段)。
+  final List<(String, String)> options;
+  final int selected;
+  final ValueChanged<int> onSelect;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      height: height,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: theme.pfSurface,
+        borderRadius: BorderRadius.circular(PfRadii.pill),
+        border: Border.all(color: theme.pfLine),
+        boxShadow: theme.pfShadowSm,
+      ),
+      child: Row(
+        children: [
+          for (final (i, (emoji, label)) in options.indexed)
+            Expanded(
+              child: GestureDetector(
+                onTap: () => onSelect(i),
+                behavior: HitTestBehavior.opaque,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: i == selected ? theme.pfBrand : Colors.transparent,
+                    borderRadius: BorderRadius.circular(PfRadii.pill),
+                    boxShadow: i == selected
+                        ? [
+                            BoxShadow(
+                              color: theme.pfBrand.withValues(alpha: .35),
+                              blurRadius: 10,
+                              offset: const Offset(0, 3),
+                            ),
+                          ]
+                        : null,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (emoji.isNotEmpty) ...[
+                        Text(emoji, style: const TextStyle(fontSize: 14)),
+                        const SizedBox(width: 5),
+                      ],
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: i == selected ? Colors.white : theme.pfMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// PageView 子页保活(横滑切换 segment 时不丢滚动位置与本地状态)。
+/// 任务页(任务/统计)、手账页(月历/记录/复盘)共用。
+class PfKeepAlive extends StatefulWidget {
+  const PfKeepAlive({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  State<PfKeepAlive> createState() => _PfKeepAliveState();
+}
+
+class _PfKeepAliveState extends State<PfKeepAlive>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
+  }
+}
+
 /// 表单域包装(§5.5 .form-field):13/600 muted 标签 + 控件。
 class PfFormField extends StatelessWidget {
   const PfFormField({super.key, required this.label, required this.child});
@@ -216,6 +318,7 @@ class PfSheetTextField extends StatelessWidget {
     this.controller,
     this.hint,
     this.maxLines = 1,
+    this.maxLength,
     this.keyboardType,
     this.obscure = false,
     this.suffix,
@@ -224,6 +327,10 @@ class PfSheetTextField extends StatelessWidget {
   final TextEditingController? controller;
   final String? hint;
   final int maxLines;
+
+  /// 长度上限(core validate 同款:标题 200 / 描述 5000);非 null 时
+  /// TextField 自带 n/max 计数器。
+  final int? maxLength;
   final TextInputType? keyboardType;
   final bool obscure;
   final Widget? suffix;
@@ -238,6 +345,7 @@ class PfSheetTextField extends StatelessWidget {
     return TextField(
       controller: controller,
       maxLines: maxLines,
+      maxLength: maxLength,
       keyboardType: keyboardType,
       obscureText: obscure,
       style: const TextStyle(fontSize: 15),

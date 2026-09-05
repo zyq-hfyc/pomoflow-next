@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:pomoflow_mobile/pages/focus_page.dart';
+import 'package:pomoflow_mobile/providers/language_provider.dart';
 import 'package:pomoflow_mobile/providers/settings_provider.dart';
 import 'package:pomoflow_mobile/providers/task_provider.dart';
 import 'package:pomoflow_mobile/theme/app_theme.dart';
@@ -23,6 +24,9 @@ void main() {
           ),
           ChangeNotifierProvider<SettingsProvider>.value(
             value: await SettingsProvider.load(),
+          ),
+          ChangeNotifierProvider<LanguageProvider>(
+            create: (_) => LanguageProvider(),
           ),
         ],
         child: MaterialApp(theme: buildAppTheme(), home: const FocusPage()),
@@ -56,6 +60,9 @@ void main() {
           ),
           ChangeNotifierProvider<SettingsProvider>.value(
             value: await SettingsProvider.load(),
+          ),
+          ChangeNotifierProvider<LanguageProvider>(
+            create: (_) => LanguageProvider(),
           ),
         ],
         child: MaterialApp(theme: buildAppTheme(), home: const FocusPage()),

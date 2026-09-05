@@ -5,7 +5,7 @@
     <!-- Android 13+ 通知权限(P3c 本地通知)。 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
-        android:label="pomoflow_mobile"
+        android:label="PomoFlow"
         android:name="${applicationName}"
         android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher">

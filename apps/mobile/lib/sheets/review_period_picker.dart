@@ -66,8 +66,9 @@ Future<DateTime?> _pickMonthYear(
                   initialItem: selYear - firstYear,
                 ),
                 itemExtent: 36,
-                selectionOverlay:
-                    CupertinoPickerDefaultSelectionOverlay(background: const Color(0x142563EB)),
+                selectionOverlay: CupertinoPickerDefaultSelectionOverlay(
+                  background: const Color(0x142563EB),
+                ),
                 onSelectedItemChanged: (i) => selYear = firstYear + i,
                 children: [
                   for (var i = 0; i < yearCount; i++)
@@ -81,8 +82,9 @@ Future<DateTime?> _pickMonthYear(
                   initialItem: selMonth - 1,
                 ),
                 itemExtent: 36,
-                selectionOverlay:
-                    CupertinoPickerDefaultSelectionOverlay(background: const Color(0x142563EB)),
+                selectionOverlay: CupertinoPickerDefaultSelectionOverlay(
+                  background: const Color(0x142563EB),
+                ),
                 onSelectedItemChanged: (i) => selMonth = i + 1,
                 children: [
                   for (var m = 1; m <= 12; m++) Center(child: Text('$m 月')),
@@ -93,8 +95,14 @@ Future<DateTime?> _pickMonthYear(
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-        TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('确定')),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('确定'),
+        ),
       ],
     ),
   );
@@ -122,8 +130,9 @@ Future<DateTime?> _pickYear(BuildContext context, int initialYear) async {
             initialItem: selYear - firstYear,
           ),
           itemExtent: 36,
-          selectionOverlay:
-              CupertinoPickerDefaultSelectionOverlay(background: const Color(0x142563EB)),
+          selectionOverlay: CupertinoPickerDefaultSelectionOverlay(
+            background: const Color(0x142563EB),
+          ),
           onSelectedItemChanged: (i) => selYear = firstYear + i,
           children: [
             for (var i = 0; i < yearCount; i++)
@@ -132,8 +141,14 @@ Future<DateTime?> _pickYear(BuildContext context, int initialYear) async {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-        TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('确定')),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('确定'),
+        ),
       ],
     ),
   );

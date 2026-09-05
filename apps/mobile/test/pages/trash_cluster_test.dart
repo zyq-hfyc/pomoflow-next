@@ -6,10 +6,10 @@ import 'package:pomoflow_mobile/pages/trash_page.dart' show clusterDeletedTasks;
 /// 不同标题 / 删除时间相隔远 → 各自分组。
 void main() {
   PfTask t(String id, String title, int delMs) => PfTask(
-        id: id,
-        title: title,
-        deletedAt: DateTime.fromMillisecondsSinceEpoch(delMs),
-      );
+    id: id,
+    title: title,
+    deletedAt: DateTime.fromMillisecondsSinceEpoch(delMs),
+  );
 
   test('same title + adjacent delete times cluster into one group', () {
     final items = [
@@ -32,10 +32,7 @@ void main() {
   });
 
   test('different titles never merge', () {
-    final items = [
-      t('a', '任务一', 100),
-      t('b', '任务二', 101),
-    ];
+    final items = [t('a', '任务一', 100), t('b', '任务二', 101)];
     final groups = clusterDeletedTasks(items);
     expect(groups, hasLength(2));
   });

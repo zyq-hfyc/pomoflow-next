@@ -90,7 +90,11 @@ class _ConflictLogPageState extends State<ConflictLogPage> {
                 border: Border.all(color: theme.pfLine),
               ),
               alignment: Alignment.center,
-              child: Icon(Icons.arrow_back_ios_new, size: 16, color: theme.pfMuted),
+              child: Icon(
+                Icons.arrow_back_ios_new,
+                size: 16,
+                color: theme.pfMuted,
+              ),
             ),
           ),
         ),

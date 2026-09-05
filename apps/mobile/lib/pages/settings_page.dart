@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../providers/notification_template_provider.dart';
 import '../providers/settings_provider.dart';
+import '../providers/language_provider.dart';
 import '../providers/theme_provider.dart';
+import '../sheets/tag_manager_sheet.dart';
 import '../theme/tokens.dart';
 import 'trash_page.dart';
-import '../widgets/pf_controls.dart';
 import '../widgets/pf_sheet.dart';
 
-/// 设置页(§7 精简版):专注/休息时长 + 主题 + 关于。
-/// 通知/语言等后续批次展开。
+/// 设置页:计时(休息时长 + 长休息间隔)+ 行为偏好 + 提示铃音 + 主题 + 关于。
+/// 专注时长不在此设置 —— 新建/编辑任务可设「单番茄时长」,全局兜底 25 分钟
+/// (桌面端行为偏好/长休息间隔同款语义,2026-09-05 对齐批)。
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
 
@@ -19,6 +20,7 @@ class SettingsPage extends StatelessWidget {
     final theme = Theme.of(context);
     final settings = context.watch<SettingsProvider>();
     final themeProv = context.watch<ThemeProvider>();
+    final langProv = context.watch<LanguageProvider>();
 
     return Container(
       color: theme.pfBg,
@@ -35,7 +37,7 @@ class SettingsPage extends StatelessWidget {
                     Padding(
                       padding: const EdgeInsets.only(bottom: 4),
                       child: Text(
-                        '计时(分钟)',
+                        '计时',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
@@ -43,34 +45,108 @@ class SettingsPage extends StatelessWidget {
                         ),
                       ),
                     ),
-                    _RowStepper(
-                      label: '专注时长',
-                      value: settings.focusMinutes,
-                      min: SettingsProvider.focusRange.min,
-                      max: SettingsProvider.focusRange.max,
-                      onChanged: settings.setFocus,
-                    ),
-                    _RowStepper(
-                      label: '短休息',
+                    _OptionStepper(
+                      label: '短休息(分钟)',
                       value: settings.shortBreakMinutes,
-                      min: SettingsProvider.shortRange.min,
-                      max: SettingsProvider.shortRange.max,
                       onChanged: settings.setShortBreak,
                     ),
-                    _RowStepper(
-                      label: '长休息',
+                    _OptionStepper(
+                      label: '长休息(分钟)',
                       value: settings.longBreakMinutes,
-                      min: SettingsProvider.longRange.min,
-                      max: SettingsProvider.longRange.max,
                       onChanged: settings.setLongBreak,
+                    ),
+                    _RowStepper(
+                      label: '长休息间隔(个番茄)',
+                      value: settings.longBreakInterval,
+                      min: SettingsProvider.longIntervalRange.min,
+                      max: SettingsProvider.longIntervalRange.max,
+                      onChanged: settings.setLongBreakInterval,
                     ),
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: Text(
+                        '长休息间隔:每完成 N 个番茄进入一次长休息;'
                         '修改不重置进行中的倒计时,下一次开始生效;'
                         '任务设置了「单番茄时长」时以任务为准。',
                         style: TextStyle(fontSize: 11.5, color: theme.pfMuted),
                       ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: _Card(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        '行为偏好',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: theme.pfMuted,
+                        ),
+                      ),
+                    ),
+                    _SwitchRow(
+                      label: '自动开始下个番茄',
+                      description: '完成一个番茄后立即开始下一个',
+                      value: settings.autoStartNextPomodoro,
+                      onChanged: settings.setAutoStartNextPomodoro,
+                    ),
+                    _SwitchRow(
+                      label: '自动开始休息',
+                      description: '番茄完成后自动进入休息时段',
+                      value: settings.autoStartBreak,
+                      // 禁用休息开启时被联动置关,且不可再开
+                      onChanged: settings.disableBreak
+                          ? null
+                          : settings.setAutoStartBreak,
+                    ),
+                    _SwitchRow(
+                      label: '禁用休息',
+                      description: '开启后将跳过所有休息时段',
+                      value: settings.disableBreak,
+                      onChanged: settings.setDisableBreak,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: _Card(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        '提示铃音',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: theme.pfMuted,
+                        ),
+                      ),
+                    ),
+                    _SoundRow(
+                      label: '任务结束',
+                      value: settings.focusEndSound,
+                      onChanged: settings.setFocusEndSound,
+                    ),
+                    _SoundRow(
+                      label: '休息结束',
+                      value: settings.breakEndSound,
+                      onChanged: settings.setBreakEndSound,
                     ),
                   ],
                 ),
@@ -133,11 +209,11 @@ class SettingsPage extends StatelessWidget {
                 child: ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text(
-                    '通知文案',
+                    '标签管理',
                     style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                   ),
                   subtitle: Text(
-                    '风格 + 标题/正文(支持 {task_title} 占位符)',
+                    '新建 / 重命名 / 换色 / 删除标签(I3)',
                     style: TextStyle(fontSize: 12, color: theme.pfMuted),
                   ),
                   trailing: Icon(
@@ -145,7 +221,46 @@ class SettingsPage extends StatelessWidget {
                     size: 20,
                     color: theme.pfMuted,
                   ),
-                  onTap: () => _openNotificationTemplateSheet(context),
+                  onTap: () => showTagManagerSheet(context),
+                ),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: _Card(
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text(
+                    '语言',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: Text(
+                    langProv.lang == 'zh' ? '中文' : 'English',
+                    style: TextStyle(fontSize: 12, color: theme.pfMuted),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final (v, label) in const [
+                        ('zh', '中文'),
+                        ('en', 'EN'),
+                      ])
+                        Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: ChoiceChip(
+                            label: Text(
+                              label,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            visualDensity: VisualDensity.compact,
+                            selected: langProv.lang == v,
+                            onSelected: (_) => langProv.setLang(v),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -175,199 +290,6 @@ class SettingsPage extends StatelessWidget {
   }
 }
 
-/// 通知模板编辑 sheet:顶部 6 套预设切换 + 8 个输入框(专注/短/长/提醒 ×
-/// 标题/正文;专注与提醒正文支持 {task_title} 占位符)。
-void _openNotificationTemplateSheet(BuildContext context) {
-  pfSheet(
-    context,
-    title: '通知文案',
-    heightFactor: .85,
-    body: (ctx) => const _NotificationTemplateBody(),
-  );
-}
-
-class _NotificationTemplateBody extends StatefulWidget {
-  const _NotificationTemplateBody();
-
-  @override
-  State<_NotificationTemplateBody> createState() =>
-      _NotificationTemplateBodyState();
-}
-
-class _NotificationTemplateBodyState extends State<_NotificationTemplateBody> {
-  late TextEditingController _focusTitle;
-  late TextEditingController _focusBody;
-  late TextEditingController _shortTitle;
-  late TextEditingController _shortBody;
-  late TextEditingController _longTitle;
-  late TextEditingController _longBody;
-  late TextEditingController _reminderTitle;
-  late TextEditingController _reminderBody;
-  bool _loaded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    final p = context.read<NotificationTemplateProvider>();
-    _focusTitle = TextEditingController(text: p.focusTitle);
-    _focusBody = TextEditingController(text: p.focusBody);
-    _shortTitle = TextEditingController(text: p.shortTitle);
-    _shortBody = TextEditingController(text: p.shortBody);
-    _longTitle = TextEditingController(text: p.longTitle);
-    _longBody = TextEditingController(text: p.longBody);
-    _reminderTitle = TextEditingController(text: p.reminderTitle);
-    _reminderBody = TextEditingController(text: p.reminderBody);
-    _loaded = true;
-  }
-
-  @override
-  void dispose() {
-    _focusTitle.dispose();
-    _focusBody.dispose();
-    _shortTitle.dispose();
-    _shortBody.dispose();
-    _longTitle.dispose();
-    _longBody.dispose();
-    _reminderTitle.dispose();
-    _reminderBody.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final p = context.watch<NotificationTemplateProvider>();
-    if (!_loaded) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // 风格切换:6 套预设
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              for (final entry in NotificationTemplateProvider.styles.entries)
-                ChoiceChip(
-                  label: Text(entry.value),
-                  selected: p.style == entry.key,
-                  onSelected: (_) async {
-                    final preset = NotificationTemplateProvider.presetFor(
-                      entry.key,
-                    );
-                    await context.read<NotificationTemplateProvider>().setStyle(
-                      entry.key,
-                    );
-                    // 切换预设时整套替换,让用户能立刻看到效果
-                    setState(() {
-                      _focusTitle.text = preset.focusTitle;
-                      _focusBody.text = preset.focusBody;
-                      _shortTitle.text = preset.shortTitle;
-                      _shortBody.text = preset.shortBody;
-                      _longTitle.text = preset.longTitle;
-                      _longBody.text = preset.longBody;
-                      _reminderTitle.text = preset.reminderTitle;
-                      _reminderBody.text = preset.reminderBody;
-                    });
-                    await _persist();
-                  },
-                ),
-            ],
-          ),
-        ),
-        // 不用 Expanded/ListView:pfSheet 的 body 在 SingleChildScrollView
-        // (无界高度)里,flex 子项会抛 unbounded 异常 → sheet 内容渲染失败
-        // 只剩蒙层(真机 Bug)。平铺靠外层滚动。
-        _label('专注完成', theme),
-        _field(_focusTitle, '标题', theme),
-        _field(_focusBody, '正文(支持 {task_title})', theme, maxLines: 2),
-        const SizedBox(height: 12),
-        _label('短休息结束', theme),
-        _field(_shortTitle, '标题', theme),
-        _field(_shortBody, '正文', theme),
-        const SizedBox(height: 12),
-        _label('长休息结束', theme),
-        _field(_longTitle, '标题', theme),
-        _field(_longBody, '正文', theme),
-        const SizedBox(height: 12),
-        _label('任务提醒', theme),
-        _field(_reminderTitle, '标题', theme),
-        _field(_reminderBody, '正文(支持 {task_title})', theme, maxLines: 2),
-        const SizedBox(height: 14),
-        PfPrimaryButton(
-          label: '保存',
-          onTap: () async {
-            await _persist();
-            if (!context.mounted) return;
-            Navigator.pop(context);
-          },
-        ),
-      ],
-    );
-  }
-
-  Future<void> _persist() async {
-    final p = context.read<NotificationTemplateProvider>();
-    await p.updateFocus(title: _focusTitle.text, body: _focusBody.text);
-    await p.updateShort(title: _shortTitle.text, body: _shortBody.text);
-    await p.updateLong(title: _longTitle.text, body: _longBody.text);
-    await p.updateReminder(
-      title: _reminderTitle.text,
-      body: _reminderBody.text,
-    );
-  }
-
-  Widget _label(String text, ThemeData theme) => Padding(
-    padding: const EdgeInsets.only(bottom: 4, top: 4),
-    child: Text(
-      text,
-      style: TextStyle(
-        fontSize: 13,
-        fontWeight: FontWeight.w700,
-        color: theme.pfMuted,
-      ),
-    ),
-  );
-
-  Widget _field(
-    TextEditingController ctrl,
-    String hint,
-    ThemeData theme, {
-    int maxLines = 1,
-  }) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: TextField(
-      controller: ctrl,
-      maxLines: maxLines,
-      minLines: 1,
-      style: const TextStyle(fontSize: 14),
-      decoration: InputDecoration(
-        hintText: hint,
-        isDense: true,
-        filled: true,
-        fillColor: theme.pfSurface2,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 10,
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(11),
-          borderSide: BorderSide(color: theme.pfLine),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(11),
-          borderSide: BorderSide(color: theme.pfLine),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(11),
-          borderSide: BorderSide(color: theme.pfBrand),
-        ),
-      ),
-    ),
-  );
-}
-
 class _Card extends StatelessWidget {
   const _Card({required this.child});
 
@@ -392,6 +314,76 @@ class _Card extends StatelessWidget {
           child: child,
         ),
       ),
+    );
+  }
+}
+
+/// 档位步进器(桌面 TimerSetting DURATION_OPTIONS 同款):−/+ 在
+/// 1,5,10..90 档位间跳;存量不常见值并入档位(optionsWith 语义)。
+class _OptionStepper extends StatelessWidget {
+  const _OptionStepper({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  List<int> get options {
+    final opts = SettingsProvider.durationOptions.toList();
+    if (!opts.contains(value)) {
+      opts
+        ..add(value)
+        ..sort();
+    }
+    return opts;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final opts = options;
+    final i = opts.indexOf(value);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 15))),
+          _btn(Icons.remove, i > 0, () => onChanged(opts[i - 1]), theme),
+          SizedBox(
+            width: 44,
+            child: Text(
+              '$value',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: theme.pfBrand700,
+              ),
+            ),
+          ),
+          _btn(
+            Icons.add,
+            i < opts.length - 1,
+            () => onChanged(opts[i + 1]),
+            theme,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _btn(
+    IconData icon,
+    bool enabled,
+    VoidCallback onTap,
+    ThemeData theme,
+  ) {
+    return IconButton(
+      onPressed: enabled ? onTap : null,
+      icon: Icon(icon, size: 18, color: enabled ? theme.pfBrand : theme.pfLine),
     );
   }
 }
@@ -448,6 +440,85 @@ class _RowStepper extends StatelessWidget {
     return IconButton(
       onPressed: enabled ? onTap : null,
       icon: Icon(icon, size: 18, color: enabled ? theme.pfBrand : theme.pfLine),
+    );
+  }
+}
+
+/// 偏好开关行:标题 + 描述 + Switch([onChanged] 为 null 表示被联动禁用)。
+class _SwitchRow extends StatelessWidget {
+  const _SwitchRow({
+    required this.label,
+    required this.description,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String description;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: const TextStyle(fontSize: 15)),
+                const SizedBox(height: 2),
+                Text(
+                  description,
+                  style: TextStyle(fontSize: 12, color: theme.pfMuted),
+                ),
+              ],
+            ),
+          ),
+          Switch(value: value, onChanged: onChanged),
+        ],
+      ),
+    );
+  }
+}
+
+/// 铃音选择行:label + 无/清脆/温和 三选。
+class _SoundRow extends StatelessWidget {
+  const _SoundRow({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 15))),
+          for (final opt in SettingsProvider.soundOptions)
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: ChoiceChip(
+                label: Text(
+                  SettingsProvider.soundLabels[opt] ?? opt,
+                  style: const TextStyle(fontSize: 12),
+                ),
+                visualDensity: VisualDensity.compact,
+                selected: value == opt,
+                onSelected: (_) => onChanged(opt),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

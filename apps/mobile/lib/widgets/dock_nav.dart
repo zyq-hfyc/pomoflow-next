@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../i18n.dart';
+import '../providers/language_provider.dart';
 import '../theme/tokens.dart';
 
 /// 底部悬浮胶囊 Dock(§3,全局唯一导航形态)。
@@ -18,17 +21,21 @@ class FloatingDock extends StatelessWidget {
   final ValueChanged<int> onSelect;
   final VoidCallback onCreate;
 
+  /// 标签键(I6 批:i18n 键,桌面 nav.* 同构);emoji 不可本地化保持原样。
+  /// 终稿 D3:第 3 槽「统计」→「手账」(统计并入任务页第二 segment)。
   static const _tabs = [
-    (emoji: '⏱', label: '专注'),
-    (emoji: '✓', label: '任务'),
-    (emoji: '📊', label: '统计'),
-    (emoji: '👤', label: '我的'),
+    (emoji: '⏱', key: 'nav.timer'),
+    (emoji: '✓', key: 'nav.tasks'),
+    (emoji: '📓', key: 'nav.journal'),
+    (emoji: '👤', key: 'nav.me'),
   ];
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final safeBottom = MediaQuery.paddingOf(context).bottom;
+    // I6 批:语言切换重建 Dock(底部导航文案实时跟随)
+    context.watch<LanguageProvider>();
 
     return SizedBox(
       height: 108 + safeBottom, // 胶囊 64 + 浮起 12 + 凸起出头 26 + 余量
@@ -100,7 +107,7 @@ class _DockTab extends StatelessWidget {
     required this.onTap,
   });
 
-  final ({String emoji, String label}) tab;
+  final ({String emoji, String key}) tab;
   final bool active;
   final VoidCallback onTap;
 
@@ -133,7 +140,7 @@ class _DockTab extends StatelessWidget {
               Text(tab.emoji, style: const TextStyle(fontSize: 17, height: 1)),
               const SizedBox(height: 3),
               Text(
-                tab.label,
+                I18n.t(tab.key),
                 style: PfType.navLabel.copyWith(
                   color: active ? Colors.white : theme.pfMuted,
                 ),

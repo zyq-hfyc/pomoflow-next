@@ -10,7 +10,9 @@ import '../theme/tokens.dart';
 ///
 /// 每栏有自己的「当前周期键」(自然键,见 review_period.dart),‹ › 或跳日期
 /// 换键后重载内容;编辑按击键即存(fire-and-forget),换键前内容已落库,
-/// 无丢失窗口。入口:「+新建 → 复盘」(带初始键)与「我的」页(默认当前)。
+/// 无丢失窗口。入口:「+新建 → 复盘」(带初始键)与手账页复盘 segment
+/// 的「历史入口」(终稿 B4:日复盘主交互迁至 journal_page/review_view.dart,
+/// 本页保留承载周/月/年与历史浏览)。
 class ReviewPage extends StatefulWidget {
   const ReviewPage({
     super.key,
@@ -33,10 +35,8 @@ class ReviewPage extends StatefulWidget {
     Navigator.push(
       context,
       PageRouteBuilder(
-        pageBuilder: (_, _, _) => ReviewPage(
-          initialPeriod: period,
-          initialKey: key,
-        ),
+        pageBuilder: (_, _, _) =>
+            ReviewPage(initialPeriod: period, initialKey: key),
         transitionsBuilder: (_, anim, _, child) => SlideTransition(
           position: Tween(
             begin: const Offset(1, 0),
@@ -70,12 +70,9 @@ class _ReviewPageState extends State<ReviewPage>
       vsync: this,
       initialIndex: widget.initialPeriod.index,
     );
-    _keys = {
-      for (final p in ReviewPeriod.values) p: currentReviewKey(p),
-    };
+    _keys = {for (final p in ReviewPeriod.values) p: currentReviewKey(p)};
     final initKey = widget.initialKey;
-    if (initKey != null &&
-        isValidReviewKey(widget.initialPeriod, initKey)) {
+    if (initKey != null && isValidReviewKey(widget.initialPeriod, initKey)) {
       _keys[widget.initialPeriod] = initKey;
     }
     _loadAll();
@@ -100,11 +97,7 @@ class _ReviewPageState extends State<ReviewPage>
     setState(() => _loaded = true);
   }
 
-  Future<String?> _contentOf(
-    TaskProvider p,
-    ReviewPeriod period,
-    String key,
-  ) {
+  Future<String?> _contentOf(TaskProvider p, ReviewPeriod period, String key) {
     return switch (period) {
       ReviewPeriod.daily => p.dailyReviewContent(key),
       ReviewPeriod.weekly => p.weeklyReviewContent(key),
@@ -145,8 +138,7 @@ class _ReviewPageState extends State<ReviewPage>
   /// 跳日期:弹周期对应选择器,确认后与步进同路径换键。
   Future<void> _jump() async {
     final period = _period;
-    final anchor =
-        parseReviewKey(period, _keys[period]!) ?? DateTime.now();
+    final anchor = parseReviewKey(period, _keys[period]!) ?? DateTime.now();
     final picked = await pickReviewDate(context, period, initial: anchor);
     if (picked == null || !mounted) return;
     final newKey = reviewKeyOf(period, picked);
@@ -187,7 +179,11 @@ class _ReviewPageState extends State<ReviewPage>
                 border: Border.all(color: theme.pfLine),
               ),
               alignment: Alignment.center,
-              child: Icon(Icons.arrow_back_ios_new, size: 16, color: theme.pfMuted),
+              child: Icon(
+                Icons.arrow_back_ios_new,
+                size: 16,
+                color: theme.pfMuted,
+              ),
             ),
           ),
         ),
@@ -196,9 +192,7 @@ class _ReviewPageState extends State<ReviewPage>
           labelColor: theme.pfBrand700,
           unselectedLabelColor: theme.pfMuted,
           indicatorColor: theme.pfBrand700,
-          tabs: [
-            for (final p in ReviewPeriod.values) Tab(text: p.label),
-          ],
+          tabs: [for (final p in ReviewPeriod.values) Tab(text: p.label)],
         ),
       ),
       body: !_loaded
@@ -255,7 +249,10 @@ class _ReviewEditor extends StatelessWidget {
             children: [
               Text(
                 period.title,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
               const Spacer(),
               _NavChip(icon: Icons.chevron_left, onTap: onPrev),
@@ -264,8 +261,10 @@ class _ReviewEditor extends StatelessWidget {
                 onTap: onJump,
                 behavior: HitTestBehavior.opaque,
                 child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: theme.pfSurface2,
                     borderRadius: BorderRadius.circular(PfRadii.sm),

@@ -6,6 +6,7 @@ import 'package:workmanager/workmanager.dart';
 
 import 'providers/auth_provider.dart';
 import 'providers/conflict_provider.dart';
+import 'providers/language_provider.dart';
 import 'providers/nav_provider.dart';
 import 'providers/notification_template_provider.dart';
 import 'providers/settings_provider.dart';
@@ -79,6 +80,8 @@ class PomoFlowApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()..initialize()),
         ChangeNotifierProvider(create: (_) => ThemeProvider()..initialize()),
+        // I6 批:中英双语(桌面 LanguageSetting 移动端等价)
+        ChangeNotifierProvider(create: (_) => LanguageProvider()..initialize()),
         ChangeNotifierProvider(
           create: (_) => NotificationTemplateProvider()..initialize(),
         ),
@@ -117,21 +120,23 @@ class PomoFlowApp extends StatelessWidget {
             context.read<NotificationTemplateProvider>(),
           );
           return Consumer<ThemeProvider>(
-            builder: (context, theme, _) => MaterialApp(
-              title: 'PomoFlow',
-              debugShowCheckedModeBanner: false,
-              // Material 内建控件本地化(2026-09-03 真机 Bug2:到期日
-              // 日期/时间选择器年月等默认英文)。App 自身文案是硬编码中文,
-              // 故 locale 锁 zh;将来加语言设置时改为跟随设置切 zh/en,
-              // supportedLocales 已把 en 备好。
-              locale: const Locale('zh'),
-              supportedLocales: const [Locale('zh'), Locale('en')],
-              localizationsDelegates: GlobalMaterialLocalizations.delegates,
-              theme: buildAppTheme(),
-              darkTheme: buildAppDarkTheme(),
-              themeMode: theme.mode,
-              home: const _Root(),
-            ),
+            builder: (context, theme, _) {
+              // I6 批:语言切换跟随(zh/en),同时驱动内建控件本地化
+              final lang = context.watch<LanguageProvider>().lang;
+              return MaterialApp(
+                title: 'PomoFlow',
+                debugShowCheckedModeBanner: false,
+                // 语言切换(I6 批):跟随 LanguageProvider,内建控件本地化
+                // 已随 supportedLocales 备好;App 自身文案由 I18n.t() 消费。
+                locale: Locale(lang),
+                supportedLocales: const [Locale('zh'), Locale('en')],
+                localizationsDelegates: GlobalMaterialLocalizations.delegates,
+                theme: buildAppTheme(),
+                darkTheme: buildAppDarkTheme(),
+                themeMode: theme.mode,
+                home: const _Root(),
+              );
+            },
           );
         },
       ),

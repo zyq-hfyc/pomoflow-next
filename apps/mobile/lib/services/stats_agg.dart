@@ -82,51 +82,61 @@ PfStatsSummary aggregateStats({
   bool counts(PfSession s) => s.isCompleted && s.taskId.isNotEmpty;
 
   final inRange = sessions
-      .where((s) =>
-          counts(s) && !s.startedAt.isBefore(start) && s.startedAt.isBefore(end))
+      .where(
+        (s) =>
+            counts(s) &&
+            !s.startedAt.isBefore(start) &&
+            s.startedAt.isBefore(end),
+      )
       .toList();
   final prevRange = sessions
-      .where((s) =>
-          counts(s) &&
-          !s.startedAt.isBefore(prevStart) &&
-          s.startedAt.isBefore(start))
+      .where(
+        (s) =>
+            counts(s) &&
+            !s.startedAt.isBefore(prevStart) &&
+            s.startedAt.isBefore(start),
+      )
       .toList();
 
-  final totalMinutes =
-      inRange.fold<int>(0, (a, s) => a + s.durationMinutes);
-  final prevMinutes =
-      prevRange.fold<int>(0, (a, s) => a + s.durationMinutes);
+  final totalMinutes = inRange.fold<int>(0, (a, s) => a + s.durationMinutes);
+  final prevMinutes = prevRange.fold<int>(0, (a, s) => a + s.durationMinutes);
 
-  // 趋势:最近 7 天每日分钟(含今天;同 counts 口径,与总数一致)。
-  final trendMins = List<int>.filled(7, 0);
-  final trendLabels = List<String>.filled(7, '');
-  final byDay = <String, int>{};
-  for (final s in sessions.where(counts)) {
-    final key = _dayKey(s.startedAt);
-    byDay[key] = (byDay[key] ?? 0) + s.durationMinutes;
+  // 趋势桶(桌面 statsRanges DIMENSIONS 同款粒度映射):今天/本周/本月
+  // = 按日,本季 = 按周(周一锚),半年/全年 = 按月。桶只建在有数据的键上
+  // (桌面 BTreeMap 同款,不补零);标签:日/周 = M/D,月 = M。
+  final group = _dimGroup(dim);
+  final byBucket = <String, int>{};
+  for (final s in inRange) {
+    final k = _bucketKey(s.startedAt, group);
+    byBucket[k] = (byBucket[k] ?? 0) + s.durationMinutes;
   }
-  for (var i = 0; i < 7; i++) {
-    final d = DateTime(base.year, base.month, base.day - (6 - i));
-    trendMins[i] = byDay[_dayKey(d)] ?? 0;
-    trendLabels[i] = '${d.day}'.padLeft(2, '0');
-  }
+  final bucketKeys = byBucket.keys.toList()..sort();
+  final trendMins = [for (final k in bucketKeys) byBucket[k]!];
+  final trendLabels = [for (final k in bucketKeys) _bucketLabel(k, group)];
 
   final dayCount = end.difference(start).inDays;
-  final activeDays = inRange.map((s) => _dayKey(s.startedAt)).toSet().length;
+  // 活跃"时段" = 有数据的桶数(桌面同口径;日粒度下等同活跃天数)。
+  final activeDays = bucketKeys.length;
 
   // 区间内完成的任务(completed_at 落在 [start, end);老行 0 不计)。
   final doneTasks = tasks
-      .where((t) =>
-          !t.isDeleted &&
-          t.completedAt != null &&
-          !t.completedAt!.isBefore(start) &&
-          t.completedAt!.isBefore(end))
+      .where(
+        (t) =>
+            !t.isDeleted &&
+            t.completedAt != null &&
+            !t.completedAt!.isBefore(start) &&
+            t.completedAt!.isBefore(end),
+      )
       .length;
 
   return PfStatsSummary(
     trendMins: trendMins,
     trendLabels: trendLabels,
-    trendTitle: '近 7 天',
+    trendTitle: switch (group) {
+      'week' => '按周',
+      'month' => '按月',
+      _ => '按日',
+    },
     totalMinutes: totalMinutes,
     pomos: inRange.length,
     doneTasks: doneTasks,
@@ -134,64 +144,64 @@ PfStatsSummary aggregateStats({
         ? totalMinutes
         : (totalMinutes / dayCount).round(),
     activeDays: activeDays,
-    streak: _longestStreak(sessions.where(counts).toList(), base),
+    // 最长连续 = 连续非空桶的最长段(桌面 StatsPage 同口径;日粒度下
+    // 等同历史最长连续天数)。
+    streak: _bucketStreak(bucketKeys, group),
     trendPct: _pct(totalMinutes, prevMinutes),
-    projectShares: _projectShares(inRange, tasks),
+    projectShares: _projectSharesByTasks(tasks, start, end),
   );
 }
 
-/// 维度 → [start, end) 本地时区半开区间。
-(DateTime, DateTime) _dimRange(String dim, DateTime base) => switch (dim) {
-      '今天' => (
-        DateTime(base.year, base.month, base.day),
-        DateTime(base.year, base.month, base.day + 1),
-      ),
-      '本周' => () {
-        // 周一为一周起点(与桌面 calendar.ts 口径一致)。
-        final monday = DateTime(base.year, base.month, base.day)
-            .subtract(Duration(days: base.weekday - 1));
-        return (monday, monday.add(const Duration(days: 7)));
-      }(),
-      '本月' => (
-        DateTime(base.year, base.month),
-        DateTime(base.year, base.month + 1),
-      ),
-      '本季' => () {
-        final qFirstMonth = (base.month - 1) ~/ 3 * 3 + 1;
-        return (
-          DateTime(base.year, qFirstMonth),
-          DateTime(base.year, qFirstMonth + 3),
-        );
-      }(),
-      '半年' => (
-        DateTime(base.year, base.month - 5),
-        DateTime(base.year, base.month + 1),
-      ),
-      _ => (
-        DateTime(base.year),
-        DateTime(base.year + 1),
-      ),
-    };
+/// 维度 → 趋势粒度(桌面 statsRanges DIMENSIONS 同表)。
+String _dimGroup(String dim) => switch (dim) {
+  '本季' => 'week',
+  '半年' || '全年' => 'month',
+  _ => 'day',
+};
 
-/// 上一个等长维度的锚点(用于环比)。
-DateTime _shiftBack(String dim, DateTime base) => switch (dim) {
-      '今天' => base.subtract(const Duration(days: 1)),
-      '本周' => base.subtract(const Duration(days: 7)),
-      '本月' => DateTime(base.year, base.month - 1, base.day),
-      '本季' => DateTime(base.year, base.month - 3, base.day),
-      '半年' => DateTime(base.year, base.month - 6, base.day),
-      _ => DateTime(base.year - 1, base.month, base.day),
-    };
+/// 会话时刻 → 桶键。day = yyyy-mm-dd;week = 所在周周一日期(桌面
+/// group_key Monday 对齐);month = yyyy-mm。
+String _bucketKey(DateTime t, String group) {
+  final day = DateTime(t.year, t.month, t.day);
+  return switch (group) {
+    'week' => _dayKey(day.subtract(Duration(days: day.weekday - 1))),
+    'month' =>
+      '${t.year.toString().padLeft(4, '0')}-'
+          '${t.month.toString().padLeft(2, '0')}',
+    _ => _dayKey(day),
+  };
+}
 
-/// 历史最长连续专注天数(有会话的日集合扫描;与"到今天是否连续"无关)。
-int _longestStreak(List<PfSession> sessions, DateTime base) {
-  if (sessions.isEmpty) return 0;
-  final days = sessions.map((s) => _dayKey(s.startedAt)).toSet();
-  final sorted = days.map(_dayKeyToDate).toList()..sort();
+/// 桶键 → 图表标签(桌面 keyLabel 同款):日/周 = M/D,月 = M。
+String _bucketLabel(String key, String group) {
+  if (group == 'month') {
+    return '${int.parse(key.substring(5, 7))}';
+  }
+  final d = _dayKeyToDate(key);
+  return '${d.month}/${d.day}';
+}
+
+/// 相邻桶判定( streak 用):日 = 差 1 天,周 = 差 7 天(周一锚),月 = 相邻月。
+bool _bucketsAdjacent(String prev, String cur, String group) {
+  if (group == 'month') {
+    final pm = _monthKeyToDate(prev), cm = _monthKeyToDate(cur);
+    final months = (cm.year - pm.year) * 12 + cm.month - pm.month;
+    return months == 1;
+  }
+  final diff = _dayKeyToDate(cur).difference(_dayKeyToDate(prev)).inDays;
+  return diff == (group == 'week' ? 7 : 1);
+}
+
+DateTime _monthKeyToDate(String key) =>
+    DateTime(int.parse(key.substring(0, 4)), int.parse(key.substring(5, 7)));
+
+/// 连续非空桶的最长段。
+int _bucketStreak(List<String> sortedKeys, String group) {
+  if (sortedKeys.isEmpty) return 0;
   var best = 1;
   var run = 1;
-  for (var i = 1; i < sorted.length; i++) {
-    if (sorted[i].difference(sorted[i - 1]).inDays == 1) {
+  for (var i = 1; i < sortedKeys.length; i++) {
+    if (_bucketsAdjacent(sortedKeys[i - 1], sortedKeys[i], group)) {
       run += 1;
       if (run > best) best = run;
     } else {
@@ -201,6 +211,55 @@ int _longestStreak(List<PfSession> sessions, DateTime base) {
   return best;
 }
 
+/// 维度 → [start, end) 本地时区半开区间。
+(DateTime, DateTime) _dimRange(String dim, DateTime base) => switch (dim) {
+  '今天' => (
+    DateTime(base.year, base.month, base.day),
+    DateTime(base.year, base.month, base.day + 1),
+  ),
+  '本周' => () {
+    // 周一为一周起点(与桌面 calendar.ts 口径一致)。
+    final monday = DateTime(
+      base.year,
+      base.month,
+      base.day,
+    ).subtract(Duration(days: base.weekday - 1));
+    return (monday, monday.add(const Duration(days: 7)));
+  }(),
+  '本月' => (
+    DateTime(base.year, base.month),
+    DateTime(base.year, base.month + 1),
+  ),
+  '本季' => () {
+    final qFirstMonth = (base.month - 1) ~/ 3 * 3 + 1;
+    return (
+      DateTime(base.year, qFirstMonth),
+      DateTime(base.year, qFirstMonth + 3),
+    );
+  }(),
+  // 自然半年(桌面 statsRanges 同口径):上半年 1/1-6/30、
+  // 下半年 7/1-12/31,非滚动 6 个月。
+  '半年' =>
+    base.month <= 6
+        ? (DateTime(base.year, 1), DateTime(base.year, 7))
+        : (DateTime(base.year, 7), DateTime(base.year + 1)),
+  _ => (DateTime(base.year), DateTime(base.year + 1)),
+};
+
+/// 上一个等长维度的锚点(用于环比)。
+DateTime _shiftBack(String dim, DateTime base) => switch (dim) {
+  '今天' => base.subtract(const Duration(days: 1)),
+  '本周' => base.subtract(const Duration(days: 7)),
+  '本月' => DateTime(base.year, base.month - 1, base.day),
+  '本季' => DateTime(base.year, base.month - 3, base.day),
+  // 上一自然半年的锚点:上半年 → 去年 7 月;下半年 → 今年 1 月。
+  '半年' =>
+    base.month <= 6
+        ? DateTime(base.year - 1, 7, base.day)
+        : DateTime(base.year, 1, base.day),
+  _ => DateTime(base.year - 1, base.month, base.day),
+};
+
 String _pct(int cur, int prev) {
   if (prev == 0) return '—';
   final delta = (cur - prev) / prev * 100;
@@ -208,27 +267,36 @@ String _pct(int cur, int prev) {
   return '$sign${delta.round()}%';
 }
 
-/// 项目分钟占比(降序;task 不在列表/无 taskId → 未关联)。
-List<(String, double)> _projectShares(
-    List<PfSession> inRange, List<PfTask> tasks) {
-  final projectOf = <String, String>{};
-  for (final t in tasks) {
-    projectOf[t.id] = t.project;
-  }
+/// 项目分钟占比(桌面 core::stats project_stats_by_completed_pomodoros
+/// 同构,2026-09-05 对齐批):**按任务维度** —— dueAt 本地日 ∈ [start, end)
+/// 且 completedPomos > 0 且有项目归属的任务,累加
+/// completedPomos × pomodoroDuration(未设单番茄时长记 0;与实际会话无关,
+/// 不要求任务整体完成 —— 8 番茄完成 7 计 7)。无清单任务无归属维度不计。
+/// 排序:分钟降序 → 名称升序;输出占比(0..1)。
+List<(String, double)> _projectSharesByTasks(
+  List<PfTask> tasks,
+  DateTime start,
+  DateTime end,
+) {
   final minutes = <String, int>{};
-  for (final s in inRange) {
-    final name = (projectOf[s.taskId] ?? '').isNotEmpty
-        ? projectOf[s.taskId]!
-        : '未关联';
-    minutes[name] = (minutes[name] ?? 0) + s.durationMinutes;
+  for (final t in tasks) {
+    if (t.isDeleted || t.project.isEmpty) continue;
+    final d = t.dueAt;
+    if (d == null || d.isBefore(start) || !d.isBefore(end)) continue;
+    final m = t.completedPomos * t.pomodoroDuration;
+    // 分钟数为 0(未设单番茄时长/无完成番茄)不进分布 —— 桌面
+    // ProjectStat 无该项即不渲染,移动端占比 0% 无意义(对齐测试口径)。
+    if (m <= 0) continue;
+    minutes[t.project] = (minutes[t.project] ?? 0) + m;
   }
   final total = minutes.values.fold<int>(0, (a, b) => a + b);
   if (total == 0) return const [];
   final entries = minutes.entries.toList()
-    ..sort((a, b) => b.value.compareTo(a.value));
-  return [
-    for (final e in entries) (e.key, e.value / total),
-  ];
+    ..sort((a, b) {
+      final c = b.value.compareTo(a.value);
+      return c != 0 ? c : a.key.compareTo(b.key);
+    });
+  return [for (final e in entries) (e.key, e.value / total)];
 }
 
 String _dayKey(DateTime d) =>

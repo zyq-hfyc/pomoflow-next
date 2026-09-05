@@ -52,10 +52,7 @@ void main() {
         parseReviewKey(ReviewPeriod.monthly, '2026-09'),
         DateTime(2026, 9, 1),
       );
-      expect(
-        parseReviewKey(ReviewPeriod.yearly, '2026'),
-        DateTime(2026, 1, 1),
-      );
+      expect(parseReviewKey(ReviewPeriod.yearly, '2026'), DateTime(2026, 1, 1));
     });
 
     test('幻影日期 / 格式错 / 周键非周一 → null', () {
@@ -74,25 +71,13 @@ void main() {
 
   group('stepReviewKey', () {
     test('daily 跨月/跨年进退', () {
-      expect(
-        stepReviewKey(ReviewPeriod.daily, '2026-01-31', 1),
-        '2026-02-01',
-      );
-      expect(
-        stepReviewKey(ReviewPeriod.daily, '2026-12-31', 1),
-        '2027-01-01',
-      );
-      expect(
-        stepReviewKey(ReviewPeriod.daily, '2026-03-01', -1),
-        '2026-02-28',
-      );
+      expect(stepReviewKey(ReviewPeriod.daily, '2026-01-31', 1), '2026-02-01');
+      expect(stepReviewKey(ReviewPeriod.daily, '2026-12-31', 1), '2027-01-01');
+      expect(stepReviewKey(ReviewPeriod.daily, '2026-03-01', -1), '2026-02-28');
     });
 
     test('weekly 一次一整周(7 天)', () {
-      expect(
-        stepReviewKey(ReviewPeriod.weekly, '2026-08-31', 1),
-        '2026-09-07',
-      );
+      expect(stepReviewKey(ReviewPeriod.weekly, '2026-08-31', 1), '2026-09-07');
       expect(
         stepReviewKey(ReviewPeriod.weekly, '2026-09-07', -2),
         '2026-08-24',
@@ -111,15 +96,24 @@ void main() {
       final stepped = stepReviewKey(ReviewPeriod.daily, 'bogus', 1);
       expect(isValidReviewKey(ReviewPeriod.daily, stepped), isTrue);
       expect(
-        isValidReviewKey(ReviewPeriod.weekly, stepReviewKey(ReviewPeriod.weekly, '', -3)),
+        isValidReviewKey(
+          ReviewPeriod.weekly,
+          stepReviewKey(ReviewPeriod.weekly, '', -3),
+        ),
         isTrue,
       );
       expect(
-        isValidReviewKey(ReviewPeriod.monthly, stepReviewKey(ReviewPeriod.monthly, 'x', 1)),
+        isValidReviewKey(
+          ReviewPeriod.monthly,
+          stepReviewKey(ReviewPeriod.monthly, 'x', 1),
+        ),
         isTrue,
       );
       expect(
-        isValidReviewKey(ReviewPeriod.yearly, stepReviewKey(ReviewPeriod.yearly, '99', 1)),
+        isValidReviewKey(
+          ReviewPeriod.yearly,
+          stepReviewKey(ReviewPeriod.yearly, '99', 1),
+        ),
         isTrue,
       );
     });
@@ -140,7 +134,10 @@ void main() {
         }
       }
       // 闰日按周粒度归到所在周周一,解析合法
-      expect(reviewKeyOf(ReviewPeriod.weekly, DateTime(2024, 2, 29)), '2024-02-26');
+      expect(
+        reviewKeyOf(ReviewPeriod.weekly, DateTime(2024, 2, 29)),
+        '2024-02-26',
+      );
     });
   });
 

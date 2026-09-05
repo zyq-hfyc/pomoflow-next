@@ -62,10 +62,7 @@ class _TrashPageState extends State<TrashPage> {
     final groups = _groups ?? const <List<PfTask>>[];
     final count = groups.fold<int>(0, (a, g) => a + g.length);
     if (count == 0) return;
-    final ok = await _confirm(
-      '清空回收站',
-      '将永久删除 $count 个任务,无法恢复。',
-    );
+    final ok = await _confirm('清空回收站', '将永久删除 $count 个任务,无法恢复。');
     if (ok != true || !mounted) return;
     final provider = context.read<TaskProvider>();
     for (final g in groups) {
@@ -122,10 +119,7 @@ class _TrashPageState extends State<TrashPage> {
               onPressed: _purgeAll,
               child: Text(
                 '清空',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: theme.colorScheme.error,
-                ),
+                style: TextStyle(fontSize: 13, color: theme.colorScheme.error),
               ),
             ),
         ],
@@ -133,33 +127,33 @@ class _TrashPageState extends State<TrashPage> {
       body: groups == null
           ? const Center(child: CircularProgressIndicator())
           : groups.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.delete_outline, size: 52, color: theme.pfLine),
-                      const SizedBox(height: 12),
-                      Text(
-                        '回收站是空的',
-                        style: TextStyle(fontSize: 13, color: theme.pfMuted),
-                      ),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.delete_outline, size: 52, color: theme.pfLine),
+                  const SizedBox(height: 12),
+                  Text(
+                    '回收站是空的',
+                    style: TextStyle(fontSize: 13, color: theme.pfMuted),
                   ),
-                )
-              : Material(
-                  // 透明 Material:ListTile ink 宿主(设置页同款坑)。
-                  type: MaterialType.transparency,
-                  child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 40),
-                    itemCount: groups.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 10),
-                    itemBuilder: (context, i) => _TrashRow(
-                      group: groups[i],
-                      onRestore: () => _restore(groups[i]),
-                      onPurge: () => _purge(groups[i]),
-                    ),
-                  ),
+                ],
+              ),
+            )
+          : Material(
+              // 透明 Material:ListTile ink 宿主(设置页同款坑)。
+              type: MaterialType.transparency,
+              child: ListView.separated(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 40),
+                itemCount: groups.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 10),
+                itemBuilder: (context, i) => _TrashRow(
+                  group: groups[i],
+                  onRestore: () => _restore(groups[i]),
+                  onPurge: () => _purge(groups[i]),
                 ),
+              ),
+            ),
     );
   }
 }
@@ -206,7 +200,7 @@ class _TrashRow extends StatelessWidget {
     final when = deletedAt == null
         ? ''
         : '${two(deletedAt.month)}-${two(deletedAt.day)} '
-            '${two(deletedAt.hour)}:${two(deletedAt.minute)}';
+              '${two(deletedAt.hour)}:${two(deletedAt.minute)}';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
@@ -278,11 +272,7 @@ class _TrashRow extends StatelessWidget {
                 color: theme.pfBrand50,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(
-                Icons.restore,
-                size: 18,
-                color: theme.pfBrand700,
-              ),
+              child: Icon(Icons.restore, size: 18, color: theme.pfBrand700),
             ),
           ),
           const SizedBox(width: 8),

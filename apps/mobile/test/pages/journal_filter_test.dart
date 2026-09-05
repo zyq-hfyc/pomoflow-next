@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pomoflow_mobile/models/task.dart';
-import 'package:pomoflow_mobile/pages/tasks_page.dart' show applyJournalFilters;
+import 'package:pomoflow_mobile/pages/journal_page/record_view.dart'
+    show applyJournalFilters;
 
 /// 手账视图筛选单测(P3h):kind/tag 精确 + 搜索标题/内容/标签模糊,
 /// 多条件叠加。对齐任务侧 _applyFilters 的叠加语义。

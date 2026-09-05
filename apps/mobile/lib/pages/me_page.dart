@@ -15,10 +15,10 @@ import '../widgets/pf_sheet.dart';
 import 'account_page.dart';
 import 'conflict_log_page.dart';
 import 'help_page.dart';
-import 'review_page.dart';
 import 'settings_page.dart';
 
-/// 我的屏(§4.4):渐变资料头 + 账号管理菜单卡 + 数据同步行 + 设置/帮助 + 退出。
+/// 我的屏(终稿 P6):顶部账户大卡 + 四段分组(账户 / 数据 / AI 能力 /
+/// 关于与退出),复盘主入口迁至手账页第三 segment,本页不再出现。
 /// 右上按钮切换深浅主题(§7)。
 class MePage extends StatefulWidget {
   const MePage({super.key});
@@ -26,6 +26,9 @@ class MePage extends StatefulWidget {
   @override
   State<MePage> createState() => _MePageState();
 }
+
+/// 与 pubspec.yaml version 保持同步(无 package_info_plus 依赖,手工对齐)。
+const _kAppVersion = '0.2.0';
 
 class _MePageState extends State<MePage> {
   bool _syncing = false;
@@ -49,11 +52,9 @@ class _MePageState extends State<MePage> {
     setState(() => _autoSync = value);
     await SyncScheduler.setEnabled(value);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(value
-          ? '已开启自动同步(每 30 分钟,联网时)'
-          : '已关闭自动同步'),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(value ? '已开启自动同步(每 30 分钟,联网时)' : '已关闭自动同步')),
+    );
   }
 
   /// 拉当前头像(GET /v1/auth/avatar,与 account_page 同一端点);
@@ -118,17 +119,27 @@ class _MePageState extends State<MePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final auth = context.watch<AuthProvider>();
+    final tasks = context.watch<TaskProvider>();
 
     return Container(
       color: theme.pfBg,
       child: CustomScrollView(
         slivers: [
           _meAppBar(theme),
+          // ---- 账户 ------------------------------------------------------
+          const SliverToBoxAdapter(child: _SectionTitle('账户')),
           SliverToBoxAdapter(
-            child: _ProfileHead(auth: auth, avatarDataUrl: _avatarDataUrl),
+            child: _ProfileHead(
+              auth: auth,
+              avatarDataUrl: _avatarDataUrl,
+              totalPomos: tasks.sessions.where((s) => s.isCompleted).length,
+            ),
           ),
           const SliverToBoxAdapter(child: SizedBox(height: 12)),
           SliverToBoxAdapter(child: _AccountMenuCard(onReturn: _loadAvatar)),
+          // ---- 数据 ------------------------------------------------------
+          const SliverToBoxAdapter(child: _SectionTitle('数据')),
+          SliverToBoxAdapter(child: _FocusOverviewCard(tasks: tasks)),
           const SliverToBoxAdapter(child: SizedBox(height: 12)),
           SliverToBoxAdapter(
             child: _SyncRow(
@@ -142,12 +153,17 @@ class _MePageState extends State<MePage> {
           const SliverToBoxAdapter(child: SizedBox(height: 12)),
           // P2 冲突可视化:展示 conflict_log 条数 → 点击进 ConflictLogPage。
           // demo 模式 / 旧版本无 provider 时透明退化(卡片不显示)。
-          const SliverToBoxAdapter(child: SizedBox(height: 12)),
           SliverToBoxAdapter(child: _ConflictRow(onHint: _hint)),
           const SliverToBoxAdapter(child: SizedBox(height: 12)),
+          SliverToBoxAdapter(child: _DataMenuCard(onHint: _hint)),
+          // ---- AI 能力 ---------------------------------------------------
+          const SliverToBoxAdapter(child: _SectionTitle('AI 能力')),
+          const SliverToBoxAdapter(child: _AiHintCard()),
+          // ---- 关于与退出 -------------------------------------------------
+          const SliverToBoxAdapter(child: _SectionTitle('关于与退出')),
           SliverToBoxAdapter(child: _OtherMenuCard(onHint: _hint)),
           SliverToBoxAdapter(child: _LogoutButton(onHint: _hint)),
-          const SliverToBoxAdapter(child: SizedBox(height: 76)),
+          const SliverToBoxAdapter(child: SizedBox(height: 100)),
         ],
       ),
     );
@@ -169,21 +185,52 @@ class _MePageState extends State<MePage> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 }
 
-/// 渐变资料头(.profile-head):brand → brand-600 对角渐变,白字。
-/// 圆环 = 真头像(dataUrl,无则首字母)。
+/// 分组小标题(终稿 P6:14px 小标题 + 内容卡片)。
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 18, 16, 8),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+          color: Theme.of(context).pfMuted,
+        ),
+      ),
+    );
+  }
+}
+
+/// 账户大卡(终稿 P6:≥100px 高,头像 + 用户名 + 等级 chip)。
+/// brand → brand-600 对角渐变,白字;圆环 = 真头像(dataUrl,无则首字母)。
 class _ProfileHead extends StatelessWidget {
-  const _ProfileHead({required this.auth, this.avatarDataUrl});
+  const _ProfileHead({
+    required this.auth,
+    required this.totalPomos,
+    this.avatarDataUrl,
+  });
 
   final AuthProvider auth;
   final String? avatarDataUrl;
+
+  /// 累计完成番茄数(等级 chip 依据:每 20 个番茄升一级)。
+  final int totalPomos;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final name = auth.shownName;
     final initial = name.isNotEmpty ? name.characters.first : '?';
+    final level = totalPomos ~/ 20 + 1;
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+      constraints: const BoxConstraints(minHeight: 120),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -234,15 +281,40 @@ class _ProfileHead extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 19,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                  ),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 19,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: .22),
+                        borderRadius: BorderRadius.circular(PfRadii.pill),
+                      ),
+                      child: Text(
+                        'Lv.$level',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 if (auth.email?.isNotEmpty == true)
                   Padding(
@@ -264,7 +336,7 @@ class _ProfileHead extends StatelessWidget {
   }
 }
 
-/// 账号管理菜单卡(§4.4 入口列表 → AccountPage 五模块)。
+/// 账号管理菜单卡(§4.4 入口列表 → AccountPage 五模块 + 账号注销)。
 class _AccountMenuCard extends StatelessWidget {
   const _AccountMenuCard({this.onReturn});
 
@@ -273,6 +345,7 @@ class _AccountMenuCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.read<AuthProvider>();
     return _MenuCard(
       items: [
         _MenuItem(
@@ -287,13 +360,19 @@ class _AccountMenuCard extends StatelessWidget {
         ),
         _MenuItem(
           emoji: '🔗',
-          label: '第三方账号',
+          label: '第三方账号(微信绑定)',
           onTap: () => _openAccount(context, 'thirdparty'),
         ),
         _MenuItem(
           emoji: '📱',
           label: '登录设备',
           onTap: () => _openAccount(context, 'devices'),
+        ),
+        _MenuItem(
+          emoji: '⚠',
+          label: '账号注销',
+          danger: true,
+          onTap: () => _openAccountDanger(context, auth),
         ),
       ],
     );
@@ -315,6 +394,130 @@ class _AccountMenuCard extends StatelessWidget {
       ),
     );
     onReturn?.call();
+  }
+
+  void _openAccountDanger(BuildContext context, AuthProvider auth) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (_, _, _) => const AccountPage(initialSection: 'danger'),
+        transitionsBuilder: (_, anim, _, child) => SlideTransition(
+          position: Tween(
+            begin: const Offset(1, 0),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
+          child: child,
+        ),
+        transitionDuration: const Duration(milliseconds: 300),
+      ),
+    );
+  }
+}
+
+/// 专注统计概览(终稿 P6 数据段:今日 X 分钟 / 累计 Y 个番茄)。
+class _FocusOverviewCard extends StatelessWidget {
+  const _FocusOverviewCard({required this.tasks});
+
+  final TaskProvider tasks;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final done = tasks.sessions.where((s) => s.isCompleted).toList();
+    final totalPomos = done.length;
+    final todayMinutes = tasks.todayPomos * 25;
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
+      decoration: BoxDecoration(
+        color: theme.pfSurface,
+        borderRadius: BorderRadius.circular(PfRadii.lg),
+        border: Border.all(color: theme.pfLine),
+        boxShadow: theme.pfShadowSm,
+      ),
+      child: Row(
+        children: [
+          _IconBlock(emoji: '🍅'),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              '今日专注 $todayMinutes 分钟 · 累计 $totalPomos 个番茄',
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 数据操作卡(终稿 P6 数据段:导出数据 / 清理缓存)。
+class _DataMenuCard extends StatelessWidget {
+  const _DataMenuCard({required this.onHint});
+
+  final void Function(String) onHint;
+
+  @override
+  Widget build(BuildContext context) {
+    return _MenuCard(
+      items: [
+        _MenuItem(
+          emoji: '⤓',
+          label: '导出数据',
+          onTap: () => onHint('导出入口已迁至 任务页 → 统计 页签右上角'),
+        ),
+        _MenuItem(
+          emoji: '🧹',
+          label: '清理缓存',
+          onTap: () {
+            // 清图片解码缓存(头像/内嵌图);业务数据在 SQLite,不在此列。
+            PaintingBinding.instance.imageCache.clear();
+            onHint('缓存已清理');
+          },
+        ),
+      ],
+    );
+  }
+}
+
+/// AI 能力卡(终稿 P6:仅文案提示,主入口在手账页复盘 segment)。
+class _AiHintCard extends StatelessWidget {
+  const _AiHintCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
+      decoration: BoxDecoration(
+        color: theme.pfSurface,
+        borderRadius: BorderRadius.circular(PfRadii.lg),
+        border: Border.all(color: theme.pfLine),
+        boxShadow: theme.pfShadowSm,
+      ),
+      child: Row(
+        children: [
+          _IconBlock(emoji: '✨'),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '智能复盘',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                ),
+                Text(
+                  '在手账页完成每日复盘',
+                  style: TextStyle(fontSize: 12, color: theme.pfMuted),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -358,8 +561,10 @@ class _SyncRow extends StatelessWidget {
                   children: [
                     const Text(
                       '数据同步',
-                      style:
-                          TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     Text(
                       label,
@@ -372,8 +577,10 @@ class _SyncRow extends StatelessWidget {
                 onTap: onTap,
                 behavior: HitTestBehavior.opaque,
                 child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 6,
+                  ),
                   child: Text(
                     '立即同步',
                     style: TextStyle(
@@ -397,8 +604,10 @@ class _SyncRow extends StatelessWidget {
                   children: [
                     const Text(
                       '自动同步',
-                      style:
-                          TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     Text(
                       autoSync ? '每 30 分钟 · 联网时后台同步' : '关闭中',
@@ -565,7 +774,7 @@ class _ConflictRow extends StatelessWidget {
   }
 }
 
-/// 设置/帮助/注销菜单卡。
+/// 设置/帮助/版本/检查更新菜单卡(终稿 P6:复盘项已迁至手账页)。
 class _OtherMenuCard extends StatelessWidget {
   const _OtherMenuCard({required this.onHint});
 
@@ -573,36 +782,18 @@ class _OtherMenuCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final auth = context.read<AuthProvider>();
     return _MenuCard(
       items: [
+        _MenuItem(emoji: '⚙', label: '设置', onTap: () => _openSettings(context)),
+        _MenuItem(emoji: '❓', label: '帮助与反馈', onTap: () => _openHelp(context)),
         _MenuItem(
-          emoji: '📝',
-          label: '复盘',
-          onTap: () => _openReview(context),
+          emoji: 'ℹ️',
+          label: '版本号',
+          onTap: () => onHint('PomoFlow v$_kAppVersion'),
         ),
-        _MenuItem(
-          emoji: '⚙',
-          label: '设置',
-          onTap: () => _openSettings(context),
-        ),
-        _MenuItem(
-          emoji: '❓',
-          label: '帮助与反馈',
-          onTap: () => _openHelp(context),
-        ),
-        _MenuItem(
-          emoji: '⚠',
-          label: '账号注销',
-          danger: true,
-          onTap: () => _openAccountDanger(context, auth),
-        ),
+        _MenuItem(emoji: '🔄', label: '检查更新', onTap: () => onHint('已是最新版本')),
       ],
     );
-  }
-
-  void _openReview(BuildContext context) {
-    ReviewPage.open(context);
   }
 
   void _openSettings(BuildContext context) {
@@ -627,23 +818,6 @@ class _OtherMenuCard extends StatelessWidget {
       context,
       PageRouteBuilder(
         pageBuilder: (_, _, _) => const HelpPage(),
-        transitionsBuilder: (_, anim, _, child) => SlideTransition(
-          position: Tween(
-            begin: const Offset(1, 0),
-            end: Offset.zero,
-          ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
-          child: child,
-        ),
-        transitionDuration: const Duration(milliseconds: 300),
-      ),
-    );
-  }
-
-  void _openAccountDanger(BuildContext context, AuthProvider auth) {
-    Navigator.push(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (_, _, _) => const AccountPage(initialSection: 'danger'),
         transitionsBuilder: (_, anim, _, child) => SlideTransition(
           position: Tween(
             begin: const Offset(1, 0),

@@ -67,8 +67,7 @@ class ApiClient {
   Future<Map<String, dynamic>> get(String path) async => _request('GET', path);
 
   /// 已认证 GET,返回 JSON 数组(如 login-logs 列表)。
-  Future<List<dynamic>> getList(String path) async =>
-      _requestList('GET', path);
+  Future<List<dynamic>> getList(String path) async => _requestList('GET', path);
 
   /// 已认证 POST(401 自动刷新)。
   Future<Map<String, dynamic>> post(String path, Map<String, dynamic> body) =>
@@ -103,8 +102,12 @@ class ApiClient {
     };
     http.Response resp;
     try {
-      resp = await _send(method, uri, headers, body)
-          .timeout(const Duration(seconds: 15));
+      resp = await _send(
+        method,
+        uri,
+        headers,
+        body,
+      ).timeout(const Duration(seconds: 15));
     } catch (e) {
       throw ApiException('网络错误: $e');
     }
@@ -229,8 +232,12 @@ class ApiClient {
     for (var attempt = 0; attempt < _maxAttempts; attempt++) {
       http.Response? resp;
       try {
-        resp = await _send(method, uri, headers, body)
-            .timeout(const Duration(seconds: 15));
+        resp = await _send(
+          method,
+          uri,
+          headers,
+          body,
+        ).timeout(const Duration(seconds: 15));
       } on TimeoutException catch (e) {
         lastCause = e;
       } on SocketException catch (e) {
@@ -262,8 +269,8 @@ class ApiClient {
   Future<void> _sleepBackoff(int attempt) async {
     if (attempt >= _maxAttempts - 1) return;
     final base = _baseDelays[attempt];
-    final jitterMs =
-        (base.inMilliseconds * 0.25 * (_rng.nextDouble() * 2 - 1)).round();
+    final jitterMs = (base.inMilliseconds * 0.25 * (_rng.nextDouble() * 2 - 1))
+        .round();
     await Future.delayed(
       Duration(milliseconds: base.inMilliseconds + jitterMs),
     );

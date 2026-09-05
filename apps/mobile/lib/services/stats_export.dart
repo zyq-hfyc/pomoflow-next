@@ -22,21 +22,23 @@ class StatsExporter {
     }
     final csv = _buildCsv(s, dim);
     final tmp = await getTemporaryDirectory();
-    final fileName = 'pomoflow_stats_${dim}_${DateTime.now().millisecondsSinceEpoch}.csv';
+    final fileName =
+        'pomoflow_stats_${dim}_${DateTime.now().millisecondsSinceEpoch}.csv';
     final path = '${tmp.path}/$fileName';
     final file = File(path);
     await file.writeAsString(csv, encoding: utf8);
-    await Share.shareXFiles(
-      [XFile(path, mimeType: 'text/csv', name: fileName)],
-      subject: 'PomoFlow 统计导出 · $dim',
-    );
+    await Share.shareXFiles([
+      XFile(path, mimeType: 'text/csv', name: fileName),
+    ], subject: 'PomoFlow 统计导出 · $dim');
   }
 
   static String _buildCsv(PfStatsSummary s, String dim) {
     final buf = StringBuffer();
     // 概览
     buf.writeln('维度,总专注分钟,番茄数,已完成任务,日均分钟,活跃天数,最长连续,环比上期');
-    buf.writeln('${_escape(dim)},${s.totalMinutes},${s.pomos},${s.doneTasks},${s.avgMinutes},${s.activeDays},${s.streak},${_escape(s.trendPct)}');
+    buf.writeln(
+      '${_escape(dim)},${s.totalMinutes},${s.pomos},${s.doneTasks},${s.avgMinutes},${s.activeDays},${s.streak},${_escape(s.trendPct)}',
+    );
     buf.writeln();
     // 趋势
     buf.writeln('趋势标签,专注分钟');
@@ -56,7 +58,10 @@ class StatsExporter {
 
   /// 简单 CSV 转义:含逗号/换行/引号时包引号,引号内引号双写。
   static String _escape(String value) {
-    if (value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r')) {
+    if (value.contains(',') ||
+        value.contains('"') ||
+        value.contains('\n') ||
+        value.contains('\r')) {
       return '"${value.replaceAll('"', '""')}"';
     }
     return value;

@@ -149,10 +149,7 @@ const List<_FaqItem> _kFaq = [
     '计时结束不弹通知怎么办?',
     '先确认专注页右上铃铛是开启状态(🔔);再到系统设置 → 应用 → PomoFlow → 通知,允许通知权限。部分机型还需关闭省电限制。',
   ),
-  _FaqItem(
-    '删除的任务能找回吗?',
-    '能。删除的任务进入「设置 → 回收站」,可恢复(会重新同步到其他设备)或彻底删除。彻底删除不可恢复。',
-  ),
+  _FaqItem('删除的任务能找回吗?', '能。删除的任务进入「设置 → 回收站」,可恢复(会重新同步到其他设备)或彻底删除。彻底删除不可恢复。'),
   _FaqItem(
     '两台设备同时改了同一个任务会怎样?',
     '按「最后写入胜出」(LWW)保留较新版本,较旧的一方改动被覆盖,并记入「我的 → 同步记录」供回溯。',
@@ -166,22 +163,13 @@ const List<_FaqItem> _kFaq = [
     '能。日 / 周 / 月 / 年复盘数据均跨端同步;桌面端手账页可直接查看和继续编辑'
         '日 / 周 / 月复盘,年复盘桌面界面下个版本开放。',
   ),
-  _FaqItem(
-    '子任务在哪里勾选?',
-    '点开任务详情 sheet,子任务区可勾选完成、新增、删除;父任务卡上的子任务计数会实时更新。',
-  ),
+  _FaqItem('子任务在哪里勾选?', '点开任务详情 sheet,子任务区可勾选完成、新增、删除;父任务卡上的子任务计数会实时更新。'),
   _FaqItem(
     '统计数据能导出吗?',
     '能。统计页右上 ⤓ 按当前维度导出 CSV(概览 / 趋势 / 项目分布三段),经系统分享面板发送到微信、邮件或本地保存。',
   ),
-  _FaqItem(
-    '忘记密码怎么办?',
-    '登录页点「忘记密码」,通过绑定邮箱验证码三步完成重置;重置后所有设备强制下线,需重新登录。',
-  ),
-  _FaqItem(
-    '注销账号会怎样?',
-    '申请后进入 15 天冷静期,期间可撤销;到期后云端数据级联删除。注销前建议先在账号页「导出数据」备份。',
-  ),
+  _FaqItem('忘记密码怎么办?', '登录页点「忘记密码」,通过绑定邮箱验证码三步完成重置;重置后所有设备强制下线,需重新登录。'),
+  _FaqItem('注销账号会怎样?', '申请后进入 15 天冷静期,期间可撤销;到期后云端数据级联删除。注销前建议先在账号页「导出数据」备份。'),
 ];
 
 // ---------------------------------------------------------------------------
@@ -336,10 +324,14 @@ class _ContactTab extends StatelessWidget {
               const SizedBox(height: 6),
               const _BulletRow(text: '遇到 Bug 时的操作步骤(便于我们复现)'),
               const SizedBox(height: 10),
-              Text('示例', style: TextStyle(fontSize: 12.5, color: theme.pfMuted)),
+              Text(
+                '示例',
+                style: TextStyle(fontSize: 12.5, color: theme.pfMuted),
+              ),
               const SizedBox(height: 4),
               const _MonoBox(
-                text: '主题:PomoFlow-Bug 反馈\n\n'
+                text:
+                    '主题:PomoFlow-Bug 反馈\n\n'
                     '您好,我在创建任务时点击「重复」\n'
                     '选择「自定义」后弹窗没有出现。\n\n'
                     '联系方式:user@example.com',
@@ -468,11 +460,7 @@ class _MonoBox extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: TextStyle(
-          fontSize: 12,
-          height: 1.5,
-          color: theme.pfMuted,
-        ),
+        style: TextStyle(fontSize: 12, height: 1.5, color: theme.pfMuted),
       ),
     );
   }

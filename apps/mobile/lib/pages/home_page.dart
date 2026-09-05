@@ -7,13 +7,14 @@ import '../providers/nav_provider.dart';
 import '../providers/task_provider.dart';
 import '../services/task_reminder_engine.dart';
 import '../sheets/quick_create_sheet.dart';
+import '../theme/tokens.dart';
 import '../widgets/dock_nav.dart';
 import 'focus_page.dart';
+import 'journal_page.dart';
 import 'me_page.dart';
-import 'stats_page.dart';
 import 'tasks_page.dart';
 
-/// 主区骨架(§2/§3):悬浮胶囊 Dock 4 Tab(专注/任务/统计/我的)+ 中间凸起「新建」。
+/// 主区骨架(终稿 D1/D3):悬浮胶囊 Dock 4 Tab(专注/任务/手账/我的)+ 中间凸起「新建」。
 ///
 /// - IndexedStack 保持各屏状态,切 Tab 不重建(§3.3);
 /// - Tab 状态在 [NavProvider],跨屏动作(任务卡 ▶ 快捷专注)也能切;
@@ -51,17 +52,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final safeBottom = MediaQuery.paddingOf(context).bottom;
+    final theme = Theme.of(context);
     final index = context.watch<NavProvider>().index;
     return Scaffold(
+      // 悬浮 Dock 批(2026-09-05):Scaffold 底色对齐页面 pfBg,
+      // Dock 下方不再是异色实带;内容全出血,滚动时从 Dock 透明空隙
+      // 下滑过(各页底部留白改为避让 Dock 悬浮件,静止不被遮挡)。
+      backgroundColor: theme.pfBg,
       body: Stack(
         children: [
-          // 各屏自滚,底部预留 Dock 高度(§1.5 nav-h 74 + 余量)
-          Padding(
-            padding: EdgeInsets.only(bottom: 100 + safeBottom),
+          Positioned.fill(
             child: IndexedStack(
               index: index,
-              children: const [FocusPage(), TasksPage(), StatsPage(), MePage()],
+              children: const [
+                FocusPage(),
+                TasksPage(),
+                JournalPage(),
+                MePage(),
+              ],
             ),
           ),
           Align(

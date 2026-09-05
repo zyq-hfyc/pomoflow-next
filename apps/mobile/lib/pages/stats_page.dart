@@ -10,15 +10,107 @@ import '../theme/tokens.dart';
 import '../widgets/pf_controls.dart';
 import '../widgets/pf_sheet.dart';
 
-/// 统计屏(§4.3):6 维度 chips + 4 统计卡 + 3 亮点行 + 趋势柱状图 + 项目分布环形图。
+/// 统计内容(终稿 B1):6 维度 chips + 4 统计卡 + 3 亮点行 + 趋势柱状图 +
+/// 项目分布环形图。
 ///
-/// P2 起接真实聚合(`stats_agg.aggregateStats`,sessions + tasks 数据源,
-/// 含桌面端同步下来的会话);图表 CustomPaint,颜色全走 token。
+/// - [StatsBody]:无 AppBar 形态,嵌入任务页「统计」segment(IndexedStack
+///   各自独立滚动,无双滚动条);导出经 [StatsBodyState.exportCurrent]
+///   由嵌入方顶栏按钮触发。
+/// - [StatsPage]:旧独立一级入口兼容壳(自带毛玻璃顶栏 + 导出动作),
+///   终稿后不再挂 Dock,仅保留给深链/回滚。
 class StatsPage extends StatefulWidget {
   const StatsPage({super.key});
 
   @override
   State<StatsPage> createState() => _StatsPageState();
+}
+
+class _StatsPageState extends State<StatsPage> {
+  String _dim = '本周';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final s = _aggregate(context, _dim);
+    return Container(
+      color: theme.pfBg,
+      child: CustomScrollView(
+        slivers: [
+          PfSliverAppBar(
+            title: '统计',
+            subtitle: '看见你的专注轨迹',
+            action: PillButton(
+              tooltip: '导出',
+              child: const Text('⤓', style: TextStyle(fontSize: 16)),
+              onTap: () => exportStatsSummary(context, s, _dim),
+            ),
+          ),
+          ...buildStatsSlivers(
+            context,
+            dim: _dim,
+            onDimChanged: (v) => setState(() => _dim = v),
+            s: s,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 无 AppBar 统计内容(终稿 B1):供任务页第二 segment 嵌入。
+class StatsBody extends StatefulWidget {
+  const StatsBody({super.key});
+
+  @override
+  State<StatsBody> createState() => StatsBodyState();
+}
+
+class StatsBodyState extends State<StatsBody> {
+  String _dim = '本周';
+
+  /// 导出当前维度 CSV(任务页统计 segment 顶栏 ⤓ 按钮触发)。
+  Future<void> exportCurrent() =>
+      exportStatsSummary(context, _aggregate(context, _dim), _dim);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      color: theme.pfBg,
+      child: CustomScrollView(
+        slivers: buildStatsSlivers(
+          context,
+          dim: _dim,
+          onDimChanged: (v) => setState(() => _dim = v),
+          s: _aggregate(context, _dim),
+        ),
+      ),
+    );
+  }
+}
+
+PfStatsSummary _aggregate(BuildContext context, String dim) {
+  final provider = context.watch<TaskProvider>();
+  return aggregateStats(
+    sessions: provider.sessions,
+    tasks: provider.tasks,
+    dim: dim,
+  );
+}
+
+/// 导出当前维度统计 CSV;失败弹 snackbar(原 _StatsPageState._export)。
+Future<void> exportStatsSummary(
+  BuildContext context,
+  PfStatsSummary s,
+  String dim,
+) async {
+  try {
+    await StatsExporter.shareCsv(s, dim);
+  } catch (e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('导出失败 · $e')));
+  }
 }
 
 const _dimOptions = [
@@ -30,112 +122,79 @@ const _dimOptions = [
   ('全年', '全年'),
 ];
 
-class _StatsPageState extends State<StatsPage> {
-  String _dim = '本周';
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final provider = context.watch<TaskProvider>();
-    final s = aggregateStats(
-      sessions: provider.sessions,
-      tasks: provider.tasks,
-      dim: _dim,
-    );
-
-    return Container(
-      color: theme.pfBg,
-      child: CustomScrollView(
-        slivers: [
-          PfSliverAppBar(
-            title: '统计',
-            subtitle: '看见你的专注轨迹',
-            action: PillButton(
-              tooltip: '导出',
-              child: const Text('⤓', style: TextStyle(fontSize: 16)),
-              onTap: () => _export(s, _dim),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 14),
-              child: PfChipsRow(
-                options: _dimOptions,
-                selected: _dim,
-                onSelect: (v) => setState(() => _dim = v),
-              ),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Row(
-                children: [
-                  _StatCell(value: '${s.totalMinutes}', label: '专注分钟'),
-                  const SizedBox(width: 9),
-                  _StatCell(value: '${s.pomos}', label: '番茄数'),
-                  const SizedBox(width: 9),
-                  _StatCell(value: '${s.doneTasks}', label: '完成任务'),
-                  const SizedBox(width: 9),
-                  _StatCell(value: '${s.avgMinutes}', label: '日均分钟'),
-                ],
-              ),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _HlCell(value: '${s.activeDays}', label: '活跃天数'),
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: _HlCell(value: '${s.streak}', label: '最长连续'),
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: _HlCell(value: s.trendPct, label: '环比上期'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: _TrendCard(
-                mins: s.trendMins,
-                labels: s.trendLabels,
-                title: '专注趋势(${s.trendTitle})',
-              ),
-            ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 12)),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-              child: _ProjectDonutCard(shares: s.projectShares),
-            ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 76)),
-        ],
+/// 统计内容 slivers(StatsPage / StatsBody 共用,单一渲染实现)。
+List<Widget> buildStatsSlivers(
+  BuildContext context, {
+  required String dim,
+  required ValueChanged<String> onDimChanged,
+  required PfStatsSummary s,
+}) {
+  return [
+    SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.only(top: 14),
+        child: PfChipsRow(
+          options: _dimOptions,
+          selected: dim,
+          onSelect: onDimChanged,
+        ),
       ),
-    );
-  }
-
-  void _hint(String msg) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-
-  Future<void> _export(PfStatsSummary s, String dim) async {
-    try {
-      await StatsExporter.shareCsv(s, dim);
-    } catch (e) {
-      if (!mounted) return;
-      _hint('导出失败 · $e');
-    }
-  }
+    ),
+    SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+        child: Row(
+          children: [
+            _StatCell(value: '${s.totalMinutes}', label: '专注分钟'),
+            const SizedBox(width: 9),
+            _StatCell(value: '${s.pomos}', label: '番茄数'),
+            const SizedBox(width: 9),
+            _StatCell(value: '${s.doneTasks}', label: '完成任务'),
+            const SizedBox(width: 9),
+            _StatCell(value: '${s.avgMinutes}', label: '日均分钟'),
+          ],
+        ),
+      ),
+    ),
+    SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: _HlCell(value: '${s.activeDays}', label: '活跃天数'),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: _HlCell(value: '${s.streak}', label: '最长连续'),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: _HlCell(value: s.trendPct, label: '环比上期'),
+            ),
+          ],
+        ),
+      ),
+    ),
+    SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        child: _TrendCard(
+          mins: s.trendMins,
+          labels: s.trendLabels,
+          title: '专注趋势(${s.trendTitle})',
+        ),
+      ),
+    ),
+    const SliverToBoxAdapter(child: SizedBox(height: 12)),
+    SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+        child: _ProjectDonutCard(shares: s.projectShares),
+      ),
+    ),
+    const SliverToBoxAdapter(child: SizedBox(height: 80)),
+  ];
 }
 
 /// 统计小卡(.stat,数值 brand-700)。
@@ -242,25 +301,36 @@ class _TrendCard extends StatelessWidget {
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
             ),
           ),
-          SizedBox(
-            height: 136,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                for (var i = 0; i < mins.length; i++) ...[
-                  if (i > 0) const SizedBox(width: 8),
-                  Expanded(
-                    child: _TrendBar(
-                      ratio: mins[i] / unit,
-                      label: labels[i],
-                      top: theme.pfBrand,
-                      bottom: theme.pfBrand600,
+          if (mins.isEmpty)
+            SizedBox(
+              height: 136,
+              child: Center(
+                child: Text(
+                  '本维度还没有专注记录',
+                  style: TextStyle(fontSize: 13, color: theme.pfMuted),
+                ),
+              ),
+            )
+          else
+            SizedBox(
+              height: 136,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  for (var i = 0; i < mins.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 8),
+                    Expanded(
+                      child: _TrendBar(
+                        ratio: mins[i] / unit,
+                        label: labels[i],
+                        top: theme.pfBrand,
+                        bottom: theme.pfBrand600,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -285,7 +355,8 @@ class _TrendBar extends StatelessWidget {
     final theme = Theme.of(context);
     return LayoutBuilder(
       builder: (ctx, c) {
-        // 留 18 给日标签(12 + 6 间距),实际柱高按 ratio 占剩余空间。
+        // 留 18 给日标签(12 + 6 间距),实际柱高按 ratio 占剩余空间;
+        // 标签 Text 自占高度不叠加在槽高内(防 E3 改桶后 2px 底部溢出)。
         const labelH = 18.0;
         final maxBar = (c.maxHeight - labelH).clamp(0.0, double.infinity);
         final h = (maxBar * ratio.clamp(0.0, 1.0));
@@ -306,8 +377,17 @@ class _TrendBar extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 6),
-            Text(label, style: TextStyle(fontSize: 10, color: theme.pfMuted)),
+            const SizedBox(height: 2),
+            SizedBox(
+              height: 14,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  style: TextStyle(fontSize: 10, color: theme.pfMuted),
+                ),
+              ),
+            ),
           ],
         );
       },

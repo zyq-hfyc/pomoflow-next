@@ -36,21 +36,14 @@ void main() {
   });
 
   testWidgets('initialPeriod + initialKey 定位到指定周期段', (tester) async {
-    await pumpPage(
-      tester,
-      period: ReviewPeriod.yearly,
-      key: '2024',
-    );
+    await pumpPage(tester, period: ReviewPeriod.yearly, key: '2024');
     expect(find.text('年复盘'), findsOneWidget);
     expect(find.text('2024 年'), findsOneWidget);
   });
 
   testWidgets('非法 initialKey 回退当前周期', (tester) async {
     await pumpPage(tester, key: 'bogus');
-    expect(
-      find.text(currentReviewKey(ReviewPeriod.daily)),
-      findsOneWidget,
-    );
+    expect(find.text(currentReviewKey(ReviewPeriod.daily)), findsOneWidget);
   });
 
   testWidgets('日栏 ‹ › 步进换键', (tester) async {
@@ -70,8 +63,10 @@ void main() {
     await pumpPage(tester, key: '2026-09-01');
     await tester.tap(find.text('年'));
     await tester.pumpAndSettle();
-    expect(find.text('${currentReviewKey(ReviewPeriod.yearly)} 年'),
-        findsOneWidget);
+    expect(
+      find.text('${currentReviewKey(ReviewPeriod.yearly)} 年'),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byIcon(Icons.chevron_left));
     await tester.pumpAndSettle();

@@ -271,27 +271,39 @@ void main() {
     });
   });
 
-  group('通知模板 reminder 预设(6 风格)', () {
-    test('各风格提醒标题/正文非空且正文含 {task_title}', () {
-      for (final style in NotificationTemplateProvider.styles.keys) {
-        final preset = NotificationTemplateProvider.presetFor(style);
-        expect(preset.reminderTitle, isNotEmpty, reason: style);
-        expect(preset.reminderBody, contains('{task_title}'), reason: style);
-      }
+  group('通知模板(桌面默认风格逐字对齐,2026-09-05 起只读)', () {
+    test('默认文案与桌面 notificationStyles.ts default 预设一致', () {
+      final p = NotificationTemplateProvider();
+      expect(p.focusTitle, '专注结束');
+      expect(p.focusBody, '番茄钟结束了，休息一下吧');
+      expect(p.breakTitle, '休息结束');
+      expect(p.breakBody, '休息结束，满满的能量开启新的任务专注。');
+      expect(p.reminderTitle, 'PomoFlow 任务提醒');
+      expect(p.reminderBody, contains('{task_title}'));
     });
 
-    test('provider 默认值 + updateReminder 持久化', () async {
+    test('旧版自定义值经 initialize 恢复(short 优先于 long 作为休息文案)', () async {
+      SharedPreferences.setMockInitialValues({
+        'notif_reminder_title': 'T',
+        'notif_reminder_body': '「{task_title}」!',
+        'notif_short_title': '小憩结束',
+        'notif_long_title': '长休结束',
+      });
       final p = NotificationTemplateProvider();
-      expect(p.reminderTitle, '任务提醒 📌');
-      expect(p.reminderBody, '「{task_title}」提醒时间已到');
-
-      await p.updateReminder(title: 'T', body: '「{task_title}」!');
+      await p.initialize();
       expect(p.reminderTitle, 'T');
-      // 重开实例从 SharedPreferences 恢复
-      final p2 = NotificationTemplateProvider();
-      await p2.initialize();
-      expect(p2.reminderTitle, 'T');
-      expect(p2.reminderBody, '「{task_title}」!');
+      expect(p.reminderBody, '「{task_title}」!');
+      expect(p.breakTitle, '小憩结束'); // short 优先、long 兜底
+      expect(p.breakBody, '休息结束，满满的能量开启新的任务专注。');
+    });
+
+    test('substitute 占位符替换(无任务退空串)', () {
+      const body = '任务「{task_title}」提醒时间已到';
+      expect(
+        NotificationTemplateProvider.substitute(body, taskTitle: '写周报'),
+        '任务「写周报」提醒时间已到',
+      );
+      expect(NotificationTemplateProvider.substitute(body), '任务「」提醒时间已到');
     });
   });
 }

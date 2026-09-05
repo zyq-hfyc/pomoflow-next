@@ -14,20 +14,19 @@ void main() {
     DateTime start,
     int minutes, {
     String taskId = 't0',
-  }) =>
-      PfSession(
-        id: id,
-        taskId: taskId,
-        durationMinutes: minutes,
-        startedAt: start,
-        endedAt: start.add(Duration(minutes: minutes)),
-      );
+  }) => PfSession(
+    id: id,
+    taskId: taskId,
+    durationMinutes: minutes,
+    startedAt: start,
+    endedAt: start.add(Duration(minutes: minutes)),
+  );
 
-  test('今天维度只算当日会话;avg = 当日分钟;环比上期为 0 → —', () {
+  test('今天维度只算当日会话;avg = 当日分钟;环比上期为 0 → —;桶仅含今日', () {
     final s = [
       session('a', DateTime(2026, 8, 25, 9), 25),
       session('b', DateTime(2026, 8, 25, 14), 50),
-      session('c', DateTime(2026, 8, 23, 10), 30), // 前天:昨天(上期)仍为 0
+      session('c', DateTime(2026, 8, 23, 10), 30), // 前天:桶外(本维度口径)
     ];
     final r = aggregateStats(sessions: s, tasks: const [], dim: '今天', now: now);
     expect(r.totalMinutes, 75);
@@ -35,9 +34,11 @@ void main() {
     expect(r.avgMinutes, 75); // 今天维度 = 当日分钟
     expect(r.activeDays, 1);
     expect(r.trendPct, '—'); // 上期(昨天)为 0
-    expect(r.trendMins.last, 75); // 趋势最后一桶 = 今天
-    expect(r.trendMins[5], 0); // 昨天空
-    expect(r.trendMins[4], 30); // 前天 30
+    // E3 批:桶只建在有数据的键上(桌面 BTreeMap 同款,不补零)—— 今天
+    // 维度窗口 = 今天,前天/昨天都在窗口外;窗口内仅今日一桶。
+    expect(r.trendMins, hasLength(1));
+    expect(r.trendMins.single, 75);
+    expect(r.trendLabels.single, '8/25');
   });
 
   test('本周维度周一起算,周一之前的会话不计', () {
@@ -76,29 +77,63 @@ void main() {
     expect(r.streak, 3);
   });
 
-  test('项目分布:按任务项目分组,未关联会话单列;降序', () {
+  test('项目分布:任务维度(completedPomos×时长,dueAt 入区间),2026-09-05 对齐桌面', () {
     final tasks = [
-      PfTask(id: 't1', title: 'A', project: '产品设计'),
-      PfTask(id: 't2', title: 'B', project: '研发'),
+      // 入池:今天到期,7×30=210 分钟(不要求整体完成)
+      PfTask(
+        id: 't1',
+        title: 'A',
+        project: '产品设计',
+        dueAt: DateTime(2026, 8, 25, 15),
+        estimatedPomos: 8,
+        completedPomos: 7,
+        pomodoroDuration: 30,
+      ),
+      // 入池:今天到期,2×25=50 分钟
+      PfTask(
+        id: 't2',
+        title: 'B',
+        project: '研发',
+        dueAt: DateTime(2026, 8, 25, 18),
+        estimatedPomos: 2,
+        completedPomos: 2,
+        pomodoroDuration: 25,
+      ),
+      // 不入池:到期日出区间(昨天)
+      PfTask(
+        id: 't3',
+        title: 'C',
+        project: '运营',
+        dueAt: DateTime(2026, 8, 24, 9),
+        completedPomos: 5,
+        pomodoroDuration: 25,
+      ),
+      // 不入池:无清单归属
+      PfTask(
+        id: 't4',
+        title: 'D',
+        dueAt: DateTime(2026, 8, 25, 20),
+        completedPomos: 5,
+        pomodoroDuration: 25,
+      ),
+      // 不入池:未设单番茄时长 → 分钟数 0(桌面 duration NULL 按 0)
+      PfTask(
+        id: 't5',
+        title: 'E',
+        project: '学习',
+        dueAt: DateTime(2026, 8, 25, 21),
+        completedPomos: 3,
+      ),
     ];
-    final s = [
-      session('a', DateTime(2026, 8, 25, 9), 30, taskId: 't1'),
-      session('b', DateTime(2026, 8, 25, 10), 20, taskId: 't1'),
-      session('c', DateTime(2026, 8, 25, 11), 30, taskId: 't2'),
-      session('d', DateTime(2026, 8, 25, 12), 20), // 未关联
-    ];
+    // 会话与项目分布无关(口径已与 session 解耦)
+    final s = [session('a', DateTime(2026, 8, 25, 9), 999, taskId: 't9')];
     final r = aggregateStats(sessions: s, tasks: tasks, dim: '今天', now: now);
-    expect(r.projectShares, hasLength(3));
-    // 总 100 分钟:产品设计 50 → 0.5;研发 30、未关联 20 排 2、3 位。
-    expect(r.projectShares[0], ('产品设计', 0.5));
-    expect(
-      r.projectShares[1].$1,
-      anyOf(equals('研发'), equals('未关联')),
-    );
-    expect(
-      r.projectShares[2].$1,
-      anyOf(equals('研发'), equals('未关联')),
-    );
+    // 总 260:产品设计 210 → ~0.808;研发 50 → ~0.192;降序。
+    expect(r.projectShares, hasLength(2));
+    expect(r.projectShares[0].$1, '产品设计');
+    expect(r.projectShares[0].$2, closeTo(210 / 260, 0.001));
+    expect(r.projectShares[1].$1, '研发');
+    expect(r.projectShares[1].$2, closeTo(50 / 260, 0.001));
   });
 
   test('完成任务 = 区间内 completed_at 计数(v8 口径升级)', () {
@@ -131,7 +166,11 @@ void main() {
       ),
     ];
     final r = aggregateStats(
-        sessions: const [], tasks: tasks, dim: '本月', now: now);
+      sessions: const [],
+      tasks: tasks,
+      dim: '本月',
+      now: now,
+    );
     expect(r.doneTasks, 1);
   });
 
@@ -159,7 +198,11 @@ void main() {
 
   test('空数据:全 0、streak 0、项目分布空、环比 —', () {
     final r = aggregateStats(
-        sessions: const [], tasks: const [], dim: '本月', now: now);
+      sessions: const [],
+      tasks: const [],
+      dim: '本月',
+      now: now,
+    );
     expect(r.totalMinutes, 0);
     expect(r.pomos, 0);
     expect(r.streak, 0);

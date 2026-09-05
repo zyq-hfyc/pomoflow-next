@@ -78,7 +78,11 @@ class _ItemCreateFormState extends State<_ItemCreateForm> {
       children: [
         PfFormField(
           label: '标题',
-          child: PfSheetTextField(controller: _titleCtrl, hint: '给TA起个名字'),
+          child: PfSheetTextField(
+            controller: _titleCtrl,
+            hint: '给TA起个名字',
+            maxLength: 200, // core validate 同款上限
+          ),
         ),
         PfFormField(
           label: '内容',
@@ -86,6 +90,7 @@ class _ItemCreateFormState extends State<_ItemCreateForm> {
             controller: _bodyCtrl,
             hint: '补充说明、想法、细节…',
             maxLines: 5,
+            maxLength: 5000,
           ),
         ),
         PfFormField(

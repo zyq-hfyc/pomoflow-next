@@ -323,23 +323,32 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 新建/更新项目(同名重命名即 upsert;display_order 自动追加到末尾)。
+  /// 新建/更新项目(同名重命名即 upsert)。顺序语义(I2 批,桌面拖拽排序
+  /// 的移动端等价):显式传入 displayOrder > 原位保留(改名/同父 upsert
+  /// 不再被甩到末尾)> 追加末尾(新建/改父)。color 空串 = 保留原色。
   Future<void> upsertProject({
     required String id,
     required String name,
     String color = '',
     String parentId = '',
+    int? displayOrder,
   }) async {
     final db = _db;
     if (db == null) return;
-    final nextOrder = _projects.where((p) => p.parentId == parentId).length + 1;
+    final existing = _projects.where((p) => p.id == id).firstOrNull;
+    final effectiveColor = color.isEmpty ? (existing?.color ?? '') : color;
+    final order =
+        displayOrder ??
+        (existing != null && existing.parentId == parentId
+            ? existing.displayOrder
+            : _projects.where((p) => p.parentId == parentId).length + 1);
     try {
       await db.upsertProject(
         id: id,
         name: name,
-        color: color,
+        color: effectiveColor,
         parentId: parentId,
-        displayOrder: nextOrder,
+        displayOrder: order,
         originDevice: _deviceIdProvider?.call() ?? '',
         userId: _userIdProvider?.call() ?? '',
       );
@@ -347,6 +356,34 @@ class TaskProvider extends ChangeNotifier {
     } on Exception catch (e) {
       debugPrint('upsertProject failed: $e');
     }
+  }
+
+  /// 同级内上移/下移(I2 批):与相邻兄弟交换 display_order,两次 upsert
+  /// 标 pending,随同步收敛(桌面 reorderProjects 的交换语义)。
+  Future<void> moveProject(String id, {required bool up}) async {
+    final i = _projects.indexWhere((p) => p.id == id);
+    if (i < 0) return;
+    final p = _projects[i];
+    final siblings = _projects.where((q) => q.parentId == p.parentId).toList()
+      ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+    final si = siblings.indexWhere((q) => q.id == id);
+    final sj = up ? si - 1 : si + 1;
+    if (sj < 0 || sj >= siblings.length) return;
+    final other = siblings[sj];
+    await upsertProject(
+      id: p.id,
+      name: p.name,
+      color: p.color,
+      parentId: p.parentId,
+      displayOrder: other.displayOrder,
+    );
+    await upsertProject(
+      id: other.id,
+      name: other.name,
+      color: other.color,
+      parentId: other.parentId,
+      displayOrder: p.displayOrder,
+    );
   }
 
   /// 软删除项目(同步给服务端收敛)。
@@ -365,39 +402,203 @@ class TaskProvider extends ChangeNotifier {
     }
   }
 
-  // === 任务视图(§4.2 六视图) ==================================================
+  // === 标签管理(I3 批,桌面 TagManager 移动端等价)===========================
 
-  static const taskViews = ['今天', '明天', '本周', '计划', '已完成', '手账'];
+  /// 全部非墓碑标签(名称升序;本表无 display_order 列,拖序跨端另开批次)。
+  Future<List<({String id, String name, String color})>> listTags() async {
+    final db = _db;
+    if (db == null) return const [];
+    return db.listTags();
+  }
 
-  /// 视图分流(P3d 起按 dueAt 日期判断,桌面同语义;无到期日的任务
-  /// 进「计划」不进「今天/明天」)。due_label 只做卡片展示。
+  /// 新建标签(I3 批):同名复用(ensureTag 幂等),新颜色随 upsert 生效。
+  Future<void> createTag(String name, {String color = ''}) async {
+    final db = _db;
+    if (db == null) return;
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    try {
+      final id = await db.ensureTag(
+        name: trimmed,
+        originDevice: _deviceIdProvider?.call() ?? '',
+        userId: _userIdProvider?.call() ?? '',
+      );
+      if (color.isNotEmpty) {
+        await db.updateTagFields(
+          id: id,
+          color: color,
+          originDevice: _deviceIdProvider?.call() ?? '',
+          userId: _userIdProvider?.call() ?? '',
+        );
+      }
+      notifyListeners();
+    } on Exception catch (e) {
+      debugPrint('createTag failed: $e');
+    }
+  }
+
+  /// 重命名标签(桌面 rename 级联语义):tag 实体改名 + 所有携带旧名的
+  /// 任务字符串同步替换(任务 revision bump → task_tag_sync 重算、
+  /// 两端任务标签展示收敛;对端 task_tags 走 id,天然不用动)。
+  Future<void> renameTag(String id, String newName) async {
+    final db = _db;
+    if (db == null) return;
+    final old = await db.findTagNameById(id);
+    if (old == null || old == newName) return;
+    try {
+      await db.updateTagFields(
+        id: id,
+        name: newName,
+        originDevice: _deviceIdProvider?.call() ?? '',
+        userId: _userIdProvider?.call() ?? '',
+      );
+    } on Exception catch (e) {
+      debugPrint('renameTag entity failed: $e');
+      return;
+    }
+    // 任务字符串级联
+    for (var i = 0; i < _tasks.length; i++) {
+      final t = _tasks[i];
+      if (!t.tags.contains(old)) continue;
+      final updated = t.copyWith(
+        tags: [for (final tag in t.tags) tag == old ? newName : tag],
+      );
+      _tasks[i] = updated;
+      try {
+        await db.updateTask(updated);
+        await _markPending(db, updated.id);
+      } on Exception catch (e) {
+        debugPrint('renameTag cascade task ${t.id} failed: $e');
+      }
+    }
+    notifyListeners();
+  }
+
+  /// 换色(仅 tag 实体;任务字符串不含颜色)。
+  Future<void> setTagColor(String id, String color) async {
+    final db = _db;
+    if (db == null) return;
+    try {
+      await db.updateTagFields(
+        id: id,
+        color: color,
+        originDevice: _deviceIdProvider?.call() ?? '',
+        userId: _userIdProvider?.call() ?? '',
+      );
+    } on Exception catch (e) {
+      debugPrint('setTagColor failed: $e');
+    }
+  }
+
+  /// 删除标签:tag 实体盖墓碑 + 任务字符串级联移除(task_tag_sync
+  /// 随任务 markPending 重算,链接两端收敛;对端展示里标签消失)。
+  Future<void> deleteTag(String id) async {
+    final db = _db;
+    if (db == null) return;
+    final old = await db.findTagNameById(id);
+    try {
+      await db.softDeleteTag(
+        id: id,
+        originDevice: _deviceIdProvider?.call() ?? '',
+        userId: _userIdProvider?.call() ?? '',
+      );
+    } on Exception catch (e) {
+      debugPrint('deleteTag entity failed: $e');
+      return;
+    }
+    if (old != null) {
+      for (var i = 0; i < _tasks.length; i++) {
+        final t = _tasks[i];
+        if (!t.tags.contains(old)) continue;
+        final updated = t.copyWith(
+          tags: [
+            for (final tag in t.tags)
+              if (tag != old) tag,
+          ],
+        );
+        _tasks[i] = updated;
+        try {
+          await db.updateTask(updated);
+          await _markPending(db, updated.id);
+        } on Exception catch (e) {
+          debugPrint('deleteTag cascade task ${t.id} failed: $e');
+        }
+      }
+    }
+    notifyListeners();
+  }
+
+  // === 任务视图(§4.2 七视图,2026-09-05 A9 批对齐桌面) ========================
+
+  /// 手账 = 任务月历(桌面 JournalView);随手记 = 四类 journal 列表
+  /// (桌面 NotesView)。
+  static const taskViews = ['今天', '明天', '本周', '计划', '已完成', '手账', '随手记'];
+
+  /// 视图分流(桌面 TasksPage 同口径,2026-09-05 对齐批):
+  /// - 今天/明天/本周:按 dueAt 日期落窗口,**已完成保留**(排序沉底);
+  /// - 本周 = 本周一~周日(周一为起点);
+  /// - 计划 = 全部任务(桌面 planned 无日期条件);
+  /// - 无到期日的任务不进 任何日期窗口(只在计划)。
+  /// 统一排序见 [_taskListCompare]。due_label 只做卡片展示。
   List<PfTask> viewTasks(String view) {
     final now = DateTime.now();
-    final tomorrow = now.add(const Duration(days: 1));
+    final tomorrow = DateTime(now.year, now.month, now.day + 1);
     bool sameDay(DateTime? d, DateTime ref) =>
         d != null &&
         d.year == ref.year &&
         d.month == ref.month &&
         d.day == ref.day;
-    return switch (view) {
-      '今天' =>
-        _tasks.where((t) => !t.completed && sameDay(t.dueAt, now)).toList(),
-      '明天' =>
-        _tasks
-            .where((t) => !t.completed && sameDay(t.dueAt, tomorrow))
-            .toList(),
-      '本周' => _tasks.where((t) => !t.completed).toList(),
-      '计划' => _tasks.where((t) => !t.completed).toList(),
-      '已完成' => _tasks.where((t) => t.completed).toList(),
+    bool inWeek(DateTime? d) {
+      if (d == null) return false;
+      final monday = DateTime(
+        now.year,
+        now.month,
+        now.day,
+      ).subtract(Duration(days: now.weekday - 1));
+      final dueDay = DateTime(d.year, d.month, d.day);
+      return !dueDay.isBefore(monday) &&
+          !dueDay.isAfter(monday.add(const Duration(days: 6)));
+    }
+
+    final base = switch (view) {
+      '今天' => _tasks.where((t) => sameDay(t.dueAt, now)),
+      '明天' => _tasks.where((t) => sameDay(t.dueAt, tomorrow)),
+      '本周' => _tasks.where((t) => inWeek(t.dueAt)),
+      '计划' => _tasks.where((t) => true),
+      '已完成' => _tasks.where((t) => t.completed),
       _ => const <PfTask>[],
     };
+    final list = base.toList()..sort(_taskListCompare);
+    return List.unmodifiable(list);
+  }
+
+  /// 列表统一排序(桌面 TasksPage 同款):未完成在前 → 优先级
+  /// 高>中>低>无 → 创建时间升序。tasks 表无 created 列,沿用
+  /// sync_wire 的 updated_at 近似(注释见 sync_wire.dart:148)。
+  static const _priorityOrder = {
+    PfPriority.high: 0,
+    PfPriority.medium: 1,
+    PfPriority.low: 2,
+    PfPriority.none: 3,
+  };
+
+  static int _taskListCompare(PfTask a, PfTask b) {
+    if (a.completed != b.completed) return a.completed ? 1 : -1;
+    final pa = _priorityOrder[a.priority] ?? 3;
+    final pb = _priorityOrder[b.priority] ?? 3;
+    if (pa != pb) return pa - pb;
+    return (a.syncMeta.updatedAt?.millisecondsSinceEpoch ?? 0) -
+        (b.syncMeta.updatedAt?.millisecondsSinceEpoch ?? 0);
   }
 
   // === 写操作(本地 + DB;P3d-B-Phase-2 commit 4:mutator 末尾标 pending)=====
 
   Future<void> addTask(PfTask task) async {
     final id = task.id.isEmpty ? await _allocateId() : task.id;
-    var t = id == task.id
+    // 新建盖 updated_at(列表排序用;桌面按 created_at,本表无该列,
+    // 见 _taskListCompare 注释)。DB 落库侧本就写 now,这里让内存同源。
+    final stamp = DateTime.now();
+    var t = id == task.id && task.syncMeta.updatedAt != null
         ? task
         : PfTask(
             id: id,
@@ -418,7 +619,13 @@ class TaskProvider extends ChangeNotifier {
             repeatEndDate: task.repeatEndDate,
             subtaskCount: task.subtaskCount,
             completed: task.completed,
-            syncMeta: task.syncMeta,
+            syncMeta: PfSyncMeta(
+              revision: task.syncMeta.revision,
+              updatedAt: task.syncMeta.updatedAt ?? stamp,
+              originDevice: task.syncMeta.originDevice,
+              syncState: task.syncMeta.syncState,
+              userId: task.syncMeta.userId,
+            ),
           );
     // 新建模板 → 落库前算好重复终止时间(桌面 upsert_task 同构)。
     if (t.isRepeatTemplate) {
@@ -809,56 +1016,78 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 一个番茄自然走完(focus_page 计时器归零时调用;休息结束不落 session)。
-  ///
-  /// P1 起双写:
-  /// - `pomodoro_sessions` 落一条 append-only 会话行 + 标 pending(跨设备同步);
-  /// - 任务行 `completed_pomodoros` +1(原有语义,照旧 LWW)。
-  /// `todayPomos` 改由 sessions 按本地日派生,不再写 meta。
-  Future<void> completePomodoro({
-    int durationMinutes = 25,
-    DateTime? startedAt,
+  /// 开始一段计时(桌面 start_pomodoro 同构,2026-09-05 J2 批):立即落一条
+  /// is_completed=false 的 session 行(ended_at 暂占 started_at),返回行 id。
+  /// 专注/休息都建行(休息 taskId 空,计数口径自然剔除);自然完成/中途
+  /// 放弃走 [stopPomodoro] 收尾;计时中被杀进程 = 行停在 open 态
+  /// (不计统计,历史可查,桌面同款)。
+  Future<String> startPomodoro({
+    required int durationMinutes,
+    String? taskId,
+    String projectId = '',
   }) async {
+    final now = DateTime.now();
+    final id = uuidV4();
+    final s = PfSession(
+      id: id,
+      taskId: taskId ?? '',
+      projectId: projectId,
+      durationMinutes: durationMinutes,
+      startedAt: now,
+      endedAt: now, // 占位;stop 时落真实时刻
+      isCompleted: false,
+    );
+    _sessions.insert(0, s);
     final db = _db;
-    final end = DateTime.now();
-    final start = startedAt ?? end.subtract(Duration(minutes: durationMinutes));
-
     if (db != null) {
-      final id = await _allocateId();
-      final s = PfSession(
-        id: id,
-        taskId: focusTask?.id ?? '',
-        durationMinutes: durationMinutes,
-        startedAt: start,
-        endedAt: end,
-      );
-      _sessions.insert(0, s);
       await db.insertSession(s);
       await _markSessionPending(db, id);
-      todayPomos = (await db.sessionsOnDay(localDay(end))).length;
-    } else {
-      // web demo 内存路径:同样落内存 session(统计页与 todayPomos 同源)。
-      _sessions.insert(
-        0,
-        PfSession(
-          id: uuidV4(),
-          taskId: focusTask?.id ?? '',
-          durationMinutes: durationMinutes,
-          startedAt: start,
-          endedAt: end,
-        ),
+    }
+    notifyListeners();
+    return id;
+  }
+
+  /// 停止一段计时(桌面 stop_pomodoro 同构):ended_at 落真实时刻、
+  /// is_completed 按停表原因。仅 isCompleted=true 且行绑定任务时:
+  /// 任务 completed_pomodoros +1,达预估自动完成(estimated=0 一个即完成,
+  /// v1 语义)→ 复选框/已完成视图/专注下拉自然联动。todayPomos 由
+  /// sessions 按本地日派生。
+  Future<void> stopPomodoro(String id, {required bool isCompleted}) async {
+    final end = DateTime.now();
+    final i = _sessions.indexWhere((s) => s.id == id);
+    if (i < 0) return;
+    final stopped = _sessions[i].copyWith(
+      endedAt: end,
+      isCompleted: isCompleted,
+    );
+    _sessions[i] = stopped;
+    final db = _db;
+    if (db != null) {
+      await db.stopSession(
+        id: id,
+        endedAt: end,
+        isCompleted: isCompleted,
+        originDevice: _deviceIdProvider?.call() ?? '',
+        userId: _userIdProvider?.call() ?? '',
       );
+      if (isCompleted) {
+        todayPomos = (await db.sessionsOnDay(localDay(end))).length;
+      }
+    } else if (isCompleted) {
       todayPomos += 1;
     }
 
-    final t = focusTask;
-    if (t != null) {
-      final i = _tasks.indexWhere((x) => x.id == t.id);
-      if (i >= 0) {
-        final updated = _tasks[i].copyWith(
-          completedPomos: _tasks[i].completedPomos + 1,
+    if (isCompleted && stopped.taskId.isNotEmpty) {
+      final ti = _tasks.indexWhere((x) => x.id == stopped.taskId);
+      if (ti >= 0) {
+        final bumped = _tasks[ti].completedPomos + 1;
+        final reachedTarget = bumped >= _tasks[ti].estimatedPomos;
+        final updated = _tasks[ti].copyWith(
+          completedPomos: bumped,
+          completed: reachedTarget ? true : _tasks[ti].completed,
+          completedAt: reachedTarget ? end : _tasks[ti].completedAt,
         );
-        _tasks[i] = updated;
+        _tasks[ti] = updated;
         if (db != null) {
           await db.updateTask(updated);
           await _markPending(db, updated.id);
@@ -868,42 +1097,39 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 中途放弃的专注(focus_page「跳过」时调用;对齐桌面 stop_pomodoro 语义):
-  /// 落一条 is_completed=false 的 session —— 不计今日番茄/统计(两端同
-  /// 口径),但历史可查、随同步保留;elapsedSeconds < 60 不落(误触保护)。
-  Future<void> abandonPomodoro({required int elapsedSeconds}) async {
-    if (elapsedSeconds < 60) return;
-    final db = _db;
-    final end = DateTime.now();
-    final start = end.subtract(Duration(seconds: elapsedSeconds));
-    final minutes = (elapsedSeconds / 60).round().clamp(1, 1000);
-    if (db != null) {
-      final id = uuidV4();
-      final s = PfSession(
-        id: id,
-        taskId: focusTask?.id ?? '',
-        durationMinutes: minutes,
-        startedAt: start,
-        endedAt: end,
-        isCompleted: false,
-      );
-      _sessions.insert(0, s);
-      await db.insertSession(s);
-      await _markSessionPending(db, id);
-    } else {
-      _sessions.insert(
-        0,
-        PfSession(
-          id: uuidV4(),
-          taskId: focusTask?.id ?? '',
-          durationMinutes: minutes,
-          startedAt: start,
-          endedAt: end,
-          isCompleted: false,
-        ),
-      );
-    }
-    notifyListeners();
+  /// 完成链的下一个任务(桌面 pickNextAutoTask 同构,timer.svelte.ts):
+  /// 池 = 未完成且带到期日、到期在本月、到期日 ≤ 今天(逾期任务优先补);
+  /// 排序 优先级 高>中>低>无 → 创建时间升序;空池返回 null(圆环回全局时长)。
+  static PfTask? pickNextAutoTask(List<PfTask> list) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final monthStart = DateTime(now.year, now.month, 1);
+    final monthEnd = DateTime(now.year, now.month + 1, 0, 23, 59, 59, 999);
+    final order = {
+      PfPriority.high: 0,
+      PfPriority.medium: 1,
+      PfPriority.low: 2,
+      PfPriority.none: 3,
+    };
+    final pool =
+        list.where((t) {
+          if (t.completed || t.deletedAt != null) return false;
+          final d = t.dueAt;
+          if (d == null || d.isBefore(monthStart) || d.isAfter(monthEnd)) {
+            return false;
+          }
+          final dueDay = DateTime(d.year, d.month, d.day);
+          return !dueDay.isAfter(today);
+        }).toList()..sort((a, b) {
+          final pa = order[a.priority] ?? 3;
+          final pb = order[b.priority] ?? 3;
+          if (pa != pb) return pa - pb;
+          // 创建时间升序:tasks 表无 created 列,沿用 sync_wire 同款近似
+          // (updated_at 代排,注释见 sync_wire.dart:148)。
+          return (a.syncMeta.updatedAt?.millisecondsSinceEpoch ?? 0) -
+              (b.syncMeta.updatedAt?.millisecondsSinceEpoch ?? 0);
+        });
+    return pool.isEmpty ? null : pool.first;
   }
 
   /// 读某日复盘内容(null = 未写)。格式 date = yyyy-mm-dd。
@@ -1050,8 +1276,7 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// 本年字符串 yyyy(4 位,年复盘自然键)。
-  static String currentYear() =>
-      DateTime.now().year.toString().padLeft(4, '0');
+  static String currentYear() => DateTime.now().year.toString().padLeft(4, '0');
 
   Future<String> nextId() async => await _allocateId();
 

@@ -19,19 +19,26 @@ import 'project_manager_sheet.dart';
 /// 新建/编辑任务 Sheet(§5.5 任务类全字段):标题/项目/优先级/到期日/提醒/
 /// 预计番茄/单番茄时长/重复(含自定义)/标签。传 [editTask] 即编辑模式
 /// (预填 + 保存修改)。到期日/提醒/自定义重复与桌面端 core::Task 语义一致。
-void showTaskCreateSheet(BuildContext context, {PfTask? editTask}) {
+void showTaskCreateSheet(
+  BuildContext context, {
+  PfTask? editTask,
+  String? sourceView,
+}) {
   pfSheet(
     context,
     title: editTask == null ? '新建任务' : '编辑任务',
-    body: (ctx) => _TaskCreateForm(initial: editTask),
+    body: (ctx) => _TaskCreateForm(initial: editTask, sourceView: sourceView),
   );
 }
 
 class _TaskCreateForm extends StatefulWidget {
-  const _TaskCreateForm({this.initial});
+  const _TaskCreateForm({this.initial, this.sourceView});
 
   /// 编辑模式的原任务(null = 新建)。
   final PfTask? initial;
+
+  /// 新建时所在的任务视图(今天/明天/本周/计划…),决定到期日默认值。
+  final String? sourceView;
 
   @override
   State<_TaskCreateForm> createState() => _TaskCreateFormState();
@@ -109,13 +116,16 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
   );
   late String _project = _initialProject();
 
+  /// 「无清单」下拉项(桌面默认 null project 同语义;内部以空串存储)。
+  static const _noProject = '无清单';
+
   String _initialProject() {
     final init = widget.initial;
     final list = context.read<TaskProvider>().projects;
     if (init != null && list.any((p) => p.name == init.project)) {
       return init.project;
     }
-    return list.isNotEmpty ? list.first.name : '';
+    return ''; // 桌面同款:新建默认「无清单」
   }
 
   /// 项目列表从 provider 拉(扁平按 display_order)。每次 build 重新取值
@@ -126,9 +136,22 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
   /// 到期日(含时分;null = 无)。桌面同语义:datetime 而非「今天/明天」标签。
   DateTime? _dueAt;
 
+  /// 新建默认到期日(桌面 TasksPage `filter === "tomorrow" ? 明天 : 今天`):
+  /// 「明天」视图 → 明天,其余视图(含手账等入口无视图)→ 今天;
+  /// 时间部分取当前时刻(桌面展开「更多」才补时间,这里一并带上,视图
+  /// 路由只看日期不受影响)。
+  DateTime? _defaultDueAtForCreate() {
+    if (widget.initial != null) return null; // 编辑模式走预填
+    final now = DateTime.now();
+    if (widget.sourceView == '明天') {
+      return DateTime(now.year, now.month, now.day + 1, now.hour, now.minute);
+    }
+    return DateTime(now.year, now.month, now.day, now.hour, now.minute);
+  }
+
   late int _pomos = widget.initial != null && widget.initial!.estimatedPomos > 0
       ? widget.initial!.estimatedPomos
-      : 2;
+      : 1; // 桌面快速添加默认 1(TaskForm estimated>0?estimated:1)
   late int _duration =
       widget.initial != null && widget.initial!.pomodoroDuration > 0
       ? widget.initial!.pomodoroDuration
@@ -141,8 +164,9 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
   @override
   void initState() {
     super.initState();
-    // 编辑模式预填到期日(late 字段不能引用 this,这里补)。
-    _dueAt = widget.initial?.dueAt;
+    // 编辑模式预填到期日;新建按所在视图默认(桌面 TasksPage 同款规则:
+    // 「明天」视图默认明天,其余视图一律默认今天;时间取当前时刻)。
+    _dueAt = widget.initial?.dueAt ?? _defaultDueAtForCreate();
     // 兜底:第一次进 sheet 时若 provider 还没 load 出项目列表,
     // 异步拉一次(常见于 demo → 真 DB 切换 或 首次冷启动)。
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -154,7 +178,7 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
           final list = _projectList();
           setState(() {
             if (!list.any((q) => q.name == _project)) {
-              _project = list.isNotEmpty ? list.first.name : '';
+              _project = ''; // 无清单(桌面同款默认)
             }
           });
         });
@@ -326,164 +350,214 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
 
   @override
   Widget build(BuildContext context) {
+    // 终稿 P2 两段式:基础段 3 项必填(标题/到期日/优先级),
+    // 其余 7 项收进默认折叠的「更多设置」;底部 80% 宽胶囊保存按钮。
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        PfFormField(
-          label: '标题',
-          child: PfSheetTextField(controller: _titleCtrl, hint: '要做什么？'),
-        ),
-        PfFormField(
-          label: '描述(可选)',
-          child: _MultilineField(
-            controller: _descCtrl,
-            hint: '补充细节、验收标准…(与桌面端互通)',
-          ),
-        ),
-        PfFormField(
-          label: '所属项目',
-          child: _DropdownField(
-            value: _project,
-            options: _projectList().map((p) => p.name).toList(),
-            onChanged: (v) => setState(() => _project = v),
-            trailing: TextButton(
-              onPressed: () {
-                showProjectManagerSheet(context);
-                if (!mounted) return;
-                // 兜底:Provider 状态变更由 listener 触发 rebuild,无需手动 setState
-                final list = _projectList();
-                setState(() {
-                  // 重建:当前选中若已被删则回到第一项
-                  if (!list.any((p) => p.name == _project)) {
-                    _project = list.isNotEmpty ? list.first.name : '';
-                  }
-                });
-              },
-              child: const Text('管理', style: TextStyle(fontSize: 13)),
-            ),
-          ),
-        ),
-        PfFormField(
-          label: '优先级',
-          child: PfSegmented.soft(
-            options: const [
-              (PfPriority.high, '高'),
-              (PfPriority.medium, '中'),
-              (PfPriority.low, '低'),
-              (PfPriority.none, '无'),
-            ],
-            selected: _priority,
-            onSelect: (v) => setState(() => _priority = v),
-          ),
-        ),
-        PfFormField(
-          label: '到期日',
-          child: _DueAtField(
-            dueAt: _dueAt,
-            onPick: _pickDueAt,
-            onClear: _dueAt == null
-                ? null
-                : () => setState(() => _dueAt = null),
-          ),
-        ),
-        PfFormField(
-          label: '提醒',
-          child: _DropdownField(
-            value: _reminderLabel,
-            options: [for (final o in _reminderOptions) o.$2],
-            onChanged: (v) => setState(() => _reminder = _labelToReminder(v)),
-          ),
-        ),
-        Row(
-          children: [
-            Expanded(
-              child: PfFormField(
-                label: '预计番茄数',
-                child: _StepperField(
-                  value: _pomos,
-                  min: 1,
-                  max: 12,
-                  onChanged: (v) => setState(() => _pomos = v),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: PfFormField(
-                label: '单番茄时长(分钟)',
-                child: _StepperField(
-                  value: _duration,
-                  min: 5,
-                  max: 60,
-                  step: 5,
-                  onChanged: (v) => setState(() => _duration = v),
-                ),
-              ),
-            ),
-          ],
-        ),
-        PfFormField(
-          label: '重复',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _DropdownField(
-                value: _repeat,
-                options: _repeatOptions,
-                onChanged: (v) => setState(() => _repeat = v),
-              ),
-              if (_repeat == '自定义') ...[
-                const SizedBox(height: 8),
-                _RepeatCustomEditor(
-                  start: _rcStart,
-                  end: _rcEnd,
-                  interval: _rcInterval,
-                  type: _rcType,
-                  weekdays: _rcWeekdays,
-                  monthDays: _rcMonthDays,
-                  onStart: (d) => setState(() => _rcStart = d),
-                  onEnd: (d) => setState(() => _rcEnd = d),
-                  onInterval: (n) => setState(() => _rcInterval = n),
-                  onType: (t) => setState(() => _rcType = t),
-                  onToggleWeekday: (d) => setState(() {
-                    if (_rcWeekdays.contains(d)) {
-                      _rcWeekdays.remove(d);
-                    } else {
-                      _rcWeekdays.add(d);
-                    }
-                  }),
-                  onToggleMonthDay: (d) => setState(() {
-                    if (_rcMonthDays.contains(d)) {
-                      _rcMonthDays.remove(d);
-                    } else {
-                      _rcMonthDays.add(d);
-                    }
-                  }),
-                ),
-              ],
-            ],
-          ),
-        ),
-        PfFormField(
-          label: '标签',
-          child: PfSheetTextField(controller: _tagsCtrl, hint: '可添加多个标签，逗号分隔'),
-        ),
+        ..._basicSection(),
+        _moreSection(),
         const SizedBox(height: 6),
-        PfPrimaryButton(
-          label: widget.initial == null ? '创建并加入清单' : '保存修改',
-          onTap: _submit,
+        Center(
+          child: FractionallySizedBox(
+            widthFactor: .8,
+            child: _SaveButton(
+              label: widget.initial == null ? '保存' : '保存修改',
+              onTap: _submit,
+            ),
+          ),
         ),
       ],
+    );
+  }
+
+  /// 基础段(终稿 P2):标题 + 到期日 chips(今天/明天/本周/无/自定义)+
+  /// 优先级(P0 高 / P1 中 / P2 低 / P3 无)。
+  List<Widget> _basicSection() {
+    return [
+      PfFormField(
+        label: '标题',
+        child: PfSheetTextField(
+          controller: _titleCtrl,
+          hint: '要做什么？',
+          maxLength: 200, // core validate 同款上限
+        ),
+      ),
+      PfFormField(
+        label: '到期日',
+        child: _QuickDueChips(
+          dueAt: _dueAt,
+          onSelect: (d) => setState(() => _dueAt = d),
+          onPickCustom: _pickDueAt,
+        ),
+      ),
+      PfFormField(
+        label: '优先级',
+        child: PfSegmented.soft(
+          options: const [
+            (PfPriority.high, 'P0 高'),
+            (PfPriority.medium, 'P1 中'),
+            (PfPriority.low, 'P2 低'),
+            (PfPriority.none, 'P3 无'),
+          ],
+          selected: _priority,
+          onSelect: (v) => setState(() => _priority = v),
+        ),
+      ),
+    ];
+  }
+
+  /// 更多设置(终稿 P2):默认折叠;收纳 描述/项目/提醒/预计番茄/
+  /// 单番茄时长/重复/标签 共 7 项,全部可正常保存。
+  Widget _moreSection() {
+    final theme = Theme.of(context);
+    return Theme(
+      data: theme.copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        title: const Text(
+          '更多设置(7)',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+        ),
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: const EdgeInsets.only(top: 4),
+        initiallyExpanded: false,
+        children: [
+          PfFormField(
+            label: '备注(可选)',
+            child: _MultilineField(
+              controller: _descCtrl,
+              hint: '补充细节、验收标准…(与桌面端互通)',
+              maxLength: 5000, // core validate 同款上限
+            ),
+          ),
+          PfFormField(
+            label: '所属项目',
+            child: _DropdownField(
+              value: _project.isEmpty ? _noProject : _project,
+              options: [_noProject, ..._projectList().map((p) => p.name)],
+              onChanged: (v) =>
+                  setState(() => _project = v == _noProject ? '' : v),
+              trailing: TextButton(
+                onPressed: () {
+                  showProjectManagerSheet(context);
+                  if (!mounted) return;
+                  // 兜底:Provider 状态变更由 listener 触发 rebuild,无需手动 setState
+                  final list = _projectList();
+                  setState(() {
+                    // 重建:当前选中若已被删则回到「无清单」(桌面同款默认)
+                    if (!list.any((p) => p.name == _project)) {
+                      _project = '';
+                    }
+                  });
+                },
+                child: const Text('管理', style: TextStyle(fontSize: 13)),
+              ),
+            ),
+          ),
+          PfFormField(
+            label: '提醒',
+            child: _DropdownField(
+              value: _reminderLabel,
+              options: [for (final o in _reminderOptions) o.$2],
+              onChanged: (v) => setState(() => _reminder = _labelToReminder(v)),
+            ),
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: PfFormField(
+                  label: '预计番茄数',
+                  child: _StepperField(
+                    value: _pomos,
+                    min: 1,
+                    max: 99, // 桌面详情面板 1..99
+                    onChanged: (v) => setState(() => _pomos = v),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: PfFormField(
+                  label: '单番茄时长(分钟)',
+                  child: _StepperField(
+                    value: _duration,
+                    min: 5,
+                    max: 60,
+                    step: 5,
+                    onChanged: (v) => setState(() => _duration = v),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          PfFormField(
+            label: '重复',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _DropdownField(
+                  value: _repeat,
+                  options: _repeatOptions,
+                  onChanged: (v) => setState(() => _repeat = v),
+                ),
+                if (_repeat == '自定义') ...[
+                  const SizedBox(height: 8),
+                  _RepeatCustomEditor(
+                    start: _rcStart,
+                    end: _rcEnd,
+                    interval: _rcInterval,
+                    type: _rcType,
+                    weekdays: _rcWeekdays,
+                    monthDays: _rcMonthDays,
+                    onStart: (d) => setState(() => _rcStart = d),
+                    onEnd: (d) => setState(() => _rcEnd = d),
+                    onInterval: (n) => setState(() => _rcInterval = n),
+                    onType: (t) => setState(() => _rcType = t),
+                    onToggleWeekday: (d) => setState(() {
+                      if (_rcWeekdays.contains(d)) {
+                        _rcWeekdays.remove(d);
+                      } else {
+                        _rcWeekdays.add(d);
+                      }
+                    }),
+                    onToggleMonthDay: (d) => setState(() {
+                      if (_rcMonthDays.contains(d)) {
+                        _rcMonthDays.remove(d);
+                      } else {
+                        _rcMonthDays.add(d);
+                      }
+                    }),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          PfFormField(
+            label: '标签',
+            child: PfSheetTextField(
+              controller: _tagsCtrl,
+              hint: '可添加多个标签，逗号分隔',
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
 /// 多行描述输入(surface-2 底,3 行高)。
 class _MultilineField extends StatelessWidget {
-  const _MultilineField({required this.controller, required this.hint});
+  const _MultilineField({
+    required this.controller,
+    required this.hint,
+    this.maxLength,
+  });
 
   final TextEditingController controller;
   final String hint;
+
+  /// 描述长度上限(core validate 同款 5000);非 null 自带计数器。
+  final int? maxLength;
 
   @override
   Widget build(BuildContext context) {
@@ -492,6 +566,7 @@ class _MultilineField extends StatelessWidget {
       controller: controller,
       maxLines: 3,
       minLines: 2,
+      maxLength: maxLength,
       style: const TextStyle(fontSize: 14),
       decoration: InputDecoration(
         hintText: hint,
@@ -626,7 +701,7 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
             theme.pfNone,
           ),
         ),
-        _kv('项目', task.project, theme),
+        _kv('项目', task.project.isEmpty ? '无清单' : task.project, theme),
         _kv('到期日', task.dueAtLabel.isNotEmpty ? task.dueAtLabel : '无', theme),
         _kv('番茄', '🍅 ${task.pomoLabel}', theme),
         _kv('提醒', task.reminderLabel, theme),
@@ -792,6 +867,7 @@ class _SubtaskSection extends StatelessWidget {
                     child: TextField(
                       controller: controller,
                       onSubmitted: (_) => onAdd(),
+                      maxLength: 500, // core validate 子任务上限
                       style: const TextStyle(fontSize: 13.5),
                       decoration: InputDecoration(
                         isDense: true,
@@ -983,61 +1059,139 @@ class _DropdownField extends StatelessWidget {
   }
 }
 
-/// 到期日选择行:点按弹「日期 → 时间」双 picker;已选时右侧可清除。
-class _DueAtField extends StatelessWidget {
-  const _DueAtField({required this.dueAt, required this.onPick, this.onClear});
+/// 到期日快捷 chips(终稿 P2):今天 / 明天 / 本周 / 无 + 自定义(弹原
+/// 「日期 → 时间」双 picker);下方小字回显当前值。
+class _QuickDueChips extends StatelessWidget {
+  const _QuickDueChips({
+    required this.dueAt,
+    required this.onSelect,
+    required this.onPickCustom,
+  });
 
   final DateTime? dueAt;
-  final VoidCallback onPick;
-  final VoidCallback? onClear;
+
+  /// chips 直选(无 = null)。
+  final ValueChanged<DateTime?> onSelect;
+
+  /// 「自定义」弹双 picker(结果经父级 setState 回流)。
+  final VoidCallback onPickCustom;
+
+  static DateTime _atDay(DateTime day, {int hour = 18, int minute = 0}) =>
+      DateTime(day.year, day.month, day.day, hour, minute);
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final has = dueAt != null;
-    return Container(
-      decoration: BoxDecoration(
-        color: theme.pfSurface2,
-        borderRadius: BorderRadius.circular(13),
-        border: Border.all(color: theme.pfLine),
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    // 本周 = 本周日(weekday 7)
+    final sunday = today.add(Duration(days: 7 - now.weekday));
+
+    bool sameDay(DateTime a, DateTime b) =>
+        a.year == b.year && a.month == b.month && a.day == b.day;
+
+    final d = dueAt;
+    final isToday = d != null && sameDay(d, today);
+    final isTomorrow = d != null && sameDay(d, tomorrow);
+    final isThisWeek = d != null && sameDay(d, sunday);
+    final isNone = d == null;
+    final isCustom = d != null && !isToday && !isTomorrow && !isThisWeek;
+
+    final options = <(String, bool, VoidCallback)>[
+      (
+        '今天',
+        isToday,
+        () => onSelect(_atDay(today, hour: now.hour, minute: now.minute)),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: GestureDetector(
-              onTap: onPick,
-              behavior: HitTestBehavior.opaque,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 13,
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.event, size: 18, color: theme.pfBrand),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        has ? _fmtDateTime(dueAt!) : '选择日期与时间',
-                        style: TextStyle(
-                          fontSize: 15,
-                          color: has
-                              ? theme.colorScheme.onSurface
-                              : theme.pfMuted,
-                        ),
-                      ),
+      (
+        '明天',
+        isTomorrow,
+        () => onSelect(_atDay(tomorrow, hour: now.hour, minute: now.minute)),
+      ),
+      ('本周', isThisWeek, () => onSelect(_atDay(sunday))),
+      ('无', isNone, () => onSelect(null)),
+      ('自定义', isCustom, onPickCustom),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final (label, active, onTap) in options)
+              GestureDetector(
+                onTap: onTap,
+                behavior: HitTestBehavior.opaque,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 13,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: active ? theme.pfBrand50 : theme.pfSurface2,
+                    borderRadius: BorderRadius.circular(PfRadii.pill),
+                    border: Border.all(
+                      color: active ? theme.pfBrand : theme.pfLine,
                     ),
-                  ],
+                  ),
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: active ? theme.pfBrand700 : theme.pfMuted,
+                    ),
+                  ),
                 ),
               ),
+          ],
+        ),
+        if (d != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              '当前:${_fmtDateTime(d)}',
+              style: TextStyle(fontSize: 12, color: theme.pfMuted),
             ),
           ),
-          if (has && onClear != null)
-            TextButton(
-              onPressed: onClear,
-              child: const Text('清除', style: TextStyle(fontSize: 13)),
-            ),
-        ],
+      ],
+    );
+  }
+}
+
+/// 保存主按钮(终稿 P2):品牌色胶囊(99px 圆角),父级用 80% 宽居中。
+class _SaveButton extends StatelessWidget {
+  const _SaveButton({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        height: 52,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: theme.pfBrand,
+          borderRadius: BorderRadius.circular(PfRadii.pill),
+          boxShadow: theme.pfBrandShadow,
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
+        ),
       ),
     );
   }

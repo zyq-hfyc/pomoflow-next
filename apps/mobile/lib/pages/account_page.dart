@@ -54,7 +54,11 @@ class AccountPage extends StatelessWidget {
     };
   }
 
-  PreferredSizeWidget _buildAppBar(BuildContext context, ThemeData theme, String title) {
+  PreferredSizeWidget _buildAppBar(
+    BuildContext context,
+    ThemeData theme,
+    String title,
+  ) {
     return AppBar(
       backgroundColor: theme.pfBg,
       elevation: 0,
@@ -165,8 +169,14 @@ class _AccountHelpers {
   }
 
   /// Profile 单条 kv(头像块下方):label + value + trailing + onTap。
-  static Widget kv(BuildContext context, String label, String? value,
-      {Widget? trailing, VoidCallback? onTap, bool danger = false}) {
+  static Widget kv(
+    BuildContext context,
+    String label,
+    String? value, {
+    Widget? trailing,
+    VoidCallback? onTap,
+    bool danger = false,
+  }) {
     final theme = Theme.of(context);
     return PfKvRow(
       label: label,
@@ -356,21 +366,22 @@ class _ProfileBodyState extends State<_ProfileBody> {
       children: [
         _AvatarBlock(
           dataUrl: _avatarDataUrl,
-          initial: (_s('display_name') ?? _s('username') ?? '?').characters.first,
+          initial:
+              (_s('display_name') ?? _s('username') ?? '?').characters.first,
           onTapUpload: _pickAndUploadAvatar,
           onTapRemove: _deleteAvatar,
         ),
-        _AccountHelpers.sectionNote(
-          theme,
-          '昵称与签名会同步到所有设备。',
-        ),
+        _AccountHelpers.sectionNote(theme, '昵称与签名会同步到所有设备。'),
         _AccountHelpers.kv(
-          context, '昵称', _s('display_name') ?? _s('username'),
+          context,
+          '昵称',
+          _s('display_name') ?? _s('username'),
           onTap: _editNickname,
         ),
         _AccountHelpers.kv(context, '用户名', _s('username')),
         _AccountHelpers.kv(
-          context, '邮箱',
+          context,
+          '邮箱',
           _s('email') ?? '未绑定',
           trailing: _AccountHelpers.pillBadge(
             theme,
@@ -380,10 +391,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
                 : theme.pfMuted,
           ),
         ),
-        _AccountHelpers.kv(
-          context, '个性签名', _s('bio'),
-          onTap: _editBio,
-        ),
+        _AccountHelpers.kv(context, '个性签名', _s('bio'), onTap: _editBio),
       ],
     );
   }
@@ -391,11 +399,18 @@ class _ProfileBodyState extends State<_ProfileBody> {
 
 /// 头像块(对齐原型 .profile-head 内的圆形头像)。
 class _AvatarBlock extends StatelessWidget {
-  const _AvatarBlock({this.dataUrl, required this.initial, this.onTapUpload, this.onTapRemove});
+  const _AvatarBlock({
+    this.dataUrl,
+    required this.initial,
+    this.onTapUpload,
+    this.onTapRemove,
+  });
   final String? dataUrl;
   final String initial;
+
   /// 点击头像 / 「上传」按钮。外部协调:image_picker → POST。
   final VoidCallback? onTapUpload;
+
   /// 长按头像或「移除」入口。null 时入口隐藏。
   final VoidCallback? onTapRemove;
 
@@ -410,7 +425,8 @@ class _AvatarBlock extends StatelessWidget {
             onTap: onTapUpload,
             onLongPress: onTapRemove,
             child: Container(
-              width: 64, height: 64,
+              width: 64,
+              height: 64,
               decoration: BoxDecoration(
                 color: theme.pfBrand50,
                 shape: BoxShape.circle,
@@ -428,7 +444,8 @@ class _AvatarBlock extends StatelessWidget {
                   : Text(
                       initial,
                       style: TextStyle(
-                        fontSize: 26, fontWeight: FontWeight.w800,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w800,
                         color: theme.pfBrand700,
                       ),
                     ),
@@ -439,16 +456,18 @@ class _AvatarBlock extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('头像', style: TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w700,
-                  color: theme.colorScheme.onSurface,
-                )),
+                Text(
+                  '头像',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: theme.colorScheme.onSurface,
+                  ),
+                ),
                 const SizedBox(height: 2),
                 Text(
                   dataUrl == null ? '点击上传' : '点击更换 · 长按移除',
-                  style: TextStyle(
-                    fontSize: 12, color: theme.pfMuted,
-                  ),
+                  style: TextStyle(fontSize: 12, color: theme.pfMuted),
                 ),
               ],
             ),
@@ -458,7 +477,8 @@ class _AvatarBlock extends StatelessWidget {
             child: Text(
               dataUrl == null ? '上传' : '更换',
               style: TextStyle(
-                fontSize: 13, color: theme.pfBrand700,
+                fontSize: 13,
+                color: theme.pfBrand700,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -504,17 +524,26 @@ class _SecurityBodyState extends State<_SecurityBody> {
 
   Future<void> _changePassword() async {
     final old = await _AccountHelpers.showEditDialog(
-      context, title: '当前密码', label: '输入当前密码', obscure: true,
+      context,
+      title: '当前密码',
+      label: '输入当前密码',
+      obscure: true,
     );
     if (old == null || old.isEmpty) return;
     if (!mounted) return;
     final neu = await _AccountHelpers.showEditDialog(
-      context, title: '新密码', label: '至少 8 位', obscure: true,
+      context,
+      title: '新密码',
+      label: '至少 8 位',
+      obscure: true,
     );
     if (neu == null || neu.length < 8) return;
     if (!mounted) return;
     final neu2 = await _AccountHelpers.showEditDialog(
-      context, title: '确认新密码', label: '再次输入', obscure: true,
+      context,
+      title: '确认新密码',
+      label: '再次输入',
+      obscure: true,
     );
     if (!mounted) return;
     if (neu != neu2) {
@@ -544,16 +573,11 @@ class _SecurityBodyState extends State<_SecurityBody> {
     return ListView(
       padding: const EdgeInsets.only(bottom: 40),
       children: [
-        _AccountHelpers.sectionNote(
-          theme,
-          '修改密码后,除本机外所有设备将被强制下线。',
-        ),
+        _AccountHelpers.sectionNote(theme, '修改密码后,除本机外所有设备将被强制下线。'),
+        _AccountHelpers.kv(context, '登录密码', '已设置', onTap: _changePassword),
         _AccountHelpers.kv(
-          context, '登录密码', '已设置',
-          onTap: _changePassword,
-        ),
-        _AccountHelpers.kv(
-          context, '绑定邮箱',
+          context,
+          '绑定邮箱',
           _s('email') ?? '未绑定',
           trailing: _AccountHelpers.pillBadge(
             theme,
@@ -563,9 +587,7 @@ class _SecurityBodyState extends State<_SecurityBody> {
         ),
         const Padding(
           padding: EdgeInsets.fromLTRB(16, 14, 16, 0),
-          child: PfNote(
-            text: '两步验证(2FA)与企业微信应用密码 暂未支持,见 ADR-012 裁剪清单。',
-          ),
+          child: PfNote(text: '两步验证(2FA)与企业微信应用密码 暂未支持,见 ADR-012 裁剪清单。'),
         ),
       ],
     );
@@ -583,27 +605,28 @@ class _ThirdPartyBody extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 40),
       children: [
-        _AccountHelpers.sectionNote(
-          theme,
-          '微信 / QQ / 企业微信 绑定与解绑(本期仅展示入口)。',
-        ),
+        _AccountHelpers.sectionNote(theme, '微信 / QQ / 企业微信 绑定与解绑(本期仅展示入口)。'),
         _AccountHelpers.kv(
-          context, '微信', '待开放',
+          context,
+          '微信',
+          '待开放',
           trailing: _AccountHelpers.pillBadge(theme, '待资质', theme.pfMuted),
         ),
         _AccountHelpers.kv(
-          context, 'QQ', '待开放',
+          context,
+          'QQ',
+          '待开放',
           trailing: _AccountHelpers.pillBadge(theme, '待资质', theme.pfMuted),
         ),
         _AccountHelpers.kv(
-          context, '企业微信', '待开放',
+          context,
+          '企业微信',
+          '待开放',
           trailing: _AccountHelpers.pillBadge(theme, '待资质', theme.pfMuted),
         ),
         const Padding(
           padding: EdgeInsets.fromLTRB(16, 0, 16, 0),
-          child: PfNote(
-            text: '第三方账号绑定需企业资质,规划见 ADR-012。',
-          ),
+          child: PfNote(text: '第三方账号绑定需企业资质,规划见 ADR-012。'),
         ),
       ],
     );
@@ -703,7 +726,7 @@ class _DevicesBodyState extends State<_DevicesBody> {
         if (latest == null ||
             s['current'] == true ||
             ((s['created_ms'] as int? ?? 0) >
-                (latest['created_ms'] as int? ?? 0) &&
+                    (latest['created_ms'] as int? ?? 0) &&
                 latest['current'] != true)) {
           latest = s;
         }
@@ -716,8 +739,11 @@ class _DevicesBodyState extends State<_DevicesBody> {
         ],
       ));
     }
-    devices.sort((a, b) =>
-        ((b.$1['created_ms'] as int? ?? 0)).compareTo(a.$1['created_ms'] as int? ?? 0));
+    devices.sort(
+      (a, b) => ((b.$1['created_ms'] as int? ?? 0)).compareTo(
+        a.$1['created_ms'] as int? ?? 0,
+      ),
+    );
 
     final others = devices.where((d) => d.$1['current'] != true).length;
     final logs = _loginLogs;
@@ -725,21 +751,17 @@ class _DevicesBodyState extends State<_DevicesBody> {
     return ListView(
       padding: const EdgeInsets.only(bottom: 40),
       children: [
-        _AccountHelpers.sectionNote(
-          theme,
-          '当前设备管理、单台下线、一键退出其他设备。',
-        ),
+        _AccountHelpers.sectionNote(theme, '当前设备管理、单台下线、一键退出其他设备。'),
         for (final (s, ids) in devices)
           _AccountHelpers.kv(
             context,
             s['current'] == true ? '本机' : '在线设备',
             '${(s['device_name'] ?? s['device_id']?.toString() ?? '?').toString()}'
-                '  ·  ${_fmtTime(s['created_ms'] as int? ?? 0)}',
+            '  ·  ${_fmtTime(s['created_ms'] as int? ?? 0)}',
             trailing: s['current'] == true
                 ? _AccountHelpers.pillBadge(theme, '当前', theme.pfBrand)
                 : TextButton(
-                    onPressed:
-                        ids.isNotEmpty ? () => _kickDevice(ids) : null,
+                    onPressed: ids.isNotEmpty ? () => _kickDevice(ids) : null,
                     child: const Text('下线', style: TextStyle(fontSize: 12)),
                   ),
           ),
@@ -753,7 +775,8 @@ class _DevicesBodyState extends State<_DevicesBody> {
                 child: Text(
                   '退出其他所有设备($others)',
                   style: TextStyle(
-                    fontSize: 13, color: theme.colorScheme.error,
+                    fontSize: 13,
+                    color: theme.colorScheme.error,
                   ),
                 ),
               ),
@@ -777,8 +800,8 @@ class _DevicesBodyState extends State<_DevicesBody> {
               context,
               log['ok'] == true ? '成功' : '失败',
               '${(log['device_name'] ?? log['device_id'] ?? '?').toString()}'
-                  '  ·  ${_fmtTime(log['created_ms'] as int? ?? 0)}'
-                  '${log['ip'] != null && (log['ip'] as String).isNotEmpty ? '  ·  ${log['ip']}' : ''}',
+              '  ·  ${_fmtTime(log['created_ms'] as int? ?? 0)}'
+              '${log['ip'] != null && (log['ip'] as String).isNotEmpty ? '  ·  ${log['ip']}' : ''}',
               trailing: _AccountHelpers.pillBadge(
                 theme,
                 (log['method'] ?? '').toString(),
@@ -848,14 +871,11 @@ class _DangerBodyState extends State<_DangerBody> {
       final stamp = _fmtStamp(DateTime.now());
       final name = 'pomoflow-backup-$stamp.json';
       final f = File('${tmpDir.path}/$name');
-      await f.writeAsString(
-        const JsonEncoder.withIndent('  ').convert(data),
-      );
+      await f.writeAsString(const JsonEncoder.withIndent('  ').convert(data));
       // ignore: deprecated_member_use
-      await Share.shareXFiles(
-        [XFile(f.path, mimeType: 'application/json')],
-        text: 'PomoFlow 数据备份 $stamp',
-      );
+      await Share.shareXFiles([
+        XFile(f.path, mimeType: 'application/json'),
+      ], text: 'PomoFlow 数据备份 $stamp');
       if (mounted) _AccountHelpers.hint(context, '已导出 $name');
     } on ApiException catch (e) {
       if (mounted) _AccountHelpers.hint(context, e.message);
@@ -919,10 +939,7 @@ class _DangerBodyState extends State<_DangerBody> {
                               try {
                                 await ApiClient.instance.postUnauth(
                                   '/v1/auth/email/send-code',
-                                  {
-                                    'email': email,
-                                    'purpose': 'delete',
-                                  },
+                                  {'email': email, 'purpose': 'delete'},
                                 );
                                 if (ctx.mounted) {
                                   ScaffoldMessenger.of(ctx).showSnackBar(
@@ -952,9 +969,7 @@ class _DangerBodyState extends State<_DangerBody> {
               const SizedBox(height: 8),
               TextField(
                 controller: confirmCtrl,
-                decoration: const InputDecoration(
-                  labelText: '输入「注销账号」二次确认',
-                ),
+                decoration: const InputDecoration(labelText: '输入「注销账号」二次确认'),
               ),
             ],
           ),
@@ -966,9 +981,8 @@ class _DangerBodyState extends State<_DangerBody> {
             FilledButton(
               onPressed: () {
                 if (pwCtrl.text.isEmpty) {
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                    const SnackBar(content: Text('请输入当前密码')),
-                  );
+                  ScaffoldMessenger.of(ctx)
+                      .showSnackBar(const SnackBar(content: Text('请输入当前密码')));
                   return;
                 }
                 if (confirmCtrl.text.trim() != '注销账号') {
@@ -1040,9 +1054,8 @@ class _DangerBodyState extends State<_DangerBody> {
           FilledButton(
             onPressed: () {
               if (pwCtrl.text.isEmpty) {
-                ScaffoldMessenger.of(ctx).showSnackBar(
-                  const SnackBar(content: Text('请输入当前密码')),
-                );
+                ScaffoldMessenger.of(ctx)
+                    .showSnackBar(const SnackBar(content: Text('请输入当前密码')));
                 return;
               }
               Navigator.pop<String?>(ctx, pwCtrl.text);
@@ -1081,9 +1094,7 @@ class _DangerBodyState extends State<_DangerBody> {
       children: [
         const Padding(
           padding: EdgeInsets.fromLTRB(16, 18, 16, 6),
-          child: PfNote(
-            text: '注销须知(15 天冷静期可撤销)、数据导出。',
-          ),
+          child: PfNote(text: '注销须知(15 天冷静期可撤销)、数据导出。'),
         ),
         // 冷静期黄色横幅(条件渲染):profile.deletion_requested_ms != null 时出现。
         if (coolDownEnd != null)
@@ -1104,15 +1115,14 @@ class _DangerBodyState extends State<_DangerBody> {
                       const Text(
                         '冷静期中',
                         style: TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         '将于 ${_fmtStamp(coolDownEnd)} 永久注销。期间仍可登录使用,也可撤销。',
-                        style: TextStyle(
-                          fontSize: 12, color: theme.pfMuted,
-                        ),
+                        style: TextStyle(fontSize: 12, color: theme.pfMuted),
                       ),
                     ],
                   ),
@@ -1122,7 +1132,8 @@ class _DangerBodyState extends State<_DangerBody> {
                   child: Text(
                     '撤销',
                     style: TextStyle(
-                      fontSize: 13, color: theme.pfBrand700,
+                      fontSize: 13,
+                      color: theme.pfBrand700,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -1141,7 +1152,10 @@ class _DangerBodyState extends State<_DangerBody> {
             children: [
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 15,
+                  vertical: 13,
+                ),
                 color: error.withValues(alpha: .08),
                 child: Text(
                   '注销须知',
@@ -1153,11 +1167,14 @@ class _DangerBodyState extends State<_DangerBody> {
                 ),
               ),
               _AccountHelpers.kv(
-                context, '导出我的数据', 'JSON 备份',
+                context,
+                '导出我的数据',
+                'JSON 备份',
                 onTap: coolDownEnd != null ? null : _exportData,
               ),
               _AccountHelpers.kv(
-                context, '注销账号',
+                context,
+                '注销账号',
                 coolDownEnd != null ? '冷静期内 · 不可重复申请' : '需验证 · 15 天冷静期',
                 danger: true,
                 onTap: coolDownEnd != null ? null : _requestDeletion,

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/review_period.dart';
-import '../pages/review_page.dart';
+import '../pages/journal_page/review_edit_page.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_controls.dart';
 import '../widgets/pf_sheet.dart';
@@ -10,7 +10,8 @@ import 'review_period_picker.dart';
 /// 复盘入口 sheet(「+新建 → 复盘」):四种粒度各选日期后进入编辑。
 ///
 /// 日/周/月/年都是同一套流程 —— 先选日期(默认当前周期段),确定后
-/// 跳复盘页对应栏;已写过的键会带出内容继续编辑。
+/// 跳写复盘编辑页对应周期;已写过的键会带出内容继续编辑。
+/// (终稿 B4:编辑主界面 = ReviewEditPage;ReviewPage 退为历史浏览。)
 Future<void> showReviewCreateSheet(BuildContext context) {
   return pfSheet(
     context,
@@ -56,7 +57,7 @@ Future<void> showReviewCreateSheet(BuildContext context) {
   );
 }
 
-/// 关 sheet(用 body ctx)→ 弹选日期 → 跳复盘页。
+/// 关 sheet(用 body ctx)→ 弹选日期 → 跳写复盘编辑页。
 ///
 /// pop 前先捕获 Navigator:本 sheet 的调用方(快速新建)是「先 pop 自己
 /// 再开本 sheet」的,传进来的外层 context 在用户点行时早已随旧路由销毁,
@@ -72,7 +73,7 @@ Future<void> _pickAndOpen(BuildContext sheetCtx, ReviewPeriod period) async {
     initial: DateTime.now(),
   );
   if (picked == null || !nav.mounted) return;
-  ReviewPage.open(
+  ReviewEditPage.open(
     nav.context,
     period: period,
     key: reviewKeyOf(period, picked),

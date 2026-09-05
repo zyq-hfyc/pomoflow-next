@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 
 import 'task.dart';
 
-/// 番茄钟会话 —— 一次「开始专注 → 自然走完」产出一条。
+/// 番茄钟会话 —— 「开始计时」即落行,自然走完/中途放弃时收尾。
 ///
 /// 与 `crates/core/src/model/pomodoro.rs` 的 `PomodoroSession` 字段对齐
 /// (P1 多实体同步);`taskId`/`projectId` 为空串表示 core 的 `None`。
 ///
-/// 与任务行的区别:session 是**不可变事实**(append-only),本地只在
-/// 计时器自然结束时插入,此后不再修改 —— revision 停在 1,LWW 冲突面极小。
+/// 2026-09-05 J2 对齐批(桌面 start_pomodoro/stop_pomodoro 同构):开始即
+/// 插 is_completed=false 行(ended_at 占位 started_at);停止时更新
+/// ended_at + is_completed(各一次 revision bump)。计时中被杀进程 = 行
+/// 永远停在 open 态,不计统计、历史可查(桌面同款)。
 @immutable
 class PfSession {
   const PfSession({
@@ -32,19 +34,23 @@ class PfSession {
   final DateTime startedAt;
   final DateTime endedAt;
 
-  /// true = 自然结束到时;false = 中途手动停止(P0 只落自然结束)。
+  /// true = 自然结束到时;false = 中途手动停止 / 计时中被杀(open 行)。
   final bool isCompleted;
 
   final PfSyncMeta syncMeta;
 
-  PfSession copyWith({PfSyncMeta? syncMeta}) => PfSession(
-        id: id,
-        taskId: taskId,
-        projectId: projectId,
-        durationMinutes: durationMinutes,
-        startedAt: startedAt,
-        endedAt: endedAt,
-        isCompleted: isCompleted,
-        syncMeta: syncMeta ?? this.syncMeta,
-      );
+  PfSession copyWith({
+    DateTime? endedAt,
+    bool? isCompleted,
+    PfSyncMeta? syncMeta,
+  }) => PfSession(
+    id: id,
+    taskId: taskId,
+    projectId: projectId,
+    durationMinutes: durationMinutes,
+    startedAt: startedAt,
+    endedAt: endedAt ?? this.endedAt,
+    isCompleted: isCompleted ?? this.isCompleted,
+    syncMeta: syncMeta ?? this.syncMeta,
+  );
 }

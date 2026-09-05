@@ -1,7 +1,7 @@
 name: pomoflow_mobile
 description: "PomoFlow 移动端 —— Flutter + 本地优先 + 云端同步"
 publish_to: 'none'
-version: 0.2.0+2
+version: 0.2.0+2004
 
 environment:
   sdk: ^3.13.1
@@ -37,12 +37,29 @@ dependencies:
   workmanager: ^0.10.9
   # 本地通知提醒(番茄完成 / 休息结束)
   flutter_local_notifications: ^17.1.2
+  # 结束时刻排程备用通知(应用被杀时兜底;随 flutter_local_notifications 传递依赖)
+  timezone: ^0.9.4
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
   sqflite_common_ffi: ^2.4.2+1
+  # 桌面图标生成(源图与桌面端 apps/desktop/icons/icon.png 同源)
+  flutter_launcher_icons: ^0.14.1
+
+flutter_launcher_icons:
+  image_path: "assets/icon/app_icon.png"
+  android: true
+  ios: false
+  # Android 8+ 自适应图标:黑底 + 番茄前景(缩至 80% 留出裁切安全区)
+  adaptive_icon_background: "#000000"
+  adaptive_icon_foreground: "assets/icon/app_icon_adaptive_fg.png"
+  web:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
+    background: "#000000"
+    theme_color: "#000000"
 
 flutter:
   uses-material-design: true

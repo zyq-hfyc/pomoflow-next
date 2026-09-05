@@ -169,7 +169,9 @@ void main() {
           expect(jCols.map((r) => r['name']), contains(c));
         }
         // schema v20 加 yearly_reviews 表(年复盘,自然键 year YYYY)
-        final yCols = await db.raw.rawQuery('PRAGMA table_info(yearly_reviews)');
+        final yCols = await db.raw.rawQuery(
+          'PRAGMA table_info(yearly_reviews)',
+        );
         expect(yCols.map((r) => r['name']), contains('year'));
         expect(await db.getMeta('schema_version'), '20');
       } finally {
@@ -471,7 +473,9 @@ void main() {
 
       // markSynced 幂等空列表不抛。
       await db.markYearlyReviewsSynced([]);
-      await db.markYearlyReviewsSynced(['yyyyyyyy-yyyy-4yyy-8yyy-yyyyyyyyyy01']);
+      await db.markYearlyReviewsSynced([
+        'yyyyyyyy-yyyy-4yyy-8yyy-yyyyyyyyyy01',
+      ]);
       expect(
         (await db.listPendingYearlyReviews()).where((r) => r['year'] == '2026'),
         isEmpty,

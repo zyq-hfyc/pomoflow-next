@@ -113,9 +113,7 @@ class AuthProvider extends ChangeNotifier {
 
   /// 读取真机机型,失败兜底 `${os}·${deviceIdShort8}`。
   Future<String> _resolveDeviceName(String deviceId) async {
-    final short = deviceId.length >= 8
-        ? deviceId.substring(0, 8)
-        : deviceId;
+    final short = deviceId.length >= 8 ? deviceId.substring(0, 8) : deviceId;
     try {
       final plugin = DeviceInfoPlugin();
       if (kIsWeb) return 'Web Chrome';

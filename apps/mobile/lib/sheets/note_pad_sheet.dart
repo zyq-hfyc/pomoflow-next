@@ -43,12 +43,7 @@ class _NotePadFormState extends State<_NotePadForm> {
     final provider = context.read<TaskProvider>();
     final id = await provider.nextId();
     await provider.addJournal(
-      PfJournal(
-        id: id,
-        kind: JournalKind.note,
-        title: '',
-        content: text,
-      ),
+      PfJournal(id: id, kind: JournalKind.note, title: '', content: text),
     );
     if (!mounted) return;
     Navigator.pop(context);
@@ -73,6 +68,7 @@ class _NotePadFormState extends State<_NotePadForm> {
             controller: _ctrl,
             maxLines: null,
             expands: true,
+            maxLength: 5000, // core validate 同款上限
             textAlignVertical: TextAlignVertical.top,
             style: const TextStyle(fontSize: 15, height: 1.7),
             decoration: InputDecoration(

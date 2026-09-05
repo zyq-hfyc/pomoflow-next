@@ -117,14 +117,29 @@ class _ProjectManagerBodyState extends State<_ProjectManagerBody> {
             physics: const NeverScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
             itemCount: tree.length,
-            itemBuilder: (ctx, i) => _ProjectRow(
-              node: tree[i],
-              onEdit: () => _editProject(tree[i].project),
-              onAddChild: () =>
-                  _editProject(null, parentId: tree[i].project.id),
-              onDelete: () => _confirmDelete(tree[i].project),
-              onReparent: () => _reparent(tree[i].project),
-            ),
+            itemBuilder: (ctx, i) {
+              final node = tree[i];
+              // 同级邻位(I2 批:上移/下移可启用性)
+              final siblings =
+                  projects
+                      .where((q) => q.parentId == node.project.parentId)
+                      .toList()
+                    ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+              final si = siblings.indexWhere((q) => q.id == node.project.id);
+              return _ProjectRow(
+                node: node,
+                canMoveUp: si > 0,
+                canMoveDown: si < siblings.length - 1,
+                onEdit: () => _editProject(node.project),
+                onAddChild: () => _editProject(null, parentId: node.project.id),
+                onDelete: () => _confirmDelete(node.project),
+                onReparent: () => _reparent(node.project),
+                onMove: (up) => context.read<TaskProvider>().moveProject(
+                  node.project.id,
+                  up: up,
+                ),
+              );
+            },
           ),
         const Divider(height: 1),
         Padding(
@@ -133,7 +148,7 @@ class _ProjectManagerBodyState extends State<_ProjectManagerBody> {
             children: [
               Expanded(
                 child: Text(
-                  '长按项目可改父(顶层↔某项目下)',
+                  '长按项目:改父/上移/下移(同级排序)',
                   style: TextStyle(fontSize: 12, color: theme.pfMuted),
                 ),
               ),
@@ -209,17 +224,23 @@ class _ProjectManagerBodyState extends State<_ProjectManagerBody> {
 class _ProjectRow extends StatelessWidget {
   const _ProjectRow({
     required this.node,
+    required this.canMoveUp,
+    required this.canMoveDown,
     required this.onEdit,
     required this.onAddChild,
     required this.onDelete,
     required this.onReparent,
+    required this.onMove,
   });
 
   final PfProjectNode node;
+  final bool canMoveUp;
+  final bool canMoveDown;
   final VoidCallback onEdit;
   final VoidCallback onAddChild;
   final VoidCallback onDelete;
   final VoidCallback onReparent;
+  final void Function(bool up) onMove;
 
   @override
   Widget build(BuildContext context) {
@@ -296,6 +317,29 @@ class _ProjectRow extends StatelessWidget {
                 onReparent();
               },
             ),
+            // 同级排序(桌面拖拽排序的移动端等价物;邻位不存在时置灰)
+            ListTile(
+              leading: const Icon(Icons.arrow_upward_outlined),
+              title: const Text('上移(同级)'),
+              enabled: canMoveUp,
+              onTap: canMoveUp
+                  ? () {
+                      Navigator.pop(ctx);
+                      onMove(true);
+                    }
+                  : null,
+            ),
+            ListTile(
+              leading: const Icon(Icons.arrow_downward_outlined),
+              title: const Text('下移(同级)'),
+              enabled: canMoveDown,
+              onTap: canMoveDown
+                  ? () {
+                      Navigator.pop(ctx);
+                      onMove(false);
+                    }
+                  : null,
+            ),
             ListTile(
               leading: const Icon(Icons.delete_outline),
               title: const Text('删除'),
@@ -351,6 +395,7 @@ class _EditProjectDialogState extends State<_EditProjectDialog> {
           TextField(
             controller: _ctrl,
             autofocus: true,
+            maxLength: 200, // core validate 同款上限
             decoration: const InputDecoration(hintText: '项目名'),
             onSubmitted: (v) => Navigator.pop(context, v.trim()),
           ),

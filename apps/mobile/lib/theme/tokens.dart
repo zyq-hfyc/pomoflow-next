@@ -160,4 +160,11 @@ abstract final class PfType {
     fontSize: 11,
     fontWeight: FontWeight.w500,
   );
+
+  /// 计时大字 49/800(终稿 §3.4 tTimer;专注屏圆环内时间,配 tabularFigures)。
+  static const TextStyle timer = TextStyle(
+    fontSize: 49,
+    fontWeight: FontWeight.w800,
+    height: 1.0,
+  );
 }

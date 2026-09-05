@@ -1265,6 +1265,32 @@ class AppDatabase {
     await _db.insert('pomodoro_sessions', _sessionToRow(s));
   }
 
+  /// 停止一段计时(桌面 stop_pomodoro 同构,2026-09-05 J2 批):ended_at
+  /// 落真实时刻、is_completed 按停表原因;revision +1 + 标 pending(LWW
+  /// 通道,对端同步后收敛同一终态)。
+  Future<void> stopSession({
+    required String id,
+    required DateTime endedAt,
+    required bool isCompleted,
+    String originDevice = '',
+    String userId = '',
+  }) async {
+    await _db.rawUpdate(
+      'UPDATE pomodoro_sessions SET ended_at_ms = ?, is_completed = ?, '
+      'revision = revision + 1, updated_at_ms = ?, sync_state = ?, '
+      'origin_device = ?, user_id = ? WHERE id = ?',
+      [
+        endedAt.millisecondsSinceEpoch,
+        isCompleted ? 1 : 0,
+        DateTime.now().millisecondsSinceEpoch,
+        'pending',
+        originDevice,
+        userId,
+        id,
+      ],
+    );
+  }
+
   /// === ChangeLogStore:session 实体(与 tasks 四方法同形,LWW 复用)===
 
   Future<List<Map<String, Object?>>> listPendingSessions({
@@ -1697,6 +1723,69 @@ class AppDatabase {
       limit: 1,
     );
     return rows.isEmpty ? null : rows.first;
+  }
+
+  /// 标签管理列表(I3 批,桌面 TagManager 移动端等价):全部非墓碑标签,
+  /// 按名称升序(本表无 display_order 列,拖序跨端另开批次)。
+  Future<List<({String id, String name, String color})>> listTags() async {
+    final rows = await _db.query(
+      'tags',
+      columns: ['id', 'name', 'color'],
+      where: "sync_state != 'tombstone'",
+      orderBy: 'name COLLATE NOCASE ASC',
+    );
+    return [
+      for (final r in rows)
+        (
+          id: r['id'] as String,
+          name: (r['name'] as String?) ?? '',
+          color: (r['color'] as String?) ?? '',
+        ),
+    ];
+  }
+
+  /// 重命名 / 换色(I3 批):业务字段 + revision bump + 标 pending。
+  Future<void> updateTagFields({
+    required String id,
+    String? name,
+    String? color,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final row = <String, Object?>{
+      'name': ?name,
+      'color': ?color,
+      'revision': ((await localTagCandidate(id))?['revision'] as int? ?? 1) + 1,
+      'updated_at_ms': nowMs,
+      'sync_state': 'pending',
+      'origin_device': originDevice,
+      'user_id': userId,
+    };
+    await _db.update('tags', row, where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// 软删除标签(I3 批,桌面 delete_tag 同构墓碑模式):tag 行盖墓碑;
+  /// task_tag 链接的收敛由「任务标签字符串级联清理」驱动(各任务
+  /// upsert 后 task_tag_sync 重算,链接自然消失,对端同步收敛)。
+  Future<void> softDeleteTag({
+    required String id,
+    required String originDevice,
+    required String userId,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    await _db.update(
+      'tags',
+      {
+        'sync_state': 'tombstone',
+        'revision': 1,
+        'updated_at_ms': nowMs,
+        'origin_device': originDevice,
+        'user_id': userId,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   // --- task_tag_sync(以 task_id 为键的集合整体 LWW)--------------------------

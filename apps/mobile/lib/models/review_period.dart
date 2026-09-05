@@ -13,19 +13,19 @@ enum ReviewPeriod { daily, weekly, monthly, yearly }
 extension ReviewPeriodX on ReviewPeriod {
   /// Tab 短标签。
   String get label => switch (this) {
-        ReviewPeriod.daily => '日',
-        ReviewPeriod.weekly => '周',
-        ReviewPeriod.monthly => '月',
-        ReviewPeriod.yearly => '年',
-      };
+    ReviewPeriod.daily => '日',
+    ReviewPeriod.weekly => '周',
+    ReviewPeriod.monthly => '月',
+    ReviewPeriod.yearly => '年',
+  };
 
   /// 编辑区标题(不带「今日/本周」等时间指涉 —— 页面可导航到任意周期段)。
   String get title => switch (this) {
-        ReviewPeriod.daily => '日复盘',
-        ReviewPeriod.weekly => '周复盘',
-        ReviewPeriod.monthly => '月复盘',
-        ReviewPeriod.yearly => '年复盘',
-      };
+    ReviewPeriod.daily => '日复盘',
+    ReviewPeriod.weekly => '周复盘',
+    ReviewPeriod.monthly => '月复盘',
+    ReviewPeriod.yearly => '年复盘',
+  };
 }
 
 String _pad2(int v) => v.toString().padLeft(2, '0');
@@ -91,9 +91,16 @@ bool isValidReviewKey(ReviewPeriod p, String key) =>
 String stepReviewKey(ReviewPeriod p, String key, int delta) {
   final anchor = parseReviewKey(p, key) ?? _nowAnchor(p);
   final stepped = switch (p) {
-    ReviewPeriod.daily => DateTime(anchor.year, anchor.month, anchor.day + delta),
-    ReviewPeriod.weekly =>
-      DateTime(anchor.year, anchor.month, anchor.day + 7 * delta),
+    ReviewPeriod.daily => DateTime(
+      anchor.year,
+      anchor.month,
+      anchor.day + delta,
+    ),
+    ReviewPeriod.weekly => DateTime(
+      anchor.year,
+      anchor.month,
+      anchor.day + 7 * delta,
+    ),
     ReviewPeriod.monthly => DateTime(anchor.year, anchor.month + delta, 1),
     ReviewPeriod.yearly => DateTime(anchor.year + delta, 1, 1),
   };
@@ -101,12 +108,15 @@ String stepReviewKey(ReviewPeriod p, String key, int delta) {
 }
 
 DateTime _nowAnchor(ReviewPeriod p) => switch (p) {
-      ReviewPeriod.daily => dayOf(DateTime.now()),
-      ReviewPeriod.weekly => mondayOf(DateTime.now()),
-      ReviewPeriod.monthly =>
-        DateTime(DateTime.now().year, DateTime.now().month, 1),
-      ReviewPeriod.yearly => DateTime(DateTime.now().year, 1, 1),
-    };
+  ReviewPeriod.daily => dayOf(DateTime.now()),
+  ReviewPeriod.weekly => mondayOf(DateTime.now()),
+  ReviewPeriod.monthly => DateTime(
+    DateTime.now().year,
+    DateTime.now().month,
+    1,
+  ),
+  ReviewPeriod.yearly => DateTime(DateTime.now().year, 1, 1),
+};
 
 /// 键 → 编辑区副标题(给用户看的周期段描述)。
 String reviewKeyLabel(ReviewPeriod p, String key) {
