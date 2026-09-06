@@ -20,10 +20,12 @@ import 'settings_page.dart';
 import 'stats_page.dart' show exportStatsSummary;
 
 /// 我的屏(菜单分层批 2026-09-06):一级只留 6 元素 —— 账户大卡(点进
-/// 二级「账号与安全」AccountPage)/ 专注概览 / 同步状态卡 / 主菜单
-/// (数据管理 · 设置 · 帮助与反馈 · 关于)/ 退出登录。
-/// 低频维护项收进二级页(数据管理 / 关于);AI 占位卡删除(无真实功能);
-/// 账号注销等危险操作埋进 AccountPage 二级。右上按钮切换深浅主题(§7)。
+/// 二级「账号与安全」AccountPage)/ 同步状态卡 / 主菜单
+/// (账号与安全 · 数据管理 · 设置 · 推荐 PomoFlow · 帮助与反馈 · 关于)
+/// / 退出登录;顶栏右侧 📷 扫描桌面端二维码(占位)+ 🌙 切换主题。
+/// 专注概览「今日专注 x 分钟 / 累计 y 番茄」卡已移除(不属于「我的」语义);
+/// 低频维护项收二级页(数据管理 / 关于);AI 占位卡删除;账号注销
+/// 埋进 AccountPage 二级。
 class MePage extends StatefulWidget {
   const MePage({super.key});
 
@@ -142,7 +144,9 @@ class _MePageState extends State<MePage> {
             ),
           ),
           const SliverToBoxAdapter(child: SizedBox(height: 12)),
-          SliverToBoxAdapter(child: _FocusOverviewCard(tasks: tasks)),
+          // 「今日专注 / 累计番茄」专注概览卡移除(用户 2026-09-06 反馈:
+          // 「我的」页不需要工作数据展示,专注概览属于任务页统计段语义);
+          // 累计番茄数仍可见于账户大卡等级 chip。
           const SliverToBoxAdapter(child: SizedBox(height: 12)),
           SliverToBoxAdapter(
             child: _SyncRow(
@@ -173,13 +177,35 @@ class _MePageState extends State<MePage> {
   }
 
   PfSliverAppBar _meAppBar(ThemeData theme) {
+    // 顶栏右侧:📷 扫描桌面端二维码(占位,后续接 mobile_scanner)
+    // + 🌙 切换主题。两 PillButton 同行(PillButton 默认 38 圆+line
+    // 边,贴在一起无重叠无撞线)。
     return PfSliverAppBar(
       title: '我的',
       subtitle: '账号与同步状态',
-      action: PillButton(
-        tooltip: '切换主题',
-        child: Icon(Icons.dark_mode_outlined, size: 18, color: theme.pfMuted),
-        onTap: () => context.read<ThemeProvider>().toggle(),
+      action: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          PillButton(
+            tooltip: '扫描桌面端二维码',
+            child: Icon(
+              Icons.qr_code_scanner,
+              size: 18,
+              color: theme.pfMuted,
+            ),
+            onTap: () => _hint('扫描桌面端二维码 · 功能待接入'),
+          ),
+          const SizedBox(width: 8),
+          PillButton(
+            tooltip: '切换主题',
+            child: Icon(
+              Icons.dark_mode_outlined,
+              size: 18,
+              color: theme.pfMuted,
+            ),
+            onTap: () => context.read<ThemeProvider>().toggle(),
+          ),
+        ],
       ),
     );
   }
@@ -328,43 +354,6 @@ class _ProfileHead extends StatelessWidget {
               ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// 专注统计概览(终稿 P6 数据段:今日 X 分钟 / 累计 Y 个番茄)。
-class _FocusOverviewCard extends StatelessWidget {
-  const _FocusOverviewCard({required this.tasks});
-
-  final TaskProvider tasks;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final done = tasks.sessions.where((s) => s.isCompleted).toList();
-    final totalPomos = done.length;
-    final todayMinutes = tasks.todayPomos * 25;
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
-      decoration: BoxDecoration(
-        color: theme.pfSurface,
-        borderRadius: BorderRadius.circular(PfRadii.lg),
-        border: Border.all(color: theme.pfLine),
-        boxShadow: theme.pfShadowSm,
-      ),
-      child: Row(
-        children: [
-          _IconBlock(emoji: '🍅'),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              '今日专注 $todayMinutes 分钟 · 累计 $totalPomos 个番茄',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -650,6 +639,13 @@ class _MainMenuCard extends StatelessWidget {
           label: '设置',
           onTap: () => _pushSlide(context, const SettingsPage()),
         ),
+        // 推荐 PomoFlow(用户 2026-09-06 反馈):一级菜单「设置」下,展示
+        // 二维码占位(待接入 qr_flutter 生成下载链接)。
+        _MenuItem(
+          emoji: '📲',
+          label: '推荐 PomoFlow',
+          onTap: () => _pushSlide(context, const _ShareDownloadQrPage()),
+        ),
         _MenuItem(
           emoji: '❓',
           label: '帮助与反馈',
@@ -877,6 +873,145 @@ class _AboutPage extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 二级「推荐 PomoFlow」占位二维码页(用户 2026-09-06 反馈):
+/// 展示下载链接二维码让其他用户扫码下载。
+/// **当前为占位** —— 真实二维码生成待接入 qr_flutter;下载链接待定。
+/// 占位视觉:brand 主色四角方括号 + 中央网格(模拟 QR 视觉)+ 提示文案。
+class _ShareDownloadQrPage extends StatelessWidget {
+  const _ShareDownloadQrPage();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final auth = context.watch<AuthProvider>();
+    final name = auth.shownName.isNotEmpty ? auth.shownName : 'PomoFlow 用户';
+    return _SubPageScaffold(
+      title: '推荐 PomoFlow',
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        children: [
+          // QR 占位卡:240×240 白底方块,四角 brand 色定位块 + 中央
+          // 点阵(用 Container 简单画),底部文案说明占位状态。
+          _QrPlaceholderCard(caption: '下载链接 · 占位'),
+          const SizedBox(height: 20),
+          Text(
+            '让身边朋友扫码下载 PomoFlow',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '扫码后跳转应用商店或下载页',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12.5, color: theme.pfMuted),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '生成人:$name',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 11, color: theme.pfMuted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 二维码占位视觉卡:240×240 白底 + brand 色四角定位 + 中央网格点阵,
+/// 让用户在真接入 qr_flutter 之前即可看到二维码区域。后续替换为
+/// `QrImageView(data: content, size: 240, ...)`。
+class _QrPlaceholderCard extends StatelessWidget {
+  const _QrPlaceholderCard({required this.caption});
+
+  final String caption;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Container(
+        width: 240,
+        height: 240,
+        decoration: BoxDecoration(
+          color: theme.pfSurface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: theme.pfLine),
+          boxShadow: theme.pfShadowSm,
+        ),
+        padding: const EdgeInsets.all(20),
+        child: Stack(
+          children: [
+            // 四角定位方块(QR 标准定位点)
+            for (final pos in const [
+              Alignment.topLeft,
+              Alignment.topRight,
+              Alignment.bottomLeft,
+            ])
+              Align(
+                alignment: pos,
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: theme.pfBrand, width: 4),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  padding: const EdgeInsets.all(6),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: theme.pfBrand,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+              ),
+            // 中央模拟数据点阵(8x8 棋盘格暗示)
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  for (var r = 0; r < 6; r++)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          for (var c = 0; c < 10; c++)
+                            Container(
+                              width: 6,
+                              height: 6,
+                              margin: const EdgeInsets.symmetric(horizontal: 2),
+                              decoration: BoxDecoration(
+                                color: (r + c).isEven
+                                    ? theme.pfBrand
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(1),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 6),
+                  Text(
+                    caption,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: theme.pfMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
