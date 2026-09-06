@@ -305,13 +305,12 @@ class _ProfileHead extends StatelessWidget {
                     ),
             ),
             const SizedBox(width: 14),
-            // IntrinsicWidth(2026-09-06 用户反馈):文本列不再 Expanded 占满,
-            // 改为按内容最宽子项收窄;crossAxis 改 start —— 昵称/邮箱/
-            // 等级 chip 左边界对齐,QR 紧贴邮箱右边界(列宽由最长文本
-            // 决定,短文本不向左溢出留空)。
-            IntrinsicWidth(
+            Expanded(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                // 间距批(2026-09-06):crossAxis 改为 end —— 邮箱短时
+                // 文字不再远离 QR;昵称/邮箱/等级 chip 一起右对齐到 QR 旁,
+                // 视觉归位「我的信息旁的名片图标」。
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Row(
                     children: [
