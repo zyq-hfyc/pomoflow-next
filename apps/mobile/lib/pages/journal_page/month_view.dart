@@ -139,15 +139,15 @@ class _MonthCalendarCardState extends State<_MonthCalendarCard> {
                     ),
                 ],
               ),
-              const SizedBox(height: 6),
-              // 42 日格
+              const SizedBox(height: 4),
+              // 42 日格(尺寸批 2026-09-06:整体缩至 2/3 —— 宽高比 .92→1.38)
               GridView.count(
                 crossAxisCount: 7,
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                mainAxisSpacing: 4,
-                crossAxisSpacing: 4,
-                childAspectRatio: .92,
+                mainAxisSpacing: 3,
+                crossAxisSpacing: 3,
+                childAspectRatio: 1.38,
                 children: [
                   for (var i = 0; i < 42; i++)
                     _DayCell(
@@ -278,14 +278,15 @@ class _DayCell extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          // 尺寸批:今日块 30→22、字号 13.5→12、点 4→3.5(整体 2/3)
           Container(
-            width: 30,
-            height: 30,
+            width: 22,
+            height: 22,
             alignment: Alignment.center,
             decoration: isToday
                 ? BoxDecoration(
                     color: theme.pfBrand,
-                    borderRadius: BorderRadius.circular(9),
+                    borderRadius: BorderRadius.circular(7),
                     boxShadow: [
                       BoxShadow(
                         color: theme.pfBrand.withValues(alpha: .35),
@@ -298,7 +299,7 @@ class _DayCell extends StatelessWidget {
             child: Text(
               '${day.day}',
               style: TextStyle(
-                fontSize: 13.5,
+                fontSize: 12,
                 fontWeight: isToday ? FontWeight.w800 : FontWeight.w500,
                 color: isToday
                     ? Colors.white
@@ -308,10 +309,10 @@ class _DayCell extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 1),
           Container(
-            width: 4,
-            height: 4,
+            width: 3.5,
+            height: 3.5,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: hasPlan ? theme.pfBrand : Colors.transparent,

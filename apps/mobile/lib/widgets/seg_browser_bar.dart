@@ -109,7 +109,9 @@ class _Btab extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 14,
+                        // 标题字号统一批:页签 14 → 15,作为「任务」页
+                        // 的标题位元素,存在感对齐其他一级页 h1(21)
+                        fontSize: 15,
                         fontWeight: active ? FontWeight.w700 : FontWeight.w500,
                         color: active
                             ? theme.colorScheme.onSurface

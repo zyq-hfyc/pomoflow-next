@@ -75,13 +75,11 @@ class _JournalPageState extends State<JournalPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // 标题字号统一批(2026-09-06):一级页标题全仓收齐
+                        // PfType.h1(21/800),与专注/我的同层级同尺寸
                         Text(
                           '手账',
-                          style: TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -.4,
-                            height: 1.1,
+                          style: PfType.h1.copyWith(
                             color: theme.colorScheme.onSurface,
                           ),
                         ),
