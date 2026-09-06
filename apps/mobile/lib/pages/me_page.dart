@@ -362,10 +362,11 @@ class _ProfileHead extends StatelessWidget {
                 ],
               ),
             ),
-            // 内嵌 QR 图标(2026-09-06 反馈):放昵称/邮箱之后,点按直接进
-            // 「我的二维码」;再保留 chevron(>),点 chevron 走卡片本身
-            // 的 onTap(_openAccount)。两个 GestureDetector.opaque 各自
-            // 吃自己的点击,外层卡片 onTap 不冲突。
+            // 内嵌 QR 图标(2026-09-06 反馈):文字不动,QR + chevron 推到右
+            // 边贴齐大卡右边界,与头像贴左对齐形成左右对称;中间用
+            // Spacer 占位(头像距左 padding 20 与 chevron 距右 padding 20
+            // 等宽)。两个 GestureDetector.opaque 各自吃点击。
+            if (onQrTap != null || onTap != null) const Spacer(),
             if (onQrTap != null)
               GestureDetector(
                 onTap: onQrTap,
