@@ -12,17 +12,18 @@ import '../services/api_client.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_controls.dart';
 
-/// 账号管理(§4.4):点击「我的」菜单项「个人资料/安全设置/第三方账号/登录设备/账号注销」
-/// 各自进入独立的子页面(对齐原型 openAccount(key) 行为 —— 同一弹层按 key
-/// 切换内容块,而不是把 5 块全堆在一页里)。
+/// 账号管理(§4.4 + 2026-09-06 修正):支持两种模式 —— 概览 home(默认,
+/// 显示五模块入口列表,点哪进哪)与单模块 profile/security/thirdparty/
+/// devices/danger(各自独立子页,对齐原型 openAccount(key) 行为)。
 ///
-/// profile / security / thirdparty / devices / danger 五种,
-/// 每种一个 `_BodyXxx` widget + 配套编辑弹窗;sessions/profile 仍按需加载,
-/// 由父 page 注入。
+/// 早期我以为 AccountPage 是 5-in-1 overview 页,实际是单模块页;点
+/// 默认进入「个人资料」,导致用户从「我的」点「账号与安全」后找不到
+/// 其他四个模块。修正:补 home section 作为总入口,默认指向它。
 class AccountPage extends StatelessWidget {
-  const AccountPage({super.key, this.initialSection = 'profile'});
+  const AccountPage({super.key, this.initialSection = 'home'});
 
-  /// 打开哪个模块:profile / security / thirdparty / devices / danger。
+  /// 打开哪个模块:home(概览,默认) / profile / security / thirdparty /
+  /// devices / danger。
   final String initialSection;
 
   @override
@@ -33,24 +34,26 @@ class AccountPage extends StatelessWidget {
       backgroundColor: theme.pfBg,
       appBar: _buildAppBar(context, theme, cfg.title),
       body: switch (initialSection) {
+        'home' => const _AccountHomeBody(),
         'profile' => _ProfileBody(),
         'security' => _SecurityBody(),
         'thirdparty' => _ThirdPartyBody(),
         'devices' => _DevicesBody(),
         'danger' => _DangerBody(),
-        _ => _ProfileBody(),
+        _ => const _AccountHomeBody(),
       },
     );
   }
 
   _SectionCfg _sectionCfg(String key) {
     return switch (key) {
+      'home' => _SectionCfg('账号与安全'),
       'profile' => _SectionCfg('个人资料'),
       'security' => _SectionCfg('安全设置'),
       'thirdparty' => _SectionCfg('第三方账号'),
       'devices' => _SectionCfg('登录设备'),
       'danger' => _SectionCfg('账号注销'),
-      _ => _SectionCfg('账号管理'),
+      _ => _SectionCfg('账号与安全'),
     };
   }
 
@@ -184,6 +187,145 @@ class _AccountHelpers {
       valueColor: danger ? theme.colorScheme.error : null,
       trailing: trailing,
       onTap: onTap,
+    );
+  }
+}
+
+// =============================================================================
+// 概览 home body —— 五模块入口列表(用户从「我的」点「账号与安全」落地)
+// =============================================================================
+
+class _AccountHomeBody extends StatelessWidget {
+  const _AccountHomeBody();
+
+  void _push(BuildContext context, String section, String title) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        settings: RouteSettings(name: 'AccountPage/$section'),
+        builder: (_) => AccountPage(initialSection: section),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final rows = [
+      ('👤', '个人资料', '昵称 / 头像 / 邮箱', 'profile', false),
+      ('🛡', '安全设置', '密码 / 二次验证', 'security', false),
+      ('🔗', '第三方账号', '微信 / GitHub 绑定', 'thirdparty', false),
+      ('📱', '登录设备', '当前登录的设备列表', 'devices', false),
+      ('⚠', '账号注销', '注销账号,不可恢复', 'danger', true),
+    ];
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: theme.pfSurface,
+            borderRadius: BorderRadius.circular(PfRadii.lg),
+            border: Border.all(color: theme.pfLine),
+            boxShadow: theme.pfShadowSm,
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              for (var i = 0; i < rows.length; i++)
+                Column(
+                  children: [
+                    _AccountHomeRow(
+                      emoji: rows[i].$1,
+                      label: rows[i].$2,
+                      subtitle: rows[i].$3,
+                      danger: rows[i].$5,
+                      onTap: () => _push(context, rows[i].$4, rows[i].$2),
+                    ),
+                    if (i < rows.length - 1)
+                      Divider(
+                        height: 1,
+                        indent: 15,
+                        endIndent: 15,
+                        color: theme.pfLine,
+                      ),
+                  ],
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 概览列表行:emoji + 标题 + 副标题 + chevron(+ 危险色)。
+class _AccountHomeRow extends StatelessWidget {
+  const _AccountHomeRow({
+    required this.emoji,
+    required this.label,
+    required this.subtitle,
+    required this.danger,
+    required this.onTap,
+  });
+
+  final String emoji;
+  final String label;
+  final String subtitle;
+  final bool danger;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
+        child: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: danger
+                    ? theme.colorScheme.error.withValues(alpha: .10)
+                    : theme.pfBrand50,
+                borderRadius: BorderRadius.circular(11),
+              ),
+              alignment: Alignment.center,
+              child: Text(emoji, style: const TextStyle(fontSize: 15)),
+            ),
+            const SizedBox(width: 13),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: danger
+                          ? theme.colorScheme.error
+                          : theme.colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(fontSize: 11.5, color: theme.pfMuted),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: danger ? theme.colorScheme.error : theme.pfMuted,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
