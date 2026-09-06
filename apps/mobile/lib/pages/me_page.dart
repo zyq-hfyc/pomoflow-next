@@ -381,17 +381,17 @@ class _ProfileHead extends StatelessWidget {
                   ),
                 ),
               ),
+            // 间距批(2026-09-06):QR 紧贴邮箱文字,chevron 与 QR 之间 16px
+            // 呼吸间距,点击区互不拥挤。
+            if (onTap != null) const SizedBox(width: 16),
             if (onTap != null)
               GestureDetector(
                 onTap: onTap,
                 behavior: HitTestBehavior.opaque,
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 4),
-                  child: Icon(
-                    Icons.chevron_right,
-                    size: 20,
-                    color: Colors.white.withValues(alpha: .85),
-                  ),
+                child: Icon(
+                  Icons.chevron_right,
+                  size: 20,
+                  color: Colors.white.withValues(alpha: .85),
                 ),
               ),
           ],
