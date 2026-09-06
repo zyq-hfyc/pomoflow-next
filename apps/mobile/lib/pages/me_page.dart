@@ -200,14 +200,13 @@ class _MePageState extends State<MePage> {
         children: [
           PillButton(
             tooltip: '扫描桌面端二维码',
-            // 间距批(2026-09-06 用户反问「扫一扫图标换成微信样式」):
-            // outlined 变体更接近微信扫一扫的线描风格(取景框+四角括号
-            // +中线)。若与原图差异仍大,需要把这张 PNG/SVG 加进 assets/
-            // 再用 Image.asset 接入。
-            child: Icon(
-              Icons.qr_code_scanner_outlined,
-              size: 20,
-              color: theme.pfMuted,
+            // 间距批(2026-09-06 用户反问「扫一扫图标换成手机 QQ 样」):
+            // Material 自带 qr_code_scanner 形态差异大,改用 CustomPainter
+            // 画线描风(4 圆角取景括号 + 中间水平扫描线),更接近
+            // QQ/微信扫一扫;不引入新资源依赖。若要 100% 一致再换 SVG。
+            child: CustomPaint(
+              size: const Size(20, 20),
+              painter: _ScanIconPainter(color: theme.pfMuted),
             ),
             onTap: () => _hint('扫描桌面端二维码 · 功能待接入'),
           ),
@@ -1102,6 +1101,79 @@ class _LogoutButton extends StatelessWidget {
 }
 
 // === 小部件 ===================================================================
+
+/// 扫一扫图标 CustomPainter(2026-09-06 用户反问「换成手机 QQ 样」):
+/// 4 个圆角取景括号 + 中间水平扫描线,线描风贴近 QQ/微信扫一扫;
+/// 不引入额外资源依赖(pub.dev flutter_svg / 新图标资源)。
+class _ScanIconPainter extends CustomPainter {
+  const _ScanIconPainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = size.width * .12
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
+
+    final w = size.width;
+    final h = size.height;
+    // 角括号参数:arm 长度占 30%、内边距占 10%、笔画粗占 12%。
+    final arm = w * 0.30;
+    final inset = w * 0.10;
+
+    // 左上括号 ─┐
+    canvas.drawLine(Offset(inset, inset + arm), Offset(inset, inset), paint);
+    canvas.drawLine(Offset(inset, inset), Offset(inset + arm, inset), paint);
+    // 右上括号 ┌─
+    canvas.drawLine(
+      Offset(w - inset, inset + arm),
+      Offset(w - inset, inset),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(w - inset - arm, inset),
+      Offset(w - inset, inset),
+      paint,
+    );
+    // 左下括号 └─
+    canvas.drawLine(
+      Offset(inset, h - inset - arm),
+      Offset(inset, h - inset),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(inset, h - inset),
+      Offset(inset + arm, h - inset),
+      paint,
+    );
+    // 右下括号 ─┘
+    canvas.drawLine(
+      Offset(w - inset, h - inset - arm),
+      Offset(w - inset, h - inset),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(w - inset - arm, h - inset),
+      Offset(w - inset, h - inset),
+      paint,
+    );
+    // 中间水平扫描线(取景框中央,QQ/微信样式)
+    final midW = w * 0.45;
+    final midY = h * 0.50;
+    canvas.drawLine(
+      Offset((w - midW) / 2, midY),
+      Offset((w + midW) / 2, midY),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_ScanIconPainter old) => old.color != color;
+}
 
 /// 图标块(.ic 34×34,brand-50 底 + brand-700 内容)。
 class _IconBlock extends StatelessWidget {
