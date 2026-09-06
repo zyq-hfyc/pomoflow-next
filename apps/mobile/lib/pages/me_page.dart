@@ -358,9 +358,10 @@ class _ProfileHead extends StatelessWidget {
                 ],
               ),
             ),
-            // 内嵌 QR 图标(2026-09-06 反馈):放昵称/邮箱之后,用户点按
-            // 直接进「我的二维码」,不再需要先进 AccountPage 再找入口。
-            // GestureDetector.opaque 吃掉点击,外层卡片 onTap 不触发。
+            // 内嵌 QR 图标(2026-09-06 反馈):放昵称/邮箱之后,点按直接进
+            // 「我的二维码」;再保留 chevron(>),点 chevron 走卡片本身
+            // 的 onTap(_openAccount)。两个 GestureDetector.opaque 各自
+            // 吃自己的点击,外层卡片 onTap 不冲突。
             if (onQrTap != null)
               GestureDetector(
                 onTap: onQrTap,
@@ -377,6 +378,19 @@ class _ProfileHead extends StatelessWidget {
                     Icons.qr_code,
                     size: 20,
                     color: Colors.white,
+                  ),
+                ),
+              ),
+            if (onTap != null)
+              GestureDetector(
+                onTap: onTap,
+                behavior: HitTestBehavior.opaque,
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 4),
+                  child: Icon(
+                    Icons.chevron_right,
+                    size: 20,
+                    color: Colors.white.withValues(alpha: .85),
                   ),
                 ),
               ),
