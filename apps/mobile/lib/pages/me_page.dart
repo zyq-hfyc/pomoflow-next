@@ -624,6 +624,10 @@ class _ConflictRow extends StatelessWidget {
 }
 
 /// 一级主菜单卡(菜单分层批):数据管理 / 设置 / 帮助与反馈 / 关于。
+///
+/// 可发现性修正(2026-09-06 真机反馈):补「账号与安全」显式首行 ——
+/// 仅靠账户大卡尾部 › 用户不知道大卡可点(安全设置/第三方账号/登录
+/// 设备/账号注销被误以为丢失)。
 class _MainMenuCard extends StatelessWidget {
   const _MainMenuCard();
 
@@ -631,6 +635,11 @@ class _MainMenuCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return _MenuCard(
       items: [
+        _MenuItem(
+          emoji: '👤',
+          label: '账号与安全',
+          onTap: () => _pushSlide(context, const AccountPage()),
+        ),
         _MenuItem(
           emoji: '🗂',
           label: '数据管理',
