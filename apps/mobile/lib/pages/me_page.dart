@@ -200,7 +200,15 @@ class _MePageState extends State<MePage> {
         children: [
           PillButton(
             tooltip: '扫描桌面端二维码',
-            child: Icon(Icons.qr_code_scanner, size: 18, color: theme.pfMuted),
+            // 间距批(2026-09-06 用户反问「扫一扫图标换成微信样式」):
+            // outlined 变体更接近微信扫一扫的线描风格(取景框+四角括号
+            // +中线)。若与原图差异仍大,需要把这张 PNG/SVG 加进 assets/
+            // 再用 Image.asset 接入。
+            child: Icon(
+              Icons.qr_code_scanner_outlined,
+              size: 20,
+              color: theme.pfMuted,
+            ),
             onTap: () => _hint('扫描桌面端二维码 · 功能待接入'),
           ),
           const SizedBox(width: 8),
