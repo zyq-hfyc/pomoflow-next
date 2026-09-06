@@ -14,18 +14,20 @@ import '../services/sync_client.dart';
 import '../theme/tokens.dart';
 import '../widgets/pf_sheet.dart';
 import 'account_page.dart';
+import 'account_qr_page.dart';
 import 'conflict_log_page.dart';
 import 'help_page.dart';
 import 'settings_page.dart';
 import 'stats_page.dart' show exportStatsSummary;
 
-/// 我的屏(菜单分层批 2026-09-06):一级只留 6 元素 —— 账户大卡(点进
-/// 二级「账号与安全」AccountPage)/ 同步状态卡 / 主菜单
-/// (账号与安全 · 数据管理 · 设置 · 推荐 PomoFlow · 帮助与反馈 · 关于)
-/// / 退出登录;顶栏右侧 📷 扫描桌面端二维码(占位)+ 🌙 切换主题。
+/// 我的屏(菜单分层批 2026-09-06):一级只留 6 元素 —— 账户大卡(含
+/// 内嵌 QR 图标,一跳进「我的二维码」AccountQrPage)/ 同步状态卡 /
+/// 主菜单(账号与安全 · 数据管理 · 设置 · 推荐 PomoFlow · 帮助与反馈
+/// · 关于)/ 退出登录;顶栏右侧 📷 扫描桌面端二维码(占位)+ 🌙
+/// 切换主题。
 /// 专注概览「今日专注 x 分钟 / 累计 y 番茄」卡已移除(不属于「我的」语义);
 /// 低频维护项收二级页(数据管理 / 关于);AI 占位卡删除;账号注销
-/// 埋进 AccountPage 二级。
+/// 埋进 AccountPage 二级;QR 入口迁到账户大卡(2026-09-06 反馈深度修正)。
 class MePage extends StatefulWidget {
   const MePage({super.key});
 
@@ -141,6 +143,9 @@ class _MePageState extends State<MePage> {
               avatarDataUrl: _avatarDataUrl,
               totalPomos: tasks.sessions.where((s) => s.isCompleted).length,
               onTap: _openAccount,
+              // 2026-09-06 反馈:QR 入口从二级页迁到一级账户大卡内嵌,
+              // 一跳即达,不再需要先进 AccountPage 再找图标。
+              onQrTap: _openMyQr,
             ),
           ),
           const SliverToBoxAdapter(child: SizedBox(height: 12)),
@@ -176,6 +181,13 @@ class _MePageState extends State<MePage> {
     await _loadAvatar();
   }
 
+  /// 账户大卡内嵌 QR 图标 → 「我的二维码」(AccountQrPage);
+  /// 与大卡本身 _openAccount 是两个独立入口,GestureDetector.opaque
+  /// 已分离手势互不触发。
+  Future<void> _openMyQr() async {
+    await _pushSlide(context, const AccountQrPage());
+  }
+
   PfSliverAppBar _meAppBar(ThemeData theme) {
     // 顶栏右侧:📷 扫描桌面端二维码(占位,后续接 mobile_scanner)
     // + 🌙 切换主题。两 PillButton 同行(PillButton 默认 38 圆+line
@@ -188,11 +200,7 @@ class _MePageState extends State<MePage> {
         children: [
           PillButton(
             tooltip: '扫描桌面端二维码',
-            child: Icon(
-              Icons.qr_code_scanner,
-              size: 18,
-              color: theme.pfMuted,
-            ),
+            child: Icon(Icons.qr_code_scanner, size: 18, color: theme.pfMuted),
             onTap: () => _hint('扫描桌面端二维码 · 功能待接入'),
           ),
           const SizedBox(width: 8),
@@ -214,8 +222,9 @@ class _MePageState extends State<MePage> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 }
 
-/// 账户大卡(终稿 P6:≥100px 高,头像 + 用户名 + 等级 chip;
-/// 菜单分层批:整卡可点 → 二级「账号与安全」,尾部 chevron 示意)。
+/// 账户大卡(终稿 P6:≥100px 高,头像 + 用户名 + 等级 chip + 邮箱;
+/// 菜单分层批:整卡可点 → 二级「账号与安全」;尾部 QR 图标单独点按 →
+/// 「我的二维码」一跳即达 —— 不用先进二级再找入口)。
 /// brand → brand-600 对角渐变,白字;圆环 = 真头像(dataUrl,无则首字母)。
 class _ProfileHead extends StatelessWidget {
   const _ProfileHead({
@@ -223,6 +232,7 @@ class _ProfileHead extends StatelessWidget {
     required this.totalPomos,
     this.avatarDataUrl,
     this.onTap,
+    this.onQrTap,
   });
 
   final AuthProvider auth;
@@ -233,6 +243,9 @@ class _ProfileHead extends StatelessWidget {
 
   /// 点按进二级账号页(菜单分层批)。
   final VoidCallback? onTap;
+
+  /// 内嵌 QR 图标独立点按 → 「我的二维码」占位页。
+  final VoidCallback? onQrTap;
 
   @override
   Widget build(BuildContext context) {
@@ -345,12 +358,27 @@ class _ProfileHead extends StatelessWidget {
                 ],
               ),
             ),
-            // 可点示意(进二级「账号与安全」)
-            if (onTap != null)
-              Icon(
-                Icons.chevron_right,
-                size: 20,
-                color: Colors.white.withValues(alpha: .85),
+            // 内嵌 QR 图标(2026-09-06 反馈):放昵称/邮箱之后,用户点按
+            // 直接进「我的二维码」,不再需要先进 AccountPage 再找入口。
+            // GestureDetector.opaque 吃掉点击,外层卡片 onTap 不触发。
+            if (onQrTap != null)
+              GestureDetector(
+                onTap: onQrTap,
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: .22),
+                    shape: BoxShape.circle,
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.qr_code,
+                    size: 20,
+                    color: Colors.white,
+                  ),
+                ),
               ),
           ],
         ),
@@ -902,10 +930,7 @@ class _ShareDownloadQrPage extends StatelessWidget {
           Text(
             '让身边朋友扫码下载 PomoFlow',
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
-            ),
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 6),
           Text(
@@ -1002,10 +1027,7 @@ class _QrPlaceholderCard extends StatelessWidget {
                   const SizedBox(height: 6),
                   Text(
                     caption,
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: theme.pfMuted,
-                    ),
+                    style: TextStyle(fontSize: 10, color: theme.pfMuted),
                   ),
                 ],
               ),
