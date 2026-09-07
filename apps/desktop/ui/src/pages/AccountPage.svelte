@@ -227,9 +227,15 @@
   }
 
   .menu-header {
-    padding: 0.5rem 0.75rem 1rem;
+    padding: 0.75rem 0.75rem 1rem;
     border-bottom: 1px solid var(--color-border);
     margin-bottom: 0.75rem;
+    /* 用户 2026-09-07 反馈:账号信息居中显示更美观;flex 列+居中对齐
+       适用于「已登录 / 未登录」两种形态。 */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
   }
   .menu-avatar {
     width: 40px;
