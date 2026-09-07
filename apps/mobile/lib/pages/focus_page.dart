@@ -10,7 +10,6 @@ import '../i18n.dart';
 import '../models/task.dart';
 import '../providers/settings_provider.dart';
 import '../providers/language_provider.dart';
-import '../providers/nav_provider.dart';
 import '../providers/task_provider.dart';
 import '../providers/notification_template_provider.dart';
 import '../services/notification_service.dart';
@@ -432,7 +431,7 @@ class _FocusPageState extends State<FocusPage> with WidgetsBindingObserver {
     _syncFocusGuard(running: false); // 中途跳出专注 → 补弹
   }
 
-  /// 应用内完成弹窗(桌面 CompletionModal:⏰ + 标题「提示」+ 正文 + 知道了)。
+  /// 应用内完成弹窗(桌面 CompletionModal 同款):标题区分任务/休息结束,
   /// 终稿 B4:专注(非休息)完成、弹窗关闭后,追加底部半屏「趁热写一笔 →」
   /// 引导卡,点击跳手账页复盘 segment。
   Future<void> _showCompletionModal(
@@ -443,7 +442,7 @@ class _FocusPageState extends State<FocusPage> with WidgetsBindingObserver {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('提示'),
+        title: Text(isFocus ? '任务结束' : '休息结束'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -458,53 +457,6 @@ class _FocusPageState extends State<FocusPage> with WidgetsBindingObserver {
             child: Text(I18n.t('common.confirm')),
           ),
         ],
-      ),
-    );
-    if (!isFocus || !mounted) return;
-    _showReviewNudgeSheet();
-  }
-
-  /// 复盘引导卡(终稿 B4):底部半屏,「趁热写一笔 →」→ 手账页复盘 segment。
-  void _showReviewNudgeSheet() {
-    final theme = Theme.of(context);
-    final nav = context.read<NavProvider>();
-    unawaited(
-      showModalBottomSheet<void>(
-        context: context,
-        backgroundColor: theme.pfSurface,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(
-            top: Radius.circular(PfRadii.sheetTop),
-          ),
-        ),
-        builder: (ctx) => SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  '🎉 完成一个番茄钟!',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '趁热记录此刻的进展与收获,复盘只需 1 分钟。',
-                  style: TextStyle(fontSize: 13, color: theme.pfMuted),
-                ),
-                const SizedBox(height: 14),
-                PfPrimaryButton(
-                  label: '趁热写一笔 →',
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    nav.openJournalReview();
-                  },
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }

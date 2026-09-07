@@ -144,8 +144,32 @@ class PomoFlowApp extends StatelessWidget {
   }
 }
 
-class _Root extends StatelessWidget {
+class _Root extends StatefulWidget {
   const _Root();
+
+  @override
+  State<_Root> createState() => _RootState();
+}
+
+class _RootState extends State<_Root> {
+  @override
+  void initState() {
+    super.initState();
+    // 用户 2026-09-07 反馈:任务/休息结束无通知、任务提醒不到点。
+    // 根因:Android 13+ 通知权限从未申请(原 `requestPermission` 只在
+    // 「我的」铃铛按钮首次点按触发,用户没点过就一直没授权,系统通知
+    // 静默失败)。启动后第一帧主动请求一次,iOS / Android 统一。
+    // 用户拒绝不影响流程,后续还可在「我的」铃铛入口再开。
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (kIsWeb) return;
+      final granted = await NotificationService.requestPermission();
+      if (granted) {
+        debugPrint('[notif] post-launch permission granted');
+      } else {
+        debugPrint('[notif] post-launch permission denied or unavailable');
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
