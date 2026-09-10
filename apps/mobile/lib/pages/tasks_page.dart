@@ -42,9 +42,21 @@ class _TasksPageState extends State<TasksPage> {
   /// 任务/统计 横向滑动切换(2026-09-05 需求:整屏左右滑切 segment)。
   final _pageCtrl = PageController();
 
+  /// 列表滚动控制器(2026-09-09):跳转定位用,挂到 _tasksScrollView 的
+  /// CustomScrollView。两阶段定位(animateTo 估算 + ensureVisible 精修)。
+  final _scrollCtrl = ScrollController();
+
+  /// 卡片 GlobalKey 缓存,按 task.id 索引;switch 视图后 stale key
+  /// 不删(无害内存,putIfAbsent 复用避免重复 new GlobalKey)。
+  final Map<String, GlobalKey> _cardKeys = {};
+
+  /// 本帧已消费的 pendingLocateTaskId,避免同一 intent 重复触发滚动。
+  String? _consumedLocate;
+
   @override
   void dispose() {
     _pageCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
@@ -71,6 +83,13 @@ class _TasksPageState extends State<TasksPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final tasks = context.watch<TaskProvider>();
+    // 跨屏定位意图(2026-09-09):详情 sheet pop 前写入,本 build 消费。
+    final nav = context.watch<NavProvider>();
+    final pendingId = nav.pendingLocateTaskId;
+    if (pendingId != null && pendingId != _consumedLocate) {
+      _consumedLocate = pendingId;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _doLocate(pendingId));
+    }
     // 视图任务 → 搜索 + 三筛选叠加;缓存避免多处重复调用。
     final filtered = _applyFilters(tasks.viewTasks(_view));
     // 4 统计卡:从当前视图任务实时算(预计/已专注分钟 =
@@ -174,6 +193,7 @@ class _TasksPageState extends State<TasksPage> {
     List<(String, String)> statCells,
   ) {
     return CustomScrollView(
+      controller: _scrollCtrl,
       slivers: [
         if (_searching)
           SliverToBoxAdapter(
@@ -295,7 +315,11 @@ class _TasksPageState extends State<TasksPage> {
               itemCount: filtered.length,
               separatorBuilder: (_, _) => const SizedBox(height: 10),
               itemBuilder: (context, i) {
-                return _TaskCard(task: filtered[i]);
+                final t = filtered[i];
+                return _TaskCard(
+                  key: _cardKeys.putIfAbsent(t.id, GlobalKey.new),
+                  task: t,
+                );
               },
             ),
           ),
@@ -479,6 +503,76 @@ class _TasksPageState extends State<TasksPage> {
       ),
     );
   }
+
+  /// 智能跳转定位(2026-09-09):模板已在当前 filtered → 原地滚;
+  /// 否则切到「重复」视图(扁平无折叠,模板一定可见),再滚。
+  ///
+  /// 两阶段滚动:① animateTo 估算 offset(SliverList 懒构建,
+  /// GlobalKey 离屏太远时 currentContext 为 null;把目标拉到 viewport
+  /// 让其 built)→ ② Scrollable.ensureVisible 精修到 alignment 0.3。
+  Future<void> _doLocate(String id) async {
+    final nav = context.read<NavProvider>();
+    final provider = context.read<TaskProvider>();
+    final tpl = provider.tasks.cast<PfTask?>().firstWhere(
+      (t) => t?.id == id,
+      orElse: () => null,
+    );
+    if (tpl == null) {
+      // 孤儿(模板已删):静默消费,不报错。
+      nav.consumePendingLocate();
+      _consumedLocate = null;
+      return;
+    }
+    // 取本帧最新 filtered(若 setState 改 _view 需重读);build 里已算过,
+    // 但 callback 已是 post-frame,这里重算一次最稳。
+    final filteredNow = _applyFilters(provider.viewTasks(_view));
+    final inCurrent = filteredNow.any((t) => t.id == id);
+    if (!inCurrent) {
+      // 切到「重复」视图,filter 重算需一帧,再 postFrame 内继续。
+      setState(() => _view = '重复');
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _scrollTo(id);
+      });
+    } else {
+      await _scrollTo(id);
+    }
+    if (!mounted) return;
+    nav.consumePendingLocate();
+    _consumedLocate = null;
+  }
+
+  /// 实际执行滚动:两阶段估算 + 精修。
+  Future<void> _scrollTo(String id) async {
+    if (!mounted || !_scrollCtrl.hasClients) return;
+    final provider = context.read<TaskProvider>();
+    final filteredNow = _applyFilters(provider.viewTasks(_view));
+    final idx = filteredNow.indexWhere((t) => t.id == id);
+    if (idx < 0) return;
+    // headerExtent 粗估:chips(~48) + stats(~64) + filter chips(~40)
+    // + 搜索行(_searching 时~60)+ 各自上下 padding 合计~152。
+    // 阶段 1 用估,阶段 2 精修不依赖此值。
+    const cardStride = 84 + 10; // 卡高 + 分隔
+    final headerExtent = _searching ? 152 + 60 : 152;
+    final offset = (headerExtent + idx * cardStride).toDouble().clamp(
+      0.0,
+      _scrollCtrl.position.maxScrollExtent,
+    );
+    await _scrollCtrl.animateTo(
+      offset,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+    // 阶段 2 精修:GlobalKey 此刻应已 built(animateTo 把目标拉到 viewport)。
+    final ctx = _cardKeys[id]?.currentContext;
+    if (ctx != null && ctx.mounted) {
+      await Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 200),
+        alignment: 0.3,
+      );
+    }
+  }
 }
 
 /// 统计小卡(.stat)。
@@ -616,7 +710,7 @@ class _FilterChip extends StatelessWidget {
 /// 终稿 P1:meta 收敛为 项目 pill + 到期日 两项(🍅/子任务计数移除);
 /// 已完成态整卡 Opacity(0.55)(不再灰字+删除线双信号)。
 class _TaskCard extends StatelessWidget {
-  const _TaskCard({required this.task});
+  const _TaskCard({required this.task, super.key});
 
   final PfTask task;
 

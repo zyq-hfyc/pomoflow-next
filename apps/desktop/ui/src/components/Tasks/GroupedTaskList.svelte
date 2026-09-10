@@ -34,13 +34,25 @@
     onToggle: (id: string) => void;
     onSelect: (task: TaskWithTags) => void;
     onStart?: (task: TaskWithTags) => void;
+    // 跳转定位(2026-09-09):父组件传组 key 强制展开;重复时同值不动作。
+    expandKey?: string | null;
   }
 
-  let { tasks, groupBy, selectedTask, onToggle, onSelect, onStart }: Props = $props();
+  let { tasks, groupBy, selectedTask, onToggle, onSelect, onStart, expandKey = null }: Props = $props();
 
   const UNSCHEDULED = "unscheduled";
 
   let collapsed = $state<Set<string>>(new Set());
+
+  $effect(() => {
+    // 读 expandKey 才能响应;读到 null 直接返回。
+    if (expandKey === null) return;
+    const target = expandKey;
+    // 直接修改副本再赋值,Svelte 5 Set 是响应式的但需赋值触发。
+    const next = new Set(collapsed);
+    next.delete(target);
+    collapsed = next;
+  });
 
   function formatHeader(dateStr: string, groupTasks: TaskWithTags[]): string {
     const d = new Date(dateStr + "T00:00:00");

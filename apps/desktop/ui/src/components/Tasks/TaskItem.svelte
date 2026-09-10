@@ -68,6 +68,7 @@
   class="task-card"
   class:selected
   class:done={isCompleted}
+  id={`task-${task.id}`}
   onclick={() => onSelect(task)}
   onkeydown={(e) => {
     if (e.key === "Enter" || e.key === " ") {

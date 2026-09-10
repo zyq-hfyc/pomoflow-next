@@ -14,6 +14,11 @@ class NavProvider extends ChangeNotifier {
   /// watch 本字段即联动)。
   int journalSeg = 0;
 
+  /// 任务列表跨屏定位(2026-09-09):实例详情「属于重复系列」点击后,
+  /// 详情 sheet 在 pop 前写入本字段,任务页消费后滚动到模板任务并切视图。
+  /// 消费后由 [consumePendingLocate] 清空,避免重复触发。
+  String? pendingLocateTaskId;
+
   void select(int i) {
     if (i == index) return;
     index = i;
@@ -33,5 +38,20 @@ class NavProvider extends ChangeNotifier {
     index = 2;
     journalSeg = 2;
     notifyListeners();
+  }
+
+  /// 请求任务列表定位到指定任务(详情 sheet pop 前调用)。
+  /// 与 select() 不同:仅设意图字段,不切 Tab —— 详情 sheet 当前
+  /// 只从任务页唤起,无需兜底切到任务 Tab。
+  void locateTask(String id) {
+    if (pendingLocateTaskId == id) return;
+    pendingLocateTaskId = id;
+    notifyListeners();
+  }
+
+  /// 任务列表消费完定位意图后调用,清空字段避免重复触发。
+  void consumePendingLocate() {
+    if (pendingLocateTaskId == null) return;
+    pendingLocateTaskId = null;
   }
 }

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:pomoflow_mobile/models/task.dart';
 import 'package:pomoflow_mobile/pages/tasks_page.dart';
+import 'package:pomoflow_mobile/providers/nav_provider.dart';
 import 'package:pomoflow_mobile/providers/task_provider.dart';
 import 'package:pomoflow_mobile/theme/app_theme.dart';
 
@@ -15,9 +16,13 @@ void main() {
     tester,
   ) async {
     final provider = TaskProvider.demo();
+    final nav = NavProvider();
     await tester.pumpWidget(
-      ChangeNotifierProvider<TaskProvider>.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<TaskProvider>.value(value: provider),
+          ChangeNotifierProvider<NavProvider>.value(value: nav),
+        ],
         child: MaterialApp(theme: buildAppTheme(), home: const TasksPage()),
       ),
     );
@@ -56,6 +61,7 @@ void main() {
     'repeat template shows 🔁 pill and 重复 view lists only templates',
     (tester) async {
       final provider = TaskProvider.demo();
+      final nav = NavProvider();
       final today = DateTime.now();
       await provider.addTask(
         PfTask(id: 'tpl-1', title: '每周复盘模板', repeat: 'weekly', dueAt: today),
@@ -69,8 +75,11 @@ void main() {
         ),
       );
       await tester.pumpWidget(
-        ChangeNotifierProvider<TaskProvider>.value(
-          value: provider,
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<TaskProvider>.value(value: provider),
+            ChangeNotifierProvider<NavProvider>.value(value: nav),
+          ],
           child: MaterialApp(theme: buildAppTheme(), home: const TasksPage()),
         ),
       );
@@ -89,4 +98,38 @@ void main() {
       expect(find.text('每周复盘实例'), findsNothing);
     },
   );
+
+  /// 跳转定位回归锁(2026-09-09):
+  /// 智能跳转:模板不在当前 filtered → 切到「重复」视图(扁平,模板可见);
+  /// 孤儿 intent(id 不存在)→ 静默消费不报错。
+  testWidgets('NavProvider.locateTask 智能跳转:模板不在当前视图 → 切「重复」', (tester) async {
+    final provider = TaskProvider.demo();
+    final nav = NavProvider();
+    // seed 一个工作日重复模板(无 dueAt,默认不进任何日期视图,
+    // 只在「重复」视图里可见 —— 验证切视图路径)。
+    await provider.addTask(
+      PfTask(id: 'tpl-loc', title: '工作日复盘', repeat: 'weekdays'),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<TaskProvider>.value(value: provider),
+          ChangeNotifierProvider<NavProvider>.value(value: nav),
+        ],
+        child: MaterialApp(theme: buildAppTheme(), home: const TasksPage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 默认「今天」视图,模板不可见。触发 locate → 切「重复」+ 滚到。
+    nav.locateTask('tpl-loc');
+    await tester.pumpAndSettle(const Duration(milliseconds: 800));
+    expect(find.text('工作日复盘'), findsOneWidget);
+
+    // 孤儿:id 不存在 → 静默消费,不抛错。
+    nav.locateTask('orphan-id');
+    await tester.pumpAndSettle();
+    expect(find.text('工作日复盘'), findsOneWidget);
+  });
 }

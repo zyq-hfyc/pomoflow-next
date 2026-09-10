@@ -19,7 +19,7 @@
   //   - task 切换通过 onChanged 回调 → refresh
   //   - start 任务跳到 /timer（同步 P1.7 timer 行为）
 
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { syncState } from "../lib/syncState.svelte";
   import { Clock, Target, CircleCheck, ChartColumn } from "lucide-svelte";
   import { save } from "@tauri-apps/plugin-dialog";
@@ -70,6 +70,16 @@
   let searchQuery = $state("");
 
   let selectedTask = $state<TaskWithTags | null>(null);
+
+  // === 跳转定位(2026-09-09):智能滚动到模板任务 ===
+  let pendingScrollId = $state<string | null>(null);
+  let groupedExpandKey = $state<string | null>(null);
+
+  // 组 key 口径与 GroupedTaskList.svelte L75-77 一致。
+  function groupKeyFor(task: TaskWithTags): string {
+    const UNSCHEDULED = "unscheduled";
+    return task.due_date ? datePart(task.due_date) : UNSCHEDULED;
+  }
 
   // === 手账模式状态(P1.10):年/月默认今天;reviewVersion 在周复盘保存后 +1,
   //     驱动右侧 MonthReviewPanel 重拉 ===
@@ -310,6 +320,43 @@
   $effect(() => {
     void syncState().rev;
     void refresh();
+  });
+
+  // 智能跳转定位:模板已在当前 filtered → 原地滚(必要时展开组);
+  // 否则切到「重复」视图(全部模板扁平无折叠)再滚。pendingScrollId
+  // 一次性,等一帧让 DOM 提交(grouped 视图展开)再 scrollIntoView。
+  async function handleOpenTemplate(tpl: TaskWithTags) {
+    searchQuery = "";
+    const visible = filtered.some((x) => x.id === tpl.id);
+    selectedTask = tpl;
+    if (visible) {
+      // 原视图可滚动,分组视图若组折叠则先展开。
+      if (filter === "week" || filter === "planned" || filter === "completed") {
+        groupedExpandKey = groupKeyFor(tpl);
+      }
+    } else {
+      // 不在当前视图 → 切到「重复」,清掉选中项目干扰。
+      selectedProject = null;
+      filter = "repeat";
+      groupedExpandKey = null;
+    }
+    pendingScrollId = tpl.id;
+  }
+
+  $effect(() => {
+    const id = pendingScrollId;
+    // 依赖相关 state,确保视图切换/组展开完成后再读 DOM。
+    void filter;
+    void selectedProject;
+    void groupedExpandKey;
+    if (!id) return;
+    // 让 Svelte 先把视图/折叠状态刷到 DOM。
+    tick().then(() => {
+      document
+        .getElementById(`task-${id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      pendingScrollId = null;
+    });
   });
 
   function nowIso(): string {
@@ -671,6 +718,7 @@
           <GroupedTaskList
             tasks={filtered}
             groupBy="due_date"
+            expandKey={groupedExpandKey}
             {selectedTask}
             onToggle={toggleStatus}
             onSelect={selectTask}
@@ -706,7 +754,7 @@
       templateTask={selectedTask.repeat_parent_id
         ? (tasks.find((x) => x.id === selectedTask!.repeat_parent_id) ?? null)
         : null}
-      onOpenTemplate={(tpl) => (selectedTask = tpl)}
+      onOpenTemplate={handleOpenTemplate}
       onClose={closePanel}
       onChanged={onPanelChanged}
     />

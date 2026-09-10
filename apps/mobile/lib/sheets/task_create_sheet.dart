@@ -690,7 +690,8 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
   }
 
   /// 系列行:kv 样式,找到模板时整行可点(brand 色)→ 关当前
-  /// sheet 再开模板详情;找不到时 muted 显示「模板已删除」。
+  /// sheet 再开模板详情;同时写入 NavProvider pendingLocateTaskId,
+  /// 任务页消费后自动滚动定位到模板(2026-09-09)。
   Widget _seriesRow(BuildContext context, PfTask task, ThemeData theme) {
     final template = _templateOf(task);
     final row = _kv(
@@ -703,6 +704,9 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {
+        // pop 前先取 provider 写入 intent(同文件 _confirm 注释教训:
+        // pop 后 context 失效);任务页 IndexedStack 常驻,无需切 Tab。
+        context.read<NavProvider>().locateTask(template.id);
         Navigator.pop(context);
         showTaskDetailSheet(context, template);
       },
