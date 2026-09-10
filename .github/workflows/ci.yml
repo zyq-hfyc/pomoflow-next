@@ -137,7 +137,7 @@ jobs:
         run: cargo test --all-targets --locked
 
   ui:
-    name: desktop UI (svelte-check + build)
+    name: desktop UI (svelte-check + vitest + build)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -157,6 +157,14 @@ jobs:
       - name: svelte-check
         working-directory: apps/desktop/ui
         run: npm run check
+
+      # 组件级回归锁(vitest + jsdom,纯 DOM,不需要浏览器也不需要后端)。
+      # 补的正是 svelte-check/build 发现不了的那类:跑起来才炸 ——
+      # 例如 GroupedTaskList 的 expandKey effect 自激中断整批 flush
+      # (2026-09-10 跳转定位 bug,前两次修复都从它上面漏过去)。
+      - name: vitest
+        working-directory: apps/desktop/ui
+        run: npm run test
 
       # build 脚本 = tsc --noEmit && vite build,两道都在内
       - name: tsc + vite build
