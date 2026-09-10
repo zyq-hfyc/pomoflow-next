@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="YvfXOW7tLGFpoqbdr1f838">
+<head data-page-node-id="hXgHzEywgg0EV9JsPqwXhq">
+<meta charset="UTF-8" data-page-node-id="pq67rC2GzLI0OJ0XTqXfvb">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="Ehy1plbG7AXQF2moTNN41f">
+<title>PomoFlow 移动端 · UI 审查与改版交互原型</title>
+<style>
+:root{
+  --brand:#E8590C; --brand600:#CF4E0A; --brand700:#B23E09;
+  --brand100:#FFE2CF; --brand50:#FFF3EB;
+  --bg:#F5F0EB; --surface:#FFFFFF; --surface2:#FBF7F3; --scaffold:#EFE7DF;
+  --muted:#7A726B; --line:#ECE4DC; --ink:#2B2620;
+  --warn:#E9A23B; --low:#4D8EE0; --ok:#3E9B6C;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:var(--scaffold);color:var(--ink);line-height:1.6}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 80px}
+h1{font-size:26px;font-weight:800;letter-spacing:.5px}
+h1 small{display:block;font-size:13px;font-weight:400;color:var(--muted);margin-top:4px;letter-spacing:0}
+.badge{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:700}
+.badge.red{background:#FDEBEA;color:#C0392B}
+.badge.org{background:var(--brand50);color:var(--brand700)}
+.badge.grn{background:#E8F5EE;color:var(--ok)}
+.badge.gry{background:#F0EBE4;color:var(--muted)}
+section{margin-top:36px}
+h2{font-size:19px;font-weight:800;padding-left:12px;border-left:4px solid var(--brand);margin-bottom:6px}
+.sub{font-size:13px;color:var(--muted);margin-bottom:16px}
+
+/* ============ 问题清单 ============ */
+.probs{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
+.prob{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px 18px;box-shadow:0 2px 8px rgba(90,70,50,.05)}
+.prob b{font-size:14.5px}
+.prob p{font-size:13px;color:#5C554D;margin-top:6px}
+.prob .fix{font-size:12.5px;color:var(--brand700);margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
+.prob .fix::before{content:"→ 改法：";font-weight:700}
+
+/* ============ 原型区 ============ */
+.screen-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+.screen-tabs button{padding:9px 18px;border-radius:99px;border:1px solid var(--line);background:var(--surface);color:var(--muted);font-size:13.5px;font-weight:600;cursor:pointer;transition:.15s}
+.screen-tabs button.on{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 4px 12px rgba(232,89,12,.3)}
+.stage{display:none;gap:28px;align-items:flex-start;flex-wrap:wrap}
+.stage.on{display:flex}
+.stage-note{flex:1;min-width:300px;max-width:520px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.stage-note h3{font-size:15px;font-weight:800;margin-bottom:10px;color:var(--brand700)}
+.stage-note li{font-size:13px;color:#5C554D;margin:8px 0 8px 18px}
+.stage-note li b{color:var(--ink)}
+.stage-note .ask{margin-top:14px;background:var(--brand50);border:1px solid var(--brand100);border-radius:12px;padding:10px 14px;font-size:12.5px;color:var(--brand700)}
+
+.v3wrap{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start}
+.v3col{display:flex;flex-direction:column;align-items:center;gap:10px}
+.vtag{font-size:12.5px;font-weight:800;padding:4px 16px;border-radius:99px}
+.vtag.win{background:var(--brand);color:#fff;box-shadow:0 3px 10px rgba(232,89,12,.3)}
+.vtag.alt{background:var(--surface);border:1px solid var(--line);color:var(--muted)}
+.cmp{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px 20px;margin-top:4px}
+.cmp h4{font-size:14px;font-weight:800;margin-bottom:8px}
+.cmp table{width:100%;border-collapse:collapse;font-size:12px}
+.cmp th{text-align:left;color:var(--muted);font-size:11px;padding:6px 10px;border-bottom:1px solid var(--line)}
+.cmp td{padding:7px 10px;border-bottom:1px solid var(--line);color:#4A443C}
+.cmp td:first-child{font-weight:700;color:var(--ink);white-space:nowrap}
+/* 手机壳 */
+.phone{width:340px;height:720px;background:var(--bg);border:8px solid #1E1A16;border-radius:44px;overflow:hidden;position:relative;box-shadow:0 24px 60px rgba(40,30,20,.28);flex:none;display:flex;flex-direction:column}
+.statusbar{height:30px;display:flex;justify-content:space-between;align-items:center;padding:0 22px;font-size:11px;font-weight:700;color:var(--ink);flex:none}
+.appbar{display:flex;align-items:flex-start;justify-content:space-between;padding:10px 18px 2px;flex:none}
+.appbar .t{font-size:21px;font-weight:800}
+.appbar .s{font-size:11.5px;color:var(--muted);margin-top:1px}
+.appbar .act{width:34px;height:34px;border-radius:99px;background:var(--surface);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:14px}
+.body{flex:1;overflow:hidden;padding:0 16px;position:relative}
+.focusbody{overflow-y:auto;padding-bottom:86px}
+
+/* chips 行 */
+.chiprow{display:flex;gap:7px;overflow:hidden;margin-top:10px;flex-wrap:nowrap}
+.chip{padding:6px 13px;border-radius:99px;background:var(--surface);border:1px solid var(--line);font-size:12px;color:var(--muted);white-space:nowrap;flex:none}
+.chip.on{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:700;box-shadow:0 3px 8px rgba(232,89,12,.28)}
+.filterrow{display:flex;gap:6px;align-items:center;margin-top:9px}
+.filterrow .fl{font-size:11px;color:var(--muted);font-weight:600;flex:none}
+.fchip{padding:3px 9px;border-radius:8px;border:1px dashed var(--line);background:transparent;font-size:10.5px;color:var(--muted);white-space:nowrap}
+.summaryline{margin-top:11px;font-size:11.5px;color:var(--muted);background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:7px 12px;display:flex;gap:5px;align-items:center}
+.summaryline b{color:var(--brand700)}
+
+/* 任务卡 */
+.tcard{background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:12px 13px;margin-top:9px;display:flex;gap:11px;align-items:flex-start;box-shadow:0 1px 4px rgba(90,70,50,.05)}
+.ck{width:20px;height:20px;border-radius:6px;border:2px solid var(--line);flex:none;margin-top:1px}
+.ck.done{background:var(--ok);border-color:var(--ok);position:relative}
+.ck.done::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.tmain{flex:1;min-width:0}
+.ttitle{font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:6px}
+.dot{width:7px;height:7px;border-radius:99px;flex:none}
+.tmeta{display:flex;gap:8px;margin-top:5px;font-size:11px;color:var(--muted);align-items:center;flex-wrap:wrap}
+.ppill{background:var(--brand50);color:var(--brand700);font-weight:700;font-size:10.5px;padding:1px 8px;border-radius:99px}
+.play{width:34px;height:34px;border-radius:11px;background:var(--brand50);color:var(--brand700);display:flex;align-items:center;justify-content:center;font-size:13px;flex:none}
+
+/* Dock */
+.dock{position:absolute;left:0;right:0;bottom:0;height:86px;background:linear-gradient(transparent,var(--bg) 30%);display:flex;justify-content:center;align-items:flex-end;pointer-events:none}
+.dockpill{width:88%;height:56px;background:var(--surface);border:1px solid var(--line);border-radius:99px;box-shadow:0 8px 22px rgba(60,45,30,.16);display:flex;align-items:center;padding:0 8px;margin-bottom:10px;gap:2px}
+.dtab{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:9.5px;color:var(--muted)}
+.dtab .ic{font-size:15px;line-height:1}
+.dtab.on{background:var(--brand);border-radius:99px;color:#fff;padding:6px 0;box-shadow:0 4px 10px rgba(232,89,12,.4)}
+.dtab.on .ic{font-size:14px}
+.dgap{width:52px;flex:none}
+.fab{position:absolute;left:50%;transform:translateX(-50%);bottom:22px;width:50px;height:50px;border-radius:99px;background:var(--brand);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:18px;line-height:1;box-shadow:0 0 0 4px var(--bg),0 8px 18px rgba(232,89,12,.4);z-index:5}
+.fab small{font-size:8.5px;font-weight:700;margin-top:1px}
+
+/* segment */
+.seg{display:flex;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:3px;margin-top:6px}
+.seg div{flex:1;text-align:center;font-size:12px;color:var(--muted);padding:7px 0;border-radius:9px;font-weight:600;cursor:pointer}
+.seg div.on{background:var(--brand);color:#fff;box-shadow:0 2px 6px rgba(232,89,12,.3)}
+
+/* 浏览器式顶部页签 */
+.btabs{display:flex;gap:3px;margin-top:10px;border-bottom:1px solid var(--line);align-items:flex-end}
+.btab{flex:0 0 auto;min-width:94px;text-align:center;font-size:12.5px;font-weight:700;color:var(--muted);background:var(--surface2);border:1px solid var(--line);border-bottom:none;border-radius:11px 11px 0 0;padding:9px 16px 8px;position:relative;cursor:pointer;margin-bottom:-1px;transition:.15s}
+.btab.on{background:var(--surface);color:var(--brand700);box-shadow:0 -3px 8px rgba(90,70,50,.06)}
+.btab.on::after{content:"";position:absolute;left:13px;right:13px;top:3px;height:2.5px;border-radius:99px;background:var(--brand)}
+.btab .ic{font-size:11px;margin-right:4px;opacity:.75}
+.btab.on .ic{opacity:1}
+/* 任务页：页签即标题，上提进 AppBar */
+.s1app{padding:13px 18px 0;align-items:flex-end}
+.s1app .btabs{margin-top:0}
+
+/* 专注屏 */
+.ring2{width:206px;height:206px;position:relative;margin:0 auto;filter:drop-shadow(0 10px 24px rgba(232,89,12,.13))}
+.ring2 svg{width:100%;height:100%;display:block}
+.ringtxt{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.ringtxt .tm{font-size:49px;font-weight:800;letter-spacing:-2.3px;color:var(--ink);line-height:1;font-variant-numeric:tabular-nums}
+.ringtxt .lb{font-size:13px;font-weight:600;color:var(--muted);margin-top:9px}
+.ringtxt .pc{font-size:11.5px;color:var(--muted);margin-top:3px}
+.btnrow{display:flex;gap:12px;margin-top:10px;align-items:stretch}
+.btnp{flex:2;background:var(--brand);color:#fff;text-align:center;font-size:14.5px;font-weight:800;padding:14px 0;border-radius:14px;box-shadow:0 6px 16px rgba(232,89,12,.32);display:flex;align-items:center;justify-content:center;gap:6px}
+.btng{flex:1;background:var(--surface);color:#5C554D;border:1px solid var(--line);text-align:center;font-size:13.5px;font-weight:700;padding:14px 0;border-radius:14px;display:flex;align-items:center;justify-content:center}
+.btnp.solo{flex:0 0 auto;width:60%;margin:0 auto}
+.tchip{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--line);border-radius:99px;padding:6px 15px;margin-top:4px;box-shadow:0 1px 4px rgba(90,70,50,.05)}
+.tchip .tt{font-size:12.5px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tchip .sw{font-size:11.5px;font-weight:700;color:var(--brand700);flex:none}
+.pill2{display:inline-flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--line);border-radius:99px;padding:7px 17px;font-size:12.5px;color:var(--muted);box-shadow:0 1px 4px rgba(90,70,50,.05)}
+.pill2 b{color:var(--brand700);font-weight:800}
+.pdot{width:7px;height:7px;border-radius:99px;background:var(--brand);animation:pulse 1.8s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}
+.center{display:flex;justify-content:center}
+
+/* 月历 */
+.cal{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px;margin-top:12px}
+.cal .chead{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;font-weight:800;padding:0 2px 8px}
+.cal .chead span:nth-child(2){font-size:11px;color:var(--muted);font-weight:400}
+.cgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;text-align:center}
+.cgrid .wd{font-size:9.5px;color:var(--muted);padding:3px 0}
+.cd{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;color:var(--ink);border-radius:9px;position:relative}
+.cd.dim{color:#C9BFB4}
+.cd.today{background:var(--brand);color:#fff;font-weight:800}
+.cd .ev{width:4px;height:4px;border-radius:99px;background:var(--warn);position:absolute;bottom:3px}
+.cd.today .ev{background:#fff}
+
+/* 记录列表 */
+.jcard{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:11px 13px;margin-top:9px;display:flex;gap:10px}
+.jcard .em{font-size:18px}
+.jcard .jt{font-size:12.5px;font-weight:700}
+.jcard .jc{font-size:11px;color:var(--muted);margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.jcard .jp{font-size:10px;color:var(--brand700);background:var(--brand50);border-radius:99px;padding:1px 7px;font-weight:700}
+
+/* 统计 segment */
+.sgrid{display:flex;gap:8px;margin-top:11px}
+.stcell{flex:1;background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:10px 4px;text-align:center;box-shadow:0 1px 4px rgba(90,70,50,.05)}
+.stcell .v{font-size:17px;font-weight:800;color:var(--brand700)}
+.stcell .l{font-size:9.5px;color:var(--muted);margin-top:2px}
+.hlcell{flex:1;background:linear-gradient(135deg,var(--brand50),#FFFDF8);border:1px solid var(--brand100);border-radius:13px;padding:10px 4px;text-align:center}
+.hlcell .v{font-size:17px;font-weight:800;color:var(--brand700)}
+.hlcell .l{font-size:9.5px;color:var(--muted);margin-top:2px}
+.trend{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 13px;margin-top:10px}
+.trend .th{font-size:12px;font-weight:800;margin-bottom:8px}
+.spark{display:flex;align-items:flex-end;gap:5px;height:62px}
+.spark .b{flex:1;background:var(--brand100);border-radius:4px 4px 2px 2px}
+.spark .b.hi{background:var(--brand)}
+.spark .xl{display:flex;justify-content:space-between;font-size:8.5px;color:var(--muted);margin-top:5px}
+.donut{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 13px;margin-top:10px;display:flex;gap:13px;align-items:center}
+.ring{width:80px;height:80px;border-radius:50%;flex:none;background:conic-gradient(var(--brand) 0 38%,var(--warn) 38% 63%,#4D8EE0 63% 82%,var(--ok) 82% 92%,var(--line) 92% 100%);display:flex;align-items:center;justify-content:center}
+.ring .hole{width:47px;height:47px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:800;color:var(--ink)}
+.legend{flex:1;display:flex;flex-direction:column;gap:5px;min-width:0}
+.legend .lg{display:flex;align-items:center;gap:6px;font-size:10.5px;color:#5C554D;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.legend .lg i{width:8px;height:8px;border-radius:3px;flex:none}
+.legend .lg em{margin-left:auto;color:var(--muted);font-style:normal;font-weight:700}
+
+/* 复盘结构化 */
+.rvhead{display:flex;align-items:center;gap:8px;margin-top:12px}
+.rvdate{flex:1;display:flex;align-items:center;justify-content:space-between;background:var(--surface);border:1px solid var(--line);border-radius:99px;padding:6px 14px;font-size:12.5px;font-weight:700}
+.rvdate .nav{color:var(--muted);font-size:14px;cursor:pointer}
+.rvsec{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:11px 13px;margin-top:9px}
+.rvsec .rt{font-size:12px;font-weight:800;display:flex;align-items:center;gap:6px}
+.rvsec .rt .em{width:22px;height:22px;border-radius:7px;background:var(--brand50);display:flex;align-items:center;justify-content:center;font-size:11px}
+.rvsec .ph{font-size:11.5px;color:#B8AFA5;margin-top:5px;min-height:34px}
+.rvsec.filled .ph{color:#5C554D}
+.rvsave{display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted);margin-top:10px;padding:0 4px}
+.rvsave b{color:var(--ok);font-weight:600}
+
+/* 新建任务 sheet */
+.sheetmask{position:absolute;inset:0;background:rgba(30,24,18,.45);z-index:10;display:flex;align-items:flex-end}
+.sheet{background:var(--surface);border-radius:22px 22px 0 0;width:100%;max-height:86%;display:flex;flex-direction:column}
+.sheet .grab{width:36px;height:4px;border-radius:99px;background:var(--line);margin:9px auto 0}
+.sheet .st{font-size:15px;font-weight:800;text-align:center;padding:8px 0 4px}
+.sheet .sc{overflow:hidden;padding:6px 18px 0;flex:1}
+.ff{margin-top:10px}
+.ff label{font-size:11.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:5px}
+.tin{background:var(--surface2);border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:13px;color:#B8AFA5}
+.segmini{display:flex;background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:2px}
+.segmini div{flex:1;text-align:center;font-size:11.5px;padding:6px 0;color:var(--muted);border-radius:8px}
+.segmini div.on{background:#fff;color:var(--brand700);font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.more{margin-top:12px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.more .mh{display:flex;justify-content:space-between;align-items:center;padding:10px 13px;font-size:12.5px;font-weight:700;background:var(--surface2);cursor:pointer}
+.more .mh span:last-child{color:var(--muted);font-size:11px}
+.more .mi{display:flex;justify-content:space-between;padding:9px 13px;font-size:12px;color:#5C554D;border-top:1px solid var(--line)}
+.more .mi b{color:var(--muted);font-weight:400;font-size:11px}
+.cta{margin:14px 18px 20px;background:var(--brand);color:#fff;text-align:center;font-size:14px;font-weight:800;border-radius:14px;padding:13px 0;box-shadow:0 6px 16px rgba(232,89,12,.35)}
+
+/* 我的 */
+.pfhead{margin-top:12px;background:linear-gradient(135deg,var(--brand),var(--brand600));border-radius:18px;padding:16px;display:flex;gap:12px;align-items:center;color:#fff;box-shadow:0 10px 24px rgba(232,89,12,.3)}
+.pfav{width:46px;height:46px;border-radius:99px;background:rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:800}
+.pfhead .nm{font-size:16px;font-weight:800}
+.pfhead .em2{font-size:11px;opacity:.9}
+.mcard{background:var(--surface);border:1px solid var(--line);border-radius:16px;margin-top:11px;overflow:hidden}
+.mrow{display:flex;align-items:center;gap:11px;padding:12px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--line)}
+.mrow:last-child{border-bottom:none}
+.mrow .mi2{width:30px;height:30px;border-radius:10px;background:var(--brand50);display:flex;align-items:center;justify-content:center;font-size:14px;flex:none}
+.mrow .ds{font-size:10.5px;color:var(--muted);font-weight:400;margin-top:1px}
+.mrow .ar{margin-left:auto;color:var(--muted);font-size:13px}
+.mgroup{font-size:11px;color:var(--muted);font-weight:700;margin:13px 2px 0;letter-spacing:1px}
+.mrow.danger,.mrow.danger .mi2{color:#C0392B}
+.mrow.danger .mi2{background:#FDEBEA}
+
+/* 专注完成弹窗 */
+.dlgmask{position:absolute;inset:0;background:rgba(30,24,18,.5);z-index:20;display:flex;align-items:center;justify-content:center;padding:30px}
+.dlg{background:var(--surface);border-radius:20px;width:100%;padding:22px 20px 18px;text-align:center}
+.dlg .big{font-size:34px}
+.dlg h4{font-size:15px;font-weight:800;margin-top:8px}
+.dlg p{font-size:12.5px;color:var(--muted);margin-top:6px}
+.dlg .dbtn{margin-top:14px;background:var(--brand);color:#fff;border-radius:12px;padding:11px 0;font-size:13.5px;font-weight:800;cursor:pointer}
+.dlg .dbtn.ghost{background:var(--surface2);color:var(--brand700);margin-top:8px;border:1px solid var(--brand100)}
+
+/* 修复方案表 */
+.plan{background:var(--surface);border:1px solid var(--line);border-radius:18px;overflow:hidden;margin-top:16px}
+.plan .ph2{background:var(--brand50);padding:13px 20px;font-size:14.5px;font-weight:800;color:var(--brand700);display:flex;align-items:center;gap:10px}
+.plan table{width:100%;border-collapse:collapse;font-size:12.5px}
+.plan th{background:var(--surface2);text-align:left;padding:9px 16px;color:var(--muted);font-size:11.5px;font-weight:700;border-bottom:1px solid var(--line)}
+.plan td{padding:10px 16px;border-bottom:1px solid var(--line);vertical-align:top;color:#4A443C}
+.plan td:first-child{font-family:Consolas,monospace;font-size:11.5px;color:var(--brand700);white-space:nowrap}
+.plan td b{color:var(--ink)}
+.plan tr:last-child td{border-bottom:none}
+
+/* 决策区 */
+.decide{background:var(--surface);border:2px solid var(--brand100);border-radius:18px;padding:22px 24px;margin-top:16px}
+.decide h3{font-size:15px;font-weight:800;color:var(--brand700);margin-bottom:4px}
+.decide .q{margin-top:14px}
+.decide .q b{font-size:13.5px}
+.decide .q p{font-size:12.5px;color:#5C554D;margin-top:3px}
+.decide .opt{display:inline-block;font-size:11.5px;padding:2px 10px;border-radius:99px;margin:6px 6px 0 0}
+.opt.rec{background:var(--brand);color:#fff;font-weight:700}
+.opt.alt{background:var(--surface2);border:1px solid var(--line);color:var(--muted)}
+</style>
+</head>
+<body data-page-node-id="gDXqa59qvbEoXBBRb9MEBG">
+<div class="wrap" data-page-node-id="qrqjhrmYK0itQAGxISptRX">
+
+<h1 data-page-node-id="S60b1KtFUuAQVDDCgEfhBE">PomoFlow 移动端 · UI 审查与改版交互原型
+<small data-page-node-id="cg52CdS62hDmpzjDbOpb6I">审查对象：pomoflow-next/apps/mobile（Flutter Web localhost:12687）· 审查依据：全量页面源码 + 设计令牌 · 2026-09-05</small>
+</h1>
+
+<!-- ================= 1. 问题清单 ================= -->
+<section data-page-node-id="zzG14ERYb3awiniZY74aWs">
+  <h2 data-page-node-id="VoJ4YbfEQYqltePb2DLCeD">一、UI/UX 问题审查（按严重度排序）</h2>
+  <p class="sub" data-page-node-id="DJBTQ0Dftr49B9RkDzPFBd">只针对 UI 布局、信息架构与交互方式，不涉及业务逻辑。</p>
+  <div class="probs" data-page-node-id="B4WgRxAmBilurzxp6r3JHX">
+    <div class="prob" data-page-node-id="DWr8y2DK3H9H4hB0UqxEEc"><span class="badge red" data-page-node-id="D6ipl8lxXCFaDAJ4kDLe3v">高 · 信息架构</span><b data-page-node-id="YkFxSisFSsPwSX2AAcDIhQ">P1 任务页 7 个视图 chips 概念混杂</b>
+      <p data-page-node-id="olqDxpZDDDwOfG53ESAWqG">「今天/明天/本周/计划/已完成」是<b data-page-node-id="dQEchFTpF5kwtzzvbDG8WV">任务的时间切面</b>，「手账」（任务月历）和「随手记」（待办/小记/愿望/年度规划）是<b data-page-node-id="q2dZf5K7dxRvEiIAkb4B5O">另外两类实体</b>，三种东西挤在同一排胶囊里。7 个 chip 需横向滚动，「手账/随手记」永远在低曝光区；且「随手记」里也有"待办"，与任务页的"任务"概念互相打架。</p>
+      <div class="fix" data-page-node-id="qgUzdtbpGCnqtkAvMj5di0">手账独立成屏（方案A，见第四节决策点），任务页回归纯任务的 5 个时间视图。</div>
+    </div>
+    <div class="prob" data-page-node-id="S4a9zHhFlAyuRSHsSxyG7Q"><span class="badge red" data-page-node-id="YRBJDU2H0W3n5OYYYnvNak">高 · 交付步骤</span><b data-page-node-id="lGguRoyapmxXZC01OjRzYz">P2 新建任务表单 10 个字段一屏铺开</b>
+      <p data-page-node-id="DNUqYmvwWxW94mzrE9y7BA">标题、描述、项目、优先级、到期日、提醒、预计番茄、单番茄时长、重复、标签全部平铺（task_create_sheet.dart）。移动端"随手记一件事"的-path-成本过高，高频场景只需要标题+到期日。</p>
+      <div class="fix" data-page-node-id="maRnYEEkMgxgiXjw5E4gfc">两段式：基础段（标题/到期日/优先级）+「更多设置」默认折叠，新建步骤从 10 项视觉负担降到 3 项。</div>
+    </div>
+    <div class="prob" data-page-node-id="a1712fFPEsFh0BGbaEd8LP"><span class="badge red" data-page-node-id="OhS6dJ78RA52DQDcxFCh2Y">高 · 入口层级</span><b data-page-node-id="KThtGxrPsgb4PCCFgzpAbr">P3 复盘入口埋得太深、展示形态简陋</b>
+      <p data-page-node-id="ARmUYXP9bXg37EFfTtRCnW">复盘藏在「我的 → 菜单卡」，与设置/帮助/注销并列成一行菜单项；页面本身是 4 个 Tab + 一个全屏纯文本框，无结构引导、无保存反馈、无历史浏览。复盘是"专注→记录→复盘"闭环的核心一环，却是全 App 曝光最低的高价值功能。</p>
+      <div class="fix" data-page-node-id="dBRkK5jZvCd0JH41KyrQYb">入口上移到手账屏（见方案A），页面改为结构化引导卡 + 保存状态提示（第三节原型 3）。</div>
+    </div>
+    <div class="prob" data-page-node-id="yG884DeaTdMCWQQNBTEc7q"><span class="badge org" data-page-node-id="5IMCv64fHxddNiQeJHyl9o">中 · 信息密度</span><b data-page-node-id="h2MqFY1kEFY3mUHzbvxxot">P4 任务页首屏 40% 是控件不是内容</b>
+      <p data-page-node-id="uhawKxTrUpoRCjgdCsYxoK">App bar 之下依次是：视图 chips 行 → 筛选 chips 行（计划/已完成视图下最多 7 个）→ 4 张统计卡行，三层控件堆完，任务列表首条卡被压到屏幕约一半处。</p>
+      <div class="fix" data-page-node-id="6QETeQher0VA7sOplU56HL">统计卡降级为一行内联摘要条；筛选行在非"计划/已完成"视图隐藏次要项。</div>
+    </div>
+    <div class="prob" data-page-node-id="CapvfjgKgUh547lS4LL9yH"><span class="badge org" data-page-node-id="HLVg6N7y3o0CcebqA6edv2">中 · 控件语义</span><b data-page-node-id="VcoEqdATT8stEzWOaAnDuh">P5 视图 chips 与筛选 chips 形态雷同</b>
+      <p data-page-node-id="RW4quva57i5ZfHQyXtNAj5">上下两排都是白底胶囊、几乎同尺寸同字号，用户分不清"切换视图"和"筛选"两种操作，误触率高。</p>
+      <div class="fix" data-page-node-id="vldRSoGEMCEn4TqYV4LbSg">筛选行加「筛选」前缀标签，chip 改为虚线描边浅样式，与实心视图 chips 形成层级差。</div>
+    </div>
+    <div class="prob" data-page-node-id="lneYawdMP2BsTVJbvlEuc3"><span class="badge org" data-page-node-id="xsdJ43j53OofNScYjcMhrg">中 · 入口重复</span><b data-page-node-id="gKnBOz4wGF92QfB3YoNnqG">P6 两个"新建任务"入口并存</b>
+      <p data-page-node-id="GHrkC7oETuCBK3qYRV2C1Z">Dock 中间凸起「＋新建」已承载快速新建（含任务），任务页右下又有一个「＋新建任务」扩展 FAB，二者功能重叠，FAB 还遮挡列表末尾内容。</p>
+      <div class="fix" data-page-node-id="BqePKFZVpEckc06nUVHiun">移除扩展 FAB，新建统一收敛到 Dock 主按钮。</div>
+    </div>
+    <div class="prob" data-page-node-id="Uirfm7riUTEch6JiQfa4wa"><span class="badge org" data-page-node-id="VMVOgveZbYOwTQejIBKXMl">中 · 卡片扫描</span><b data-page-node-id="zEmYpPJ0fkWdyyWt4awzmX">P7 任务卡 meta 平铺过密</b>
+      <p data-page-node-id="U3XeRiN83wvRWv7DjbJ1Vv">优先级点、项目 pill、完整日期时间、番茄数、子任务数五类信息全部一行平铺，列表扫描负担大；已完成任务的删除线+灰字+绿勾三层叠加略重。</p>
+      <div class="fix" data-page-node-id="aMeBoWHkHpZ1iceOxH3Cla">meta 收敛为两段：项目 pill + 到期日；番茄数/子任务数移入详情页。已完成卡降低整卡不透明度即可，去删除线。</div>
+    </div>
+    <div class="prob" data-page-node-id="g8vRp0Drg0UEvxWkSgGikL"><span class="badge gry" data-page-node-id="mtcSRirlOos9gwX01c3jgd">低 · 分组语义</span><b data-page-node-id="QUKl42gc2L0DcBioYZOAkF">P8 "我的"页菜单分组弱</b>
+      <p data-page-node-id="vSAv7xsIKb8qOBGmc8oiif">复盘（高频功能）与账号注销（危险操作）在同一个菜单卡；退出登录又单独一个按钮在页尾，"退出"与"注销"两个危险动作分居两处，语义易混。</p>
+      <div class="fix" data-page-node-id="VvdJl0OLHojKuWhYyfcr5j">按 账号 / 通用 / 数据 三组重排；注销收进账号安全段；退出登录保持独立弱化。</div>
+    </div>
+    <div class="prob" data-page-node-id="ExSAe1BQu3BRjHjhPDKzUh"><span class="badge gry" data-page-node-id="5S3NWCYJZDHwtODfCxnTq9">低 · 反馈缺失</span><b data-page-node-id="4LXdYBdhYPCx4N19eZDjkr">P9 复盘编辑无保存反馈</b>
+      <p data-page-node-id="NrZEU4heJOQlSWEKCVWF6I">fire-and-forget 落库，界面没有任何"已保存"提示，用户不确定内容是否留存，切周期时容易心虚。</p>
+      <div class="fix" data-page-node-id="BasA4wsHMlHHlhNBWgfN75">输入防抖后显示「已自动保存 HH:MM」状态条。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 2. 原型 ================= -->
+<section data-page-node-id="jNoyaJnVilSgEstMw16H68">
+  <h2 data-page-node-id="b7JyHNBFnoFucZNdlVry34">二、改版交互原型</h2>
+  <p class="sub" data-page-node-id="lMOXjb6Fkdr0wFuTuyFG9A">点击切换屏幕 · 手机内可点按 segment 体验切换 · 视觉令牌完全沿用现有设计系统（brand #E8590C / 暖米背景）。</p>
+
+  <div class="screen-tabs" data-page-node-id="4RKnTwCOBEUqlGw9kIDm5n">
+    <button class="on" data-s="s1" data-page-node-id="Du6PZFUwdb8WhqpAF5e7YE">① 任务页 · 降噪改版</button>
+    <button data-s="s2" data-page-node-id="RoY0Hz4wVDWXIFJapHDjyd">② 手账页 · 方案A（含最终 IA）</button>
+    <button data-s="s3" data-page-node-id="H5AxZVmsG3bMzNDWkBGwY9">③ 复盘 · 结构化重设计</button>
+    <button data-s="s4" data-page-node-id="djycRls0XQUHGdqRXEWgnB">④ 新建任务 · 两段式</button>
+    <button data-s="s5" data-page-node-id="T3nR86B3EACNc9M1q4O7dY">⑤ 我的 · 重新分组</button>
+    <button data-s="s6" data-page-node-id="N4FanpKiBxcfuIdIWBa2Cq">⑥ 专注 · 完成闭环</button>
+    <button data-s="s7">⑦ 专注页 · 圆环与按钮精修</button>
+  </div>
+
+  <!-- ===== ① 任务页 ===== -->
+  <div class="stage on" id="s1" data-page-node-id="P5gUPVKVg3qsW0RQmSILwF">
+    <div class="phone" data-page-node-id="o23hvojofF4PwIOl1dKXYn">
+      <div class="statusbar" data-page-node-id="LD4VXTcrjUZm1aHWbBnEOE"><span data-page-node-id="wVjD35AUEAmaBaGVj5wduB">9:41</span><span data-page-node-id="UliDl4WBgS6LQK1Gb2SvHq">▪▪▪ ⌁ ▉</span></div>
+      <div class="appbar s1app" id="s1bar" data-page-node-id="Uz5IFk2PHR2ASrACglIFrz"><div class="btabs" data-seg="s1seg" data-panels="s1p1,s1p2" data-bar="s1bar" data-page-node-id="wTp1tSZ9taspJ86QDkszKP"><div class="btab on" data-p="s1p1" data-t="任务" data-sub="规划清单，按时兑现" data-a="🔍" data-page-node-id="ssgA1"><span class="ic">✓</span>任务</div><div class="btab" data-p="s1p2" data-t="统计" data-sub="看见你的专注轨迹" data-a="⤓" data-page-node-id="ssgB1"><span class="ic">📊</span>统计</div></div><div class="act" data-f="a" data-page-node-id="GEHzoOySPAatF0nVxcraC4">🔍</div></div>
+      <div class="body" data-page-node-id="CLe0Bfb15kX5e0EaeIj68y">
+        <div id="s1p1">
+        <div class="chiprow" data-page-node-id="wTp1tSZ9taspJ86QDkszKP">
+          <div class="chip on" data-page-node-id="JN1WaAAd1sldZPVFm12vjz">今天</div><div class="chip" data-page-node-id="ld88Nrbh0HA7zDhwKA0auP">明天</div><div class="chip" data-page-node-id="W6IOUFoUGqwUT0o9fY671d">本周</div><div class="chip" data-page-node-id="OFrHkEmMzeRZ4hOvESDQSa">计划</div><div class="chip" data-page-node-id="gt6HWDjbMPKiecAYDUGETu">已完成</div>
+        </div>
+        <div class="filterrow" data-page-node-id="rLFD1Sec7nC24SgM1pJLEN"><span class="fl" data-page-node-id="AhwUyGFJcB5QMYC06HA3nb">筛选</span><span class="fchip" data-page-node-id="oqhMEDBkKo5ciD1yFbLENR">📁 全部项目</span><span class="fchip" data-page-node-id="IXmcAFH5lhutuipwTMkMA1">🔥 优先级</span><span class="fchip" data-page-node-id="8HSueiqjMWkl85dQ6sGhNF">🏷 标签</span></div>
+        <div class="summaryline" data-page-node-id="UcpQH4avyLVcxgeVGGPGyx">📋 今日 <b data-page-node-id="m1A7DoiFPxVf6V7SD65WDd">3</b> 进行中 · 已完成 <b data-page-node-id="ggWEyO4yaL3g0iC5XkgU6P">2</b> · 预计 <b data-page-node-id="9lLKdxBbVSnLfHuBsdGs4l">100</b> 分钟</div>
+        <div class="tcard" data-page-node-id="8l2xk9Yh7CnCP9rxu7FJNN"><div class="ck" data-page-node-id="ZwuoFun2fKorDJB6qy53FQ"></div><div class="tmain" data-page-node-id="XvIJ4kp8BdGITGx1a90UYn"><div class="ttitle" data-page-node-id="ldTNO12q4iyg6qWbxdpeDO"><span class="dot" style="background:#C0392B" data-page-node-id="udh7JfAoC4P4zlusYXJS0h"></span>保险 PDF 解析 · 第二轮联调</div><div class="tmeta" data-page-node-id="EBHA8CUwdngeCrTZth4mur"><span class="ppill" data-page-node-id="oPXspcZTTohlX67GdwM8aG">知识生产服务</span><span data-page-node-id="9LiCtGkUapG4hxysWWhySO">📅 今天 18:00</span></div></div><div class="play" data-page-node-id="aNpBdKCDSU8NAGTA3SHtIe">▶</div></div>
+        <div class="tcard" data-page-node-id="4GPVv1CJKjSx60eGHiu78j"><div class="ck" data-page-node-id="RfCKL5xvM5p7UKb4EYyG42"></div><div class="tmain" data-page-node-id="WoH2Bqe5hGk5geP0J7HeCs"><div class="ttitle" data-page-node-id="gnMULIq102WVSfXddj5SIG"><span class="dot" style="background:#E9A23B" data-page-node-id="wT2kdgmZDqaYGPpLjWVZ2M"></span>周报汇总 · 提炼项目层进展</div><div class="tmeta" data-page-node-id="a1iOA7RE2zODsBrw7iF9fB"><span class="ppill" data-page-node-id="h9M6uXSObP59BaPCT07DZr">项目管理</span><span data-page-node-id="JG9tw1uOf0metuLDo0laGC">📅 今天 21:00</span></div></div><div class="play" data-page-node-id="it3TkXwIZvpWaYaHjmEOD5">▶</div></div>
+        <div class="tcard" data-page-node-id="G3o16dKy8jGhKCjrWiPnN0"><div class="ck" data-page-node-id="DD4SyAWeK0gEE2qQ1jXI02"></div><div class="tmain" data-page-node-id="S6Gu7RS0CUCsl2tAeY188E"><div class="ttitle" data-page-node-id="C4E1SNTTsRW4kViANPx9WV"><span class="dot" style="background:#4D8EE0" data-page-node-id="Edm43kIsm0pB5KhBcRa6hN"></span>复习操作题 · 第三章</div><div class="tmeta" data-page-node-id="AYcB2hfUD7rbnkFc6px6ID"><span class="ppill" data-page-node-id="FTjD7v1lPmzxQGMCHD3wh3">AI 训练师备考</span><span data-page-node-id="Lekec5DWPzhhB5bl9YKGnO">📅 今天</span></div></div><div class="play" data-page-node-id="fOwb785ADQUaJBl2c4DUVZ">▶</div></div>
+        <div class="tcard" style="opacity:.55" data-page-node-id="azrAl4PYkWeVceTMRZ444q"><div class="ck done" data-page-node-id="Nz1ZJFWLh07MZBnSO3SnJX"></div><div class="tmain" data-page-node-id="m7QoV57CI6flrNjf3NpJox"><div class="ttitle" style="color:var(--muted)" data-page-node-id="TG4Omgk0pr3dJHlpyqlGpz">晨间站会</div><div class="tmeta" data-page-node-id="Aa6yV5qHkhfJ1FCmiznlUJ"><span class="ppill" data-page-node-id="uu6dUqpWmOTfLnaVb7dV7V">项目管理</span><span data-page-node-id="6ICUT1qOec2OsyNNyrBFyJ">已完成 · 2 个番茄</span></div></div></div>
+        <div class="tcard" style="opacity:.55" data-page-node-id="6Vh7xytdati0ZWMqKyMemd"><div class="ck done" data-page-node-id="RKEcOkegvJ8nCJuQz2NhcF"></div><div class="tmain" data-page-node-id="z3qrRTOqqxztSc8vnint9g"><div class="ttitle" style="color:var(--muted)" data-page-node-id="O6fwCRswiPwNNZtcmxxMgM">回复飞书评审评论</div><div class="tmeta" data-page-node-id="EUi7VyLUC7GYCvG7YKy4C3"><span class="ppill" data-page-node-id="FT0ryimxUpTUEmBNgAfpWF">桌面端构建</span><span data-page-node-id="9CPBPrnHUDoAM9NVkHbLGy">已完成 · 1 个番茄</span></div></div></div>
+        </div>
+        <div id="s1p2" style="display:none">
+          <div class="chiprow" style="margin-top:10px"><div class="chip on">本周</div><div class="chip">本月</div><div class="chip">本年</div></div>
+          <div class="sgrid"><div class="stcell"><div class="v">1240</div><div class="l">专注分钟</div></div><div class="stcell"><div class="v">46</div><div class="l">番茄数</div></div><div class="stcell"><div class="v">31</div><div class="l">完成任务</div></div><div class="stcell"><div class="v">177</div><div class="l">日均分钟</div></div></div>
+          <div class="sgrid"><div class="hlcell"><div class="v">7</div><div class="l">活跃天数</div></div><div class="hlcell"><div class="v">12</div><div class="l">最长连续</div></div><div class="hlcell"><div class="v">+18%</div><div class="l">环比上期</div></div></div>
+          <div class="trend"><div class="th">专注趋势（本周）</div><div class="spark"><div class="b" style="height:38%"></div><div class="b" style="height:62%"></div><div class="b" style="height:45%"></div><div class="b" style="height:78%"></div><div class="b" style="height:55%"></div><div class="b hi" style="height:96%"></div><div class="b" style="height:30%"></div></div><div class="xl"><span>周一</span><span>周三</span><span>周六</span><span>周日</span></div></div>
+          <div class="donut"><div class="ring"><div class="hole">1240 分</div></div><div class="legend"><div class="lg"><i style="background:var(--brand)"></i>知识生产服务<em>38%</em></div><div class="lg"><i style="background:var(--warn)"></i>项目管理<em>25%</em></div><div class="lg"><i style="background:#4D8EE0"></i>AI 训练师备考<em>19%</em></div><div class="lg"><i style="background:var(--ok)"></i>桌面端构建<em>10%</em></div><div class="lg"><i style="background:var(--line)"></i>其他<em>8%</em></div></div></div>
+          <div class="summaryline">⤓ 右上角可导出 CSV · 数据范围随上方周期切换</div>
+        </div>
+      </div>
+      <div class="dock" data-page-node-id="IcJk2C8gRE4EmOvxZOAv9x"><div class="dockpill" data-page-node-id="dc4xGyPVOEUlSt4iCrurwt">
+        <div class="dtab" data-page-node-id="MHro0VDOc7AprnchdjVen4"><span class="ic" data-page-node-id="IPthHqOuxk0jMcxfzY5e0t">⏱</span>专注</div><div class="dtab on" style="padding:6px 0" data-page-node-id="bxdbZ2iuAfQaIidYqR8q1I"><span class="ic" data-page-node-id="RbkVNzL3zE7AuNjyW4N5Vh">✓</span>任务</div><div class="dgap" data-page-node-id="NrNIGfVGG5ld7rKiKB3GjV"></div><div class="dtab" data-page-node-id="JQVqU5yGmHJamNlF54XUTy"><span class="ic" data-page-node-id="eAPYwcAIdJMFvoWz5kXn6F">📓</span>手账</div><div class="dtab" data-page-node-id="njvIemyvNDRxE3AzobJjqE"><span class="ic" data-page-node-id="rzFAaCr5CiIvLpNnzRZGYM">👤</span>我的</div>
+      </div><div class="fab" data-page-node-id="o9vbYu3HYwf66ahy2KqeoI">＋<small data-page-node-id="pprv99WCDVrwm5mBUcE133">新建</small></div></div>
+    </div>
+    <div class="stage-note" data-page-node-id="WuTUL5YSPNoWHUR5CXnFsd">
+      <h3 data-page-node-id="ZTXwBm4tclKFGYbu7jpBKf">① 任务页改了什么</h3>
+      <li data-page-node-id="muikWbZBy0n2Nk4hFM8E1G"><b data-page-node-id="gpxy0SwYmxF8kEULEwIU4D">视图 chips 7 → 5：</b>移除「手账」「随手记」，本页只回答一个问题——"我的任务怎么样了"（P1）</li>
+      <li data-page-node-id="0gSixK9KaSZuormiRg2cIk"><b data-page-node-id="50M3ghdWTZaqoQcDzFjMVW">4 张统计卡 → 1 行摘要条：</b>省出约 64px 高度，列表首屏多露出 1.5 张任务卡（P4）；完整数据仍在统计页</li>
+      <li data-page-node-id="IgFpCW4n2kBnAagkBJommN"><b data-page-node-id="kfOimfu2CsOp9ImX0CUq4o">筛选行加「筛选」前缀 + 虚线描边样式：</b>与视图切换形成明确层级差（P5）</li>
+      <li data-page-node-id="znaBD1GW3zr1KY0WdyiVYz"><b data-page-node-id="hs1bJmCilvzE21JrxJ8qkJ">移除右下扩展 FAB：</b>新建统一走 Dock「＋新建」（P6）</li>
+      <li data-page-node-id="fEtI8FhP0OAs0jyTSWeKH9"><b data-page-node-id="UM5YgZzdOOwgDnhgZSq26v">任务卡 meta 收敛：</b>只留项目 pill + 到期日；番茄/子任务数进详情页（P7）；已完成卡用整卡降透明度替代"灰字+删除线"双信号</li>
+      <li><b>✅ 新增「任务 ｜ 统计」顶部切换：</b>统计页整页收为本屏第二 segment（原 StatsPage 内容原样搬入，周期 chips / 4 指标 / 3 高亮 / 趋势 / 项目环形图 / 导出全部保留）；AppBar 标题、副标题、右上角动作随 segment 联动（任务=🔍 搜索，统计=⤓ 导出）</li>
+      <div class="ask" data-page-node-id="pUnCWtdELqnmGAoDBHCGik">✅ <b>老板已确认</b>此版任务页。配套：Dock 第 4 槽「统计」让位给「手账」——<b>槽位总数不变</b>，仍是「专注 · 任务 · ＋ · 手账 · 我的」5 个位置，无 4→5 Tab 挤压问题。</div>
+    </div>
+  </div>
+
+  <!-- ===== ② 手账页（方案A · 已确认） ===== -->
+  <div class="stage" id="s2" data-page-node-id="NVRYK9QPOIEsHwuNsOL8FI">
+    <div class="phone" data-page-node-id="bJVJVjWRahDqk7cY29wYi6">
+      <div class="statusbar" data-page-node-id="dYog5gl9fhfFcS3YV5LnZB"><span data-page-node-id="DlMdaRCwYO76qntMvii63Y">9:41</span><span data-page-node-id="ETprcjT0aLPaQ25E1HZUAm">▪▪▪ ⌁ ▉</span></div>
+      <div class="appbar" id="s2bar" data-page-node-id="bLHRmwMhmAq1z9xkmafY4r"><div data-page-node-id="3jaAqtCDOkWAOP5RP0bgqN"><div class="t" data-f="t" data-page-node-id="JFoAvgZ6JHPzeK5e3wJnBb">手账</div><div class="s" data-f="s" data-page-node-id="gtU5EUE7j8olNwTaAHEny6">记录你的节奏 · 月历 / 记录 / 复盘</div></div><div class="act" data-f="a" data-page-node-id="2B4vXofxDb04Xref8DgvM0">🔍</div></div>
+      <div class="body" data-page-node-id="XVlM2LKoY8O0ur2dmjAn8k">
+        <div class="seg" data-seg="s2seg" data-panels="s2p1,s2p2,s2p3" data-bar="s2bar" data-page-node-id="FnItQ1eYa0ZrI2hpHV7QI3"><div class="on" data-p="s2p1" data-t="手账" data-sub="记录你的节奏 · 月历 / 记录 / 复盘" data-a="🔍" data-page-node-id="lbXGQpNhiJA5pgNYiLIZWS">📅 月历</div><div data-p="s2p2" data-t="手账" data-sub="待办 · 小记 · 愿望 · 年度规划" data-a="🔍" data-page-node-id="keRk1glooqGyDyFIWCwxBU">✍️ 记录</div><div data-p="s2p3" data-t="手账" data-sub="日 / 周 / 月 / 年复盘" data-a="🔍" data-page-node-id="sDDwnrhY3vQ8D5j0keF7o4">🪞 复盘</div></div>
+        <div id="s2p1" data-page-node-id="vodP3grNcQd4u72K4UFbJz">
+          <div class="cal" data-page-node-id="IUhFffk1gRpv2vx7bnUTX1">
+            <div class="chead" data-page-node-id="Y1YKpJhArUyGM7a3cHNNKp"><span data-page-node-id="VlSkzgq7r4JMp1ziYEyqVa">‹</span><span data-page-node-id="PRD3bMZ0aL6xwXaFOPZMhX"><b data-page-node-id="GomCZiImZwetExpDtdRv8R">2026年9月</b> · 点击日期看当天</span><span data-page-node-id="dsK3uKT2YVWf6Xp1cEHZeG">›</span></div>
+            <div class="cgrid" data-page-node-id="cbd3b8aB9jOrgNdCK8PqJw">
+              <div class="wd" data-page-node-id="mH7elBNDufvNwqXYZX9aE6">一</div><div class="wd" data-page-node-id="NB9CGlcBT9YEaDqWzpyYmT">二</div><div class="wd" data-page-node-id="NHHHBeI25DsbFPGfDGUDVY">三</div><div class="wd" data-page-node-id="u6x27pELlCU2WxwDaY3GP5">四</div><div class="wd" data-page-node-id="4kRAzNWHupGDntfvWdY8Dw">五</div><div class="wd" data-page-node-id="TKP32u0vSTevPr6HG4pGvu">六</div><div class="wd" data-page-node-id="6OKUoMBVfJn80hAiaxVeFo">日</div>
+              <div class="cd dim" data-page-node-id="07sLXEdTv8sfwmG8ZxOO7o">31</div><div class="cd" data-page-node-id="535yxevIJquGNyyYoI6cNu">1</div><div class="cd" data-page-node-id="ROgUoBiaY9NMZ41OOD7cQ9">2<span class="ev" data-page-node-id="mQ6QE6CLSHDnD3eEPDtB5Y"></span></div><div class="cd" data-page-node-id="6tfzUvvyIH3Ye444g56Q5X">3<span class="ev" data-page-node-id="ruHpZBYLDjqdruvDdNOgOC"></span></div><div class="cd" data-page-node-id="hVkwiHFxdTuqZVIvzb8mFY">4<span class="ev" data-page-node-id="E8gPqCgNX7dOYxiUTGKJKn"></span></div><div class="cd today" data-page-node-id="1kOBzGImzAUdxTf9aqGzQe">5<span class="ev" data-page-node-id="JL6XZ7YHilVHvUDUjoiCgH"></span></div><div class="cd" data-page-node-id="37BIBmkCMWD0E99HX6CoNU">6</div>
+              <div class="cd" data-page-node-id="PzlZQUjNyeV93PVdx8YsLF">7<span class="ev" data-page-node-id="ADQwCdIR7BuvnCx2ILHVo3"></span></div><div class="cd" data-page-node-id="lNhHxA7yETs64VjNs5TthS">8</div><div class="cd" data-page-node-id="m9fCbbfgKZXfG4PTw5cJGE">9<span class="ev" data-page-node-id="4QjgxNXGKXTcrOvzb0PDEs"></span></div><div class="cd" data-page-node-id="pcGQIfCIUnMwlhYPVan3HQ">10</div><div class="cd" data-page-node-id="G3fzlsaXXFsWjPz0zr0OQ7">11<span class="ev" data-page-node-id="C3ZWAdidiBdi4xEG0WhNpq"></span></div><div class="cd" data-page-node-id="86VRTcUHa8vybWa3fvarxV">12</div><div class="cd" data-page-node-id="Vsw7W7TVzeqDiWadpCBy0B">13</div>
+            </div>
+          </div>
+          <div class="summaryline" data-page-node-id="9uimcIdCTZU4GVtdOtgxqw">🔭 9 月已安排 <b data-page-node-id="rkfv0mr8shEqyotQOJIRem">18</b> 项计划 · 今日 <b data-page-node-id="Vd3EIY282yV3g20t3HkXy7">4</b> 项</div>
+        </div>
+        <div id="s2p2" style="display:none" data-page-node-id="P15Y8RzuJtrqBhaxy5Pc5A">
+          <div class="chiprow" data-page-node-id="G07kk3UXhk9IoXH3RL1FTD"><div class="chip on" data-page-node-id="qn7GjnPPBzauyRGDnC7cJT">全部</div><div class="chip" data-page-node-id="L9esQVUXQCI8KfU7FEWzRo">☑️ 待办</div><div class="chip" data-page-node-id="bT3aKwXobERLX9UDXu8yfr">⭐ 愿望</div><div class="chip" data-page-node-id="85CSBT5kILEyiH6DBXbsDJ">🗓️ 年度规划</div><div class="chip" data-page-node-id="CW1IawfvSr2VCRa9TiDWkn">✍️ 小记</div></div>
+          <div class="jcard" data-page-node-id="AQOm6PWTB1l30MaH1G6NFj"><div class="em" data-page-node-id="MTDp1NaJfzoCHzcuyFL5zM">⭐</div><div style="flex:1;min-width:0" data-page-node-id="BrS6sf0GkHElncbMaznPbg"><div class="jt" data-page-node-id="YejmeMe95Brr37a1vhS6HU">带家人去一趟青海湖</div><div class="jc" data-page-node-id="hAfZuoi0oVVFqspxxj03DD">暑假自驾，提前做路书…</div></div><div class="jp" data-page-node-id="zft30GwJ3MVZBVcsLcXs5w">愿望</div></div>
+          <div class="jcard" data-page-node-id="EpFCDoKdbeb57rdL5xeYou"><div class="em" data-page-node-id="VvVQh8SBw73cvsYCDlBQCS">✍️</div><div style="flex:1;min-width:0" data-page-node-id="DXsr5yzF3gLy2KOEMxUbx1"><div class="jt" data-page-node-id="9lyDHNsFwUiPg9PDtwm1ZU">ECC 工作流灵感</div><div class="jc" data-page-node-id="kFjcCAQA6CZobzw8HeTiZC">spec 先行 → harness 兜底 → loop 收敛，可以搬到周报汇总自动化…</div></div><div class="jp" data-page-node-id="zxrgIoE9daaFSZjQygR4mB">小记</div></div>
+          <div class="jcard" data-page-node-id="5JvkyKTFxfPAp3TpbqUhJs"><div class="em" data-page-node-id="5NMD81zJ946N5Kc0C4eHHH">🗓️</div><div style="flex:1;min-width:0" data-page-node-id="vVz22O05446mDb9q5MNEEI"><div class="jt" data-page-node-id="GbastUQsDy7mITgPmdV5EB">2026 考下 AI 训练师三级</div><div class="jc" data-page-node-id="e5uc8UpjNitAoMWY90M8JD">5/30-31 考试 · Q1 刷教材 · Q2 冲刺操作题</div></div><div class="jp" data-page-node-id="KetGV6sGdHkgm8OTue7Vqb">年度规划</div></div>
+          <div class="jcard" data-page-node-id="TFj2rkrB5aYXMvI8UkHzP5"><div class="em" data-page-node-id="Z2iwC0iNlFdIiBqX1rfiaH">☑️</div><div style="flex:1;min-width:0" data-page-node-id="n7pFxTSHujVR3i5pNU5g2T"><div class="jt" data-page-node-id="aijA3DGrs6H1BKW5RaK5CW">幼儿园报名材料复印</div><div class="jc" data-page-node-id="CSNCUGBcZd5J2pBbOLrDkW">户口本 / 疫苗本 / 出生证明</div></div><div class="jp" data-page-node-id="gHls3WiIbu5OCklV02s4vu">待办</div></div>
+        </div>
+        <div id="s2p3" style="display:none" data-page-node-id="HizxkBWhy8sbCuDBhl7FiA">
+          <div class="rvsec" style="margin-top:12px" data-page-node-id="WKoZCfsjXMswIC4ZSqcTxJ"><div class="rt" data-page-node-id="lPVi0aCAGKkNDTJLyPb6Lm"><span class="em" data-page-node-id="6CwlxOGnCF9Lo963jsNPBy">🪞</span>今日复盘 · 9月5日 周六</div><div class="ph" data-page-node-id="IlhZlqADvtQjYNRIaXZ5Ed">已写 186 字 · 22:30 提醒后将推送补写提示</div></div>
+          <div class="rvsec" data-page-node-id="FZHJyQTvsTO9BsJr3Juejg"><div class="rt" data-page-node-id="RAgg2QkfdIuD0PK18CqYEi"><span class="em" data-page-node-id="oUK8BbUtsz69tpzi7LKiPo">🗓</span>本周复盘 · 8/31–9/6</div><div class="ph" data-page-node-id="JKmAr4kG9HIcP3qGZa5hir">尚未撰写 · 周日晚提醒</div></div>
+          <div class="summaryline" data-page-node-id="1t9QMKKaFXQXFNuU6Ftte1">📖 查看 8 月历史复盘（12 篇） ›</div>
+        </div>
+      </div>
+      <div class="dock" data-page-node-id="gLVH4X4IT5XanKUIk6ed8d"><div class="dockpill" data-page-node-id="lVJHwQQPo3t5EhRRk03qGQ">
+        <div class="dtab" data-page-node-id="vGBOiJz9RddtLfslK760Dx"><span class="ic" data-page-node-id="8NYTi3kwaZDxvRdRhDMu0E">⏱</span>专注</div><div class="dtab" data-page-node-id="YIMlPG4rwyB6en1UThGDjK"><span class="ic" data-page-node-id="COScgmQj88oKlUFqTuaN4V">✓</span>任务</div><div class="dgap" data-page-node-id="7KsEGvJFc7Y3vYLf08f9OP"></div><div class="dtab on" style="padding:6px 0" data-page-node-id="E6fDu83U8iys36JyFDkOdK"><span class="ic" data-page-node-id="r5PVAUkiOxAYm2zIMKXUEw">📓</span>手账</div><div class="dtab" data-page-node-id="OjnAjWliGyOq5vevPONFnS"><span class="ic" data-page-node-id="Kv0SrxH2FTGBowmY69uOQl">👤</span>我的</div>
+      </div><div class="fab" data-page-node-id="WmEf0BjRy48U9yEUWHPqsP">＋<small data-page-node-id="8OYOZ2jvHyL7VzELWuSERU">新建</small></div></div>
+    </div>
+    <div class="stage-note">
+      <h3>② 手账页 = 原任务页「手账」+「随手记」+ 复盘</h3>
+      <li><b>📅 月历：</b>原任务页 isCalendar 分支的 JournalCalendar 原样迁移，逻辑一行不改</li>
+      <li><b>✍️ 记录：</b>原「随手记」四类（待办 / 小记 / 愿望 / 年度规划）列表 + 类型 chips + 标签筛选，整体搬运</li>
+      <li><b>🪞 复盘：</b>日 / 周 / 月 / 年当前周期状态卡 + 历史入口（页内 UI 重设计见 ③）</li>
+      <li><b>为什么值得一个一级入口：</b>记录类内容使用频次高、但原先藏在任务页 chips 里几乎不会被点开；独立成页后曝光从「二级 chips」升到「常驻 Dock」</li>
+      <div class="ask">✅ <b>老板已确认方案A。</b>关键点：<b>Dock 槽位总数不变</b>——原来是「专注 · 任务 · ＋ · <s>统计</s> · 我的」，现在第 4 槽换成「手账」，统计整页收进任务页第二 segment。所以不存在 4→5 Tab 的挤压问题，改动量比原先预估更小。</div>
+    </div>
+    <div class="cmp">
+      <h4>最终信息架构 · 旧 → 新</h4>
+      <table>
+        <tr><th>模块</th><th>旧位置</th><th>新位置</th><th>变化</th></tr>
+        <tr><td>专注</td><td>Dock 1</td><td>Dock 1</td><td>不变</td></tr>
+        <tr><td>任务 · 今天/明天/本周/计划/已完成</td><td>Dock 2（7 chips）</td><td>Dock 2 · 任务 segment（5 chips）</td><td>降噪</td></tr>
+        <tr><td>统计（4 指标 / 趋势 / 环形图 / 导出）</td><td>Dock 4</td><td><b style="color:var(--brand700)">Dock 2 · 统计 segment</b></td><td>让出 Dock 槽位</td></tr>
+        <tr><td>手账月历</td><td>任务页 chip「手账」</td><td><b style="color:var(--brand700)">Dock 4 手账 · 月历 segment</b></td><td>升级</td></tr>
+        <tr><td>随手记（待办/小记/愿望/年度规划）</td><td>任务页 chip「随手记」</td><td><b style="color:var(--brand700)">手账 · 记录 segment</b></td><td>升级</td></tr>
+        <tr><td>复盘</td><td>「我的」菜单项</td><td><b style="color:var(--brand700)">手账 · 复盘 segment + 专注完成弹窗</b></td><td>升级</td></tr>
+        <tr><td>我的</td><td>Dock 5</td><td>Dock 5</td><td>菜单重分组</td></tr>
+      </table>
+      <div class="ask" style="margin-top:12px">📌 <b>净效果：</b>Dock 仍是 5 个位置（4 Tab + 中间 ＋），一级页面从 5 个降为 4 个（专注 / 任务 / 手账 / 我的），但每个 Tab 的承载更饱满——任务页含统计、手账页含三种记录形态。用户心智从「5 个平铺页面」变成「4 个主题域」。</div>
+    </div>
+  </div>
+
+  <!-- ===== ③ 复盘 ===== -->
+  <div class="stage" id="s3" data-page-node-id="PkRB11ZZb7NCfe0LCInFpt">
+    <div class="phone" data-page-node-id="LFwyBpQFs1q4Lilxfkz63h">
+      <div class="statusbar" data-page-node-id="9VGnq9eGzYjnlKmumvlB9Z"><span data-page-node-id="F9O4yGwDa3rJqDE1j5Her4">9:41</span><span data-page-node-id="YOE8N7IDPlhen3rrKVDw7l">▪▪▪ ⌁ ▉</span></div>
+      <div class="appbar" data-page-node-id="SMyAydHXXEc9dF8thPp63U"><div class="act" style="border-radius:99px" data-page-node-id="4JkIS9mGAx2rElabo09PbK">‹</div><div style="text-align:center" data-page-node-id="VoF7x1GQPWHIul4siDya8g"><div class="t" style="font-size:17px" data-page-node-id="mKbbMp7Ti5yPFhkhQlvCPU">写复盘</div></div><div class="act" data-page-node-id="zHEj1MWwBnLkrKIHtFxm0D">📖</div></div>
+      <div class="body" data-page-node-id="ASPpFvw5khfynWHp6F5V1W">
+        <div class="rvhead" data-page-node-id="LExwLolFMNkZlrfYYT2ful"><div class="rvdate" data-page-node-id="B9IO4TspG8VRT42pIWJFlK"><span class="nav" data-page-node-id="rZwgM2BrFbJXPuEmQB2aC5">‹</span><span data-page-node-id="TpRUvO22SrPMfBiS73YoFR">9月5日 周六 · 今天</span><span class="nav" data-page-node-id="IeiEA4DkjsyTrdwXYHGAat">›</span></div></div>
+        <div class="seg" style="margin-top:10px" data-page-node-id="Wu6Ohsqmkp2H4ebwqoEqOu"><div class="on" data-page-node-id="qjw6LdxICFycHFxTmAJAt7">日</div><div data-page-node-id="SeTfwRB0lGgvdEdE7BK5k8">周</div><div data-page-node-id="sNkYuytXg9zB0v7elTdi4H">月</div><div data-page-node-id="m8lDBGbv9EmtFM6Vrfa2WH">年</div></div>
+        <div class="rvsec filled" data-page-node-id="aREOMB2Hlvsd6Tqx3w0NEt"><div class="rt" data-page-node-id="VXzo5w9N9MHIWdEHxB9ogi"><span class="em" data-page-node-id="cmcuGEKuE4gFHDyaB45aV2">📈</span>今日进展</div><div class="ph" data-page-node-id="rSAOj4v0ELxhDDJSl9D0oZ">完成了周报汇总初稿，梳理了 9 个项目的进展卡点；下午联调 PDF 解析第二轮…</div></div>
+        <div class="rvsec" data-page-node-id="EyeY4kTr14WzOWUhNES2Re"><div class="rt" data-page-node-id="ONd4gcwgNiw02RuPgk8s30"><span class="em" data-page-node-id="HKKjIgCDqLhPldb5HHw3zN">💡</span>学到什么 / 亮点</div><div class="ph" data-page-node-id="uGBbLcjc7kukaOp5CqrQ2Q">今天哪部分做得顺手？有什么可复用的方法？</div></div>
+        <div class="rvsec" data-page-node-id="4BH6tzX03bMgjvw1BwQO8S"><div class="rt" data-page-node-id="6VXSrZKEz1moVCDQCqUg34"><span class="em" data-page-node-id="03SokBN5IIwvmB77nyDeEB">🧱</span>问题与阻塞</div><div class="ph" data-page-node-id="DhKallNsqBvY6u5O6vBvur">卡在哪里？需要谁的支持？</div></div>
+        <div class="rvsec" data-page-node-id="rjR8gw5QkYakC43vlIpKA2"><div class="rt" data-page-node-id="yEIHcZgJLLtWMnnxiq5RkE"><span class="em" data-page-node-id="e5VAWK69lTos0WBPpP4nah">🎯</span>明日计划</div><div class="ph" data-page-node-id="Qou1tY8F2g1LPZ7ziZdGlc">明天最重要的 1–3 件事…</div></div>
+        <div class="rvsave" data-page-node-id="1506eEUS6ZeIvGP4Gd3w8Y"><span data-page-node-id="caW9Eu1kAbvp4NiPzTyC4I">286 字</span><b data-page-node-id="uYIf53P3h49ZSO5v08wHnE">● 已自动保存 11:26</b></div>
+      </div>
+    </div>
+    <div class="stage-note" data-page-node-id="PV2xNIBAumChd89Onmua1G">
+      <h3 data-page-node-id="8N7O3aVC3YapXAsDBCuDRH">③ 复盘重设计（UI/交互层，位置迁移见方案A）</h3>
+      <li data-page-node-id="cRmjkRnsjkbU2t0vfaEYVU"><b data-page-node-id="YDtNF6NlYgp0FLm8bFqFz6">纯文本大框 → 四段结构化引导卡：</b>进展 / 亮点 / 问题 / 明日计划——正好对齐老板每天的复盘习惯，写起来有抓手，不再对着空白框发呆（P3）</li>
+      <li data-page-node-id="r49kR7P9SUhP6E6WrGu5LW"><b data-page-node-id="VOBziZjjqkUbb6cP6cB2SB">日期步进条居中放大：</b>‹ 今天 › 是本页最高频操作，抬到视觉第一位；点日期弹日历跳转（保留现有能力）</li>
+      <li data-page-node-id="M3SiP1nOwst97p3INE8PJN"><b data-page-node-id="mVINWIkcBNUerHqA1nBXul">保存反馈：</b>底部「已自动保存 11:26」+ 字数统计，消除"存没存"焦虑（P9）</li>
+      <li data-page-node-id="nhSRXmHbMnfsBY29nFzU19"><b data-page-node-id="f6l8274yBWaNHazgfOSkeX">右上 📖 = 历史列表：</b>按月浏览已写复盘，补上"回顾"这半边体验</li>
+      <li data-page-node-id="8kCVTF86fisyUpGaxEpO4G">日复盘用四段卡；周/月/年复盘保留自由文本但换结构化占位引导语</li>
+    </div>
+  </div>
+
+  <!-- ===== ④ 新建任务 ===== -->
+  <div class="stage" id="s4" data-page-node-id="qaShZlKEUOYagXANskrIRh">
+    <div class="phone" data-page-node-id="z6t2LACaCkcErGbu5Gcylf">
+      <div class="statusbar" data-page-node-id="vQZW8Rs8DbulAOm09d9tSf"><span data-page-node-id="ylLx80h41H442dRRp4uGdQ">9:41</span><span data-page-node-id="A5yBlgcuug4sDBjUxH2D8J">▪▪▪ ⌁ ▉</span></div>
+      <div class="appbar" data-page-node-id="UKA6JaYV1PSijEHCpfxQNF"><div class="act" data-page-node-id="wmLXGvIC0mEsu1D0lJRwOV">✕</div><div class="t" style="font-size:17px" data-page-node-id="LwU86DGE7x4UluhJYlEWpD">新建任务</div><div style="width:34px" data-page-node-id="ripXfMytpW75LpYNBdbKse"></div></div>
+      <div class="body" style="padding:0" data-page-node-id="xGja4sIcKWSEkmQSDA9XOS">
+        <div class="sc" style="padding:4px 18px 0" data-page-node-id="Gar8zRNGZTPVuGqb3rZxiu">
+          <div class="ff" data-page-node-id="qGYEQWEjqLXi5z6wKCCG0w"><label data-page-node-id="BY0FpANfVSoBwlNJMXZpit">标题 *</label><div class="tin" data-page-node-id="KRAMBWFvDNBCTpCVVMfqYZ">要做什么？</div></div>
+          <div class="ff" data-page-node-id="ihetzPM4iwhBc5hvVmi1yV"><label data-page-node-id="AwFfBxy067dWdC865wmurb">到期日</label><div class="tin" data-page-node-id="PH1imeaaVL9dFk1r1MTETE">📅 今天 · 点击修改</div></div>
+          <div class="ff" data-page-node-id="R9BozyiAcJJfInvgUJmMpf"><label data-page-node-id="NqEVS0Xooc62M8cnrFmqXJ">优先级</label><div class="segmini" data-page-node-id="sFdP12cRPD7wxH7HhHib8E"><div data-page-node-id="8AUIcLKai25EU50vfqYayD">高</div><div class="on" data-page-node-id="Z7veASOL467liTsgamDDeT">中</div><div data-page-node-id="Fig4KayLcs4cFltdb2Jmh2">低</div><div data-page-node-id="s0brnLF6WyJOmYSDoTCwWM">无</div></div></div>
+          <div class="more" data-page-node-id="vxVe0bs794AUIrdQf7mky0">
+            <div class="mh" data-page-node-id="HfYSgGJBR3gBudEEsQbEGq"><span data-page-node-id="aV8fPewo8oplly2YVej7Zx">更多设置</span><span data-page-node-id="6KMKacmOIm05dBIqJzL8EO">描述 · 项目 · 提醒 · 番茄 · 重复 · 标签 ▾</span></div>
+            <div class="mi" data-page-node-id="La08ekupxGwRRmCF8QQBUs"><span data-page-node-id="a3FZ2gUzP89DkahJq9bzpM">描述</span><b data-page-node-id="Xzc1rsKh9Q3ejlWpUDTc1B">选填</b></div>
+            <div class="mi" data-page-node-id="BS6HhY4FUdCnoHKDL4eJEe"><span data-page-node-id="4JiEr4zj0lNKstHaejIMOp">所属项目</span><b data-page-node-id="iTCNtSUzrCvH6vK73wtWPz">无清单 ›</b></div>
+            <div class="mi" data-page-node-id="wbAbbwSqb12r6tREhXrH7T"><span data-page-node-id="tdDoAFHZCjjIbHJtEkPlmQ">提醒</span><b data-page-node-id="t25HJbf89omLkKNIcuDEKX">不提醒 ›</b></div>
+            <div class="mi" data-page-node-id="lTYGaeNLPh50HSrIGwPVEr"><span data-page-node-id="v660hokPGE6yNwT76BFCIq">预计番茄数 / 单番茄时长</span><b data-page-node-id="v8r2MR1G9SSk5XJxFFXwTX">2 × 25 分钟 ›</b></div>
+            <div class="mi" data-page-node-id="IwFO7U6EW08WY9Nmlb2b6t"><span data-page-node-id="oopnfP35Zp69QyGz3pSR4w">重复</span><b data-page-node-id="PXn2bX3ZOg7h8HiIrihYbi">不重复 ›</b></div>
+            <div class="mi" data-page-node-id="UlOhh2cJeZybUEjxrKoLa4"><span data-page-node-id="Ey69KkOEzwHosvPNGET8iT">标签</span><b data-page-node-id="3iuYbYyFj5SE1uhwYj3Fry">逗号分隔 ›</b></div>
+          </div>
+        </div>
+        <div class="cta" data-page-node-id="0dC284S1NG9YXUknYDibs1">创建并加入清单</div>
+      </div>
+    </div>
+    <div class="stage-note" data-page-node-id="iBOcd3laP4ruw87IthOYtU">
+      <h3 data-page-node-id="7pexdXdIYso3jBwDDrTaC4">④ 新建任务 · 两段式（纯交互改版）</h3>
+      <li data-page-node-id="n5ACSV4k1XTKm2ckltqsee"><b data-page-node-id="1oJKBFZGqEwcOwdPAq8SM8">基础段 3 项：</b>标题（必填）、到期日（跟随来源视图默认值）、优先级——覆盖 90% 的日常新建</li>
+      <li data-page-node-id="rAzpedGz6vKfOxQ1IGRAUa"><b data-page-node-id="wWmGbyHrmYRYQR1GRsuDdO">「更多设置」默认折叠：</b>描述/项目/提醒/番茄数/时长/重复/标签收进一层，点击展开，原表单能力一个不少（P2）</li>
+      <li data-page-node-id="MySVJE7HeOrOdEsaM2liGr">只填标题即可创建——移动端"想到就记"的-path-成本从 10 项视觉扫描降到 3 项</li>
+      <li data-page-node-id="CAPBrQVkRHztaVv3FfODLt">数据结构与提交流程不变，纯展示层分组</li>
+    </div>
+  </div>
+
+  <!-- ===== ⑤ 我的 ===== -->
+  <div class="stage" id="s5" data-page-node-id="82V8gMgxi6L8EfDoHbgnRW">
+    <div class="phone" data-page-node-id="OTcSDLxAiWwYoy7JDUkvIo">
+      <div class="statusbar" data-page-node-id="EifhWTrtFOklsqukcNkiT1"><span data-page-node-id="Dm5zZAY7LprDim2xlpt5Wg">9:41</span><span data-page-node-id="GKm2FKBxQkl27HEseaI34F">▪▪▪ ⌁ ▉</span></div>
+      <div class="appbar" data-page-node-id="i5e2T7bxkaSYo2AR8AQALX"><div data-page-node-id="RgEHdsNGIpCqU0mhC4Ls3C"><div class="t" data-page-node-id="rh1Odi7sw4h0BKDEhRmloP">我的</div><div class="s" data-page-node-id="wgdAKXI953MZNe44EMPAIz">账号与通用设置</div></div><div class="act" data-page-node-id="E4klyIW08BtgJn9FI76Mj9">🌙</div></div>
+      <div class="body" data-page-node-id="2GrH0Yylam447nJhZN5cbW">
+        <div class="pfhead" data-page-node-id="sqhHy9XdN4Skeeix9AYjhq"><div class="pfav" data-page-node-id="vx5UlygUkAmA0QMEpWhj4H">Y</div><div data-page-node-id="fRlqu9mNjBSuIJLc6CZnaM"><div class="nm" data-page-node-id="aj0ANsEb78IAgSTGXK2y6E">yongc</div><div class="em2" data-page-node-id="LVxhhC3O0H4eBkSQOwcDrF">yongc@example.com</div></div></div>
+        <div class="mgroup" data-page-node-id="Rhrwd1g18pZJASCRSX5PdI">账号</div>
+        <div class="mcard" data-page-node-id="Cn8vhEFLXHyYm8aUrY0ebL">
+          <div class="mrow" data-page-node-id="Q097QbuL3VtNhFLn5Rw8TG"><div class="mi2" data-page-node-id="egXuvr6pxqVhFaUuteIi54">👤</div><div data-page-node-id="0qRkUqTSBzuVyNPB90f3mA">个人资料<div class="ds" data-page-node-id="5loE87CbzujyNz80GkFL4p">头像 · 昵称 · 邮箱</div></div><span class="ar" data-page-node-id="OHH6T6XcsSvmQbKUtCm86v">›</span></div>
+          <div class="mrow" data-page-node-id="aDHO1EKXdlnlDbG4nF4IuQ"><div class="mi2" data-page-node-id="ZIJz5OilDGNZDdah3J1I1i">🛡</div><div data-page-node-id="4e1ExRt45NQGcAMOnLQmfI">安全设置<div class="ds" data-page-node-id="AbQJXcvdbAjI5BfFn4fI2w">密码 · 注销账号 · 登录设备</div></div><span class="ar" data-page-node-id="ZDycKR7yUgYWJaQBbcNlnk">›</span></div>
+          <div class="mrow" data-page-node-id="YJbJsP5wzce0FsqpKkwH8y"><div class="mi2" data-page-node-id="raaKoYhFbXYcM4bgDO9rVx">🔗</div><div data-page-node-id="CMStL9DgrbktzvfGOekdFJ">第三方账号<div class="ds" data-page-node-id="JkupU9Y9hPgxwlyyU4AjBF">微信等快捷登录绑定</div></div><span class="ar" data-page-node-id="aXDnUrmcBU9BKYoHkSBK59">›</span></div>
+        </div>
+        <div class="mgroup" data-page-node-id="1UbCBVhwHMEVlteB0NLDXc">数据</div>
+        <div class="mcard" data-page-node-id="DnkvKRl58g2dXknqTbZhgC">
+          <div class="mrow" data-page-node-id="r282SDqRJUCkISIDQs2Rcg"><div class="mi2" data-page-node-id="lvE8evSrdFFKq19uxcXzSF">🔄</div><div data-page-node-id="90k1B0nazGV3aexSWpi2kF">数据同步<div class="ds" data-page-node-id="dnmNkHmIYZFw7x97QjGfW6">上次同步 11:20 · 自动同步已开启</div></div><span style="margin-left:auto;font-size:12px;color:var(--brand700);font-weight:700" data-page-node-id="R6ZSb8DGJPYjDK74P2GBUE">立即同步</span></div>
+        </div>
+        <div class="mgroup" data-page-node-id="vSLqsoXEusdCgVpiNyvfms">通用</div>
+        <div class="mcard" data-page-node-id="9cDd3E14swyKN2t5qsXDBJ">
+          <div class="mrow" data-page-node-id="vctKIrjDUse7D5WteHRblK"><div class="mi2" data-page-node-id="EBKhbgRUCP9DF7GTFrOq1n">⚙</div><div data-page-node-id="b5oixI6Rd0aUh19ZrTPirj">设置</div><span class="ar" data-page-node-id="yUta9YGXCb0SGNcx3sFJ96">›</span></div>
+          <div class="mrow" data-page-node-id="MpyxvE4COzgV6TjdOoFWlR"><div class="mi2" data-page-node-id="p6bYPgS2EX75E5FJ6wDHEB">❓</div><div data-page-node-id="lfgBoGtpjkmYZNgbbTWgXi">帮助与反馈</div><span class="ar" data-page-node-id="4OTYK7pnE0jzw9jm5E5aAd">›</span></div>
+        </div>
+        <div class="mcard" style="margin-top:14px" data-page-node-id="O5hFqHv4NzFGfBYwL14X27"><div class="mrow" style="justify-content:center;color:#C0392B;font-size:13px" data-page-node-id="GlKARYAf2b1FsbG7wUzsFF">退出登录</div></div>
+      </div>
+      <div class="dock" data-page-node-id="S7sKNz97J0h08RBzHucGeb"><div class="dockpill" data-page-node-id="BPTHrnh8V5bMHJU1x1gA7j">
+        <div class="dtab" data-page-node-id="T3ywm0wG8S7Ta0jBIW3vSv"><span class="ic" data-page-node-id="C5Wze5euS9XcLMN357jZ5S">⏱</span>专注</div><div class="dtab" data-page-node-id="GSpUfb5Pz1b3AYLKkVuxxp"><span class="ic" data-page-node-id="MAxsTblKuLn6VIfaKv0ZJw">✓</span>任务</div><div class="dgap" data-page-node-id="fFBX9h13oCAvytgLS3SiOA"></div><div class="dtab" data-page-node-id="DP3JAAGTtGhHgMI4QTewHI"><span class="ic" data-page-node-id="RAO5hNANwcVunHrmwqobBJ">📓</span>手账</div><div class="dtab on" style="padding:6px 0" data-page-node-id="gJBC2eSTtSZspv5UqBIhEm"><span class="ic" data-page-node-id="qpJYWYGIEEkRnJOHwOA1BB">👤</span>我的</div>
+      </div><div class="fab" data-page-node-id="m0SVDTOFj0onP72c6gSDnN">＋<small data-page-node-id="gxkG49AIuMq7cKlPbgiJsf">新建</small></div></div>
+    </div>
+    <div class="stage-note" data-page-node-id="xjAJHWDACjLLMJqrUEZWXk">
+      <h3 data-page-node-id="4KFVKPmdIqPo2J220HGPCB">⑤ 我的页 · 重新分组</h3>
+      <li data-page-node-id="DCC0JWeZw8eH0paTLobGrv"><b data-page-node-id="GUMwwtlwObBA21duTh4WZb">三组语义分组：</b>账号（资料/安全/第三方）/ 数据（同步）/ 通用（设置/帮助），组标题小字引导（P8）</li>
+      <li data-page-node-id="Abp5aNs4x2OwRtEnDM8Jrt"><b data-page-node-id="VtDfRTaF6CFBphAwxFAjcP">复盘菜单项移除</b>——主入口迁移到手账屏🪞 segment（✅ 已确认执行）</li>
+      <li data-page-node-id="hX6zGqI2OMoFgl6l1D0z9E"><b data-page-node-id="p20JLoTRj9vxEg77ZI8zlT">「账号注销」收进安全设置</b>：危险操作归位，不再与常规功能并列；页内已按现有 AccountPage 分段，只并入 danger 段</li>
+      <li data-page-node-id="BBCsW1N2SbQPWaZ4JGfiRg"><b data-page-node-id="EEGxxZ9ZY5kHtKkD4e1RhV">退出登录保持独立</b>且整卡居中弱化，与"注销账号"明确区分</li>
+      <li data-page-node-id="dPfMW3H23KnOOiwBXLeItt">同步状态合并为一行（状态 + 立即同步 + 自动同步开关进设置内页），减少一整卡高度</li>
+    </div>
+  </div>
+
+  <!-- ===== ⑥ 专注完成 ===== -->
+  <div class="stage" id="s6" data-page-node-id="AMdCrHSKMju4dzMZECNmdz">
+    <div class="phone" data-page-node-id="Pbhi1IXOlzLkjtMnUQ7FmD">
+      <div class="statusbar" data-page-node-id="lRLFGVUumiyG2DXn8TwGwq"><span data-page-node-id="lk7ydAx5e69LpetlAm8MO9">9:41</span><span data-page-node-id="srtd5VujMVwASnrezHaXdw">▪▪▪ ⌁ ▉</span></div>
+      <div class="appbar" data-page-node-id="HvBjyfuHW6K0gdoo1N9aH5"><div data-page-node-id="i6m8Bmsj74wDeBBMSEpFTz"><div class="t" data-page-node-id="8GosicvwDg5HA7ck9hOqSR">专注</div><div class="s" data-page-node-id="SDVaAGUzLhrJFhFQAq2D77">保持节奏，一次只做一件事</div></div><div class="act" data-page-node-id="5CkdCfKc05CnjIZraGcFRS">🔔</div></div>
+      <div class="body" data-page-node-id="ctJgPAUhIZXGN1hnMWSZ6C">
+        <div class="dlgmask" data-page-node-id="zEcJ8NdMKH9VEjBVEAZJRj">
+          <div class="dlg" data-page-node-id="MkBK5YOliq3y9wfKNmKNyB">
+            <div class="big" data-page-node-id="crodTirVHfCZBxCwY3KLhg">🍅</div>
+            <h4 data-page-node-id="L0bceMOZwCPKCj0GGVn21I">专注完成！</h4>
+            <p data-page-node-id="ukEoLiZhOayLvT0R18daGM">「保险 PDF 解析 · 第二轮联调」<br data-page-node-id="qPxTQIMJni38OI4nBOtlhp">已专注 25 分钟 · 今日第 4 个番茄</p>
+            <div class="dbtn" data-page-node-id="60LfAZX8Bok8itGdVOlRBZ">开始休息 ☕</div>
+            <div class="dbtn ghost" data-page-node-id="U0JromY3Eb1GrnHGEJPgtS">🪞 趁热写一笔今日复盘</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="stage-note" data-page-node-id="JEU2MHYHAHwNGYSiNiyGlr">
+      <h3 data-page-node-id="GfCSTyp7bEfHfPqc9RK7sW">⑥ 专注 → 复盘闭环</h3>
+      <li data-page-node-id="5rSmDabPtAPPf4gLzHNukF">完成弹窗在「开始休息」之外增加<b data-page-node-id="jRJ9CvUWH78eM1PcYh1rKj">「趁热写一笔今日复盘」</b>次按钮——番茄结束的瞬间正是复盘黄金窗口，比"我的"页深埋入口的转化率高得多</li>
+      <li data-page-node-id="8CZYIbp0cMdiSGIcmltdEb">点击直达复盘页（日复盘 · 当天），写完返回继续休息链，不打断自动休息流程</li>
+      <li data-page-node-id="mrkXD6ExmMGkg7TqiqeFul">交互层改动，不改完成链业务逻辑</li>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 3. AI 修复指导方案 ================= -->
+<section data-page-node-id="rLSoJJgnFokFtqbQEifvg9">
+  <!-- ===== ⑦ 专注页 · 圆环与按钮精修 ===== -->
+  <div class="stage" id="s7">
+    <div class="phone">
+      <div class="statusbar"><span>9:41</span><span>▪▪▪ ⌁ ▉</span></div>
+      <div class="appbar"><div><div class="t">专注</div><div class="s">保持节奏，一次只做一件事</div></div><div class="act">🔔</div></div>
+      <div class="body focusbody">
+        <div class="seg"><div class="on">专注</div><div>短休息</div><div>长休息</div></div>
+        <div class="ring2" style="margin-top:3px">
+          <svg width="206" height="206" viewBox="0 0 206 206">
+            <circle cx="103" cy="103" r="92" fill="none" stroke="var(--brand100)" stroke-width="14"/>
+            <circle cx="103" cy="103" r="76" fill="none" stroke="var(--brand100)" stroke-width="1" opacity=".55"/>
+            <circle cx="103" cy="103" r="92" fill="none" stroke="var(--brand)" stroke-width="14" stroke-linecap="round" stroke-dasharray="578.1" stroke-dashoffset="335.2" transform="rotate(-90 103 103)"/>
+          </svg>
+          <div class="ringtxt">
+            <div class="tm">14:30</div>
+            <div class="lb">专注时段 · 25 分钟</div>
+            <div class="pc">🍅 2/4 番茄</div>
+          </div>
+        </div>
+        <div class="tchip"><span class="dot" style="background:#C0392B"></span><div class="tt">保险 PDF 解析 · 第二轮联调</div><div class="sw">切换 ▾</div></div>
+        <div class="btnrow"><div class="btnp">⏸ 暂停</div><div class="btng">跳过</div></div>
+        <div class="center" style="margin-top:6px"><div class="pill2"><span class="pdot"></span>今日已完成 <b>6</b> 个番茄钟</div></div>
+        <div style="margin-top:6px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:13px 15px">
+          <div style="font-size:12.5px;color:#5C554D;line-height:1.6">心之所向，素履以往；生如逆旅，一苇以航。</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px"><div style="font-size:11px;color:var(--muted)">— 七堇年《尘曲》</div><div style="font-size:11px;color:var(--brand700);font-weight:700">换一条 ↻</div></div>
+        </div>
+      </div>
+      <div class="dock"><div class="dockpill">
+        <div class="dtab on" style="padding:6px 0"><span class="ic">⏱</span>专注</div><div class="dtab"><span class="ic">✓</span>任务</div><div class="dgap"></div><div class="dtab"><span class="ic">📓</span>手账</div><div class="dtab"><span class="ic">👤</span>我的</div>
+      </div><div class="fab">＋<small>新' + u'建</small></div></div>
+    </div>
+    <div class="stage-note">
+      <h3>⑦ 专注页改了什么（纯视觉精修，零逻辑改动）</h3>
+      <li><b>圆环放大 196 → 206：</b>上限提到 206、宽度系数 .50→.60、高度系数 .26→.31。直径 206（原型机 340 宽屏占约 61%），内部时间字号同步从 ~45px 升到 ~49px，一眼可读；配合 7 处间距收敛（seg/环/task chip/按钮行/番茄 pill/名言卡 的上下留白各收 2–4px），在「名言警句 2 行」最坏情形下实测：顶部留白 6px、底部留白 6px、与「开始专注↔今日完成」间距同为 6px——三处完全对齐，名言卡恰好悬在 dock 上方 6px，永不遮挡</li>
+      <li><b>进度条端点改圆头：</b><code>strokeCap: StrokeCap.round</code>，收尾不生硬；环内侧加 1px 极淡内圈（r = 环半径×.37），提升精致度而不过载</li>
+      <li><b>按钮主次 2:1 固定比例：</b>原来主按钮 Expanded + 次按钮按文字撑开（「暂停 / 跳过」与「继续 / 放弃」两态宽度会跳变）。改为 <code>Expanded(flex:2)</code> + <code>Expanded(flex:1)</code>，切换状态不再抖</li>
+      <li><b>空闲态单按钮改为 60% 居中：</b>原来撑满全宽，视觉过重；限宽居中后更克制，主次关系更清楚</li>
+      <li><b>任务 chip 改胶囊：</b>圆角 16 → 全圆角，纵向 padding 收窄，去掉投影只留 1px 描边——它是辅助信息，不该和圆环抢注意力</li>
+      <li><b>留白重排：</b>圆环上间距 26→24、下间距 6→22，让「环 → 任务 → 按钮」三段呼吸均匀；今日番茄 pill 加脉冲点强调"正在进行"</li>
+      <div class="ask">✅ 全部为布局与绘制参数调整：计时逻辑、三态语义（空闲/运行/暂停）、完成链、自动休息<br>一律不动。</div>
+    </div>
+    <div class="cmp">
+      <h4>圆环与按钮 · 旧 → 新</h4>
+      <table>
+        <tr><th>元素</th><th>旧</th><th>新</th><th>理由</th></tr>
+        <tr><td>圆环直径</td><td>min(196, w×.50, h×.26) ≈ 196</td><td><b style="color:var(--brand700)">min(206, w×.60, h×.31) ≈ 206</b></td><td>老板反馈偏小；最终定为 206（占屏宽约 61%），比原 196 明显大一圈；配合间距收敛，2 行名言最坏情形上下留白各 6px，与按钮间距一致，名言卡不进 dock</td></tr>
+        <tr><td>时间字号</td><td>环径 × .23 ≈ 45px</td><td>环径 × .238 ≈ <b style="color:var(--brand700)">49px</b></td><td>系数微调，随环等比放大，倒计时一眼可读</td></tr>
+        <tr><td>进度端点</td><td>平头（StrokeCap.butt）</td><td><b style="color:var(--brand700)">圆头 + 1px 淡内圈</b></td><td>消除截断感，增强完成感暗示</td></tr>
+        <tr><td>按钮宽度</td><td>主 Expanded + 次撑内容</td><td><b style="color:var(--brand700)">主 flex:2 + 次 flex:1</b></td><td>两态切换时按钮宽度不再跳变</td></tr>
+        <tr><td>空闲单按钮</td><td>撑满全宽</td><td><b style="color:var(--brand700)">60% 居中</b></td><td>降低视觉重量，突出"开始"这一唯一动作</td></tr>
+        <tr><td>任务 chip</td><td>圆角矩形 16 + 投影</td><td><b style="color:var(--brand700)">胶囊 + 仅描边</b></td><td>降级为辅助信息，让圆环成为唯一视觉中心</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <h2 data-page-node-id="DppzJc5kzgcMDjBEagt9vB">三、AI 精确修复指导方案</h2>
+  <p class="sub" data-page-node-id="N19mIHNiVW5PCKPjDY8oIs">双用途：人可审阅，AI agent 可直接执行。约束：只改 UI 布局/交互，不动业务逻辑与数据管线；改动全部限定在 apps/mobile/lib 下。</p>
+
+  <div class="plan" data-page-node-id="MnlsHqB1f9VOmwJKeEqyjb">
+    <div class="ph2" data-page-node-id="LADkwcVdigL6clAN113IXr">🟢 批次一 · 纯 UI 改版（无功能增删，确认后可立即执行）</div>
+    <table data-page-node-id="5Pdc4g7adgmBvSSMiyKhWy">
+      <tr data-page-node-id="8zNPH70wPOCqZb5qFPbaQM"><th data-page-node-id="frGVQEG95cAOwh66PWK7l2">文件</th><th data-page-node-id="yEThNSqfruEBqwemT2InwJ">改动指令</th></tr>
+      <tr data-page-node-id="6Z1L0CrtfcP4DVBsYdArpb"><td data-page-node-id="lmVXTWB2UswycoA7TOGpss">tasks_page.dart</td><td data-page-node-id="rcGALtFIEXyZbWuRlUd2jt"><b data-page-node-id="teSEXMHkAsILyae4EGsO5Z">1.</b> 统计卡行（statCells 对应的 Padding+Row 块）替换为单行摘要条：一行文案「📋 今日 N 进行中 · 已完成 N · 预计 N 分钟」，样式复用 PfNote 容器（pfSurface2 底 + 12px 字）。<b data-page-node-id="ZWXtxwldYm0BdJbCDkoP7I">2.</b> 筛选 Wrap 前增加前缀 Text('筛选', 11px pfMuted w600)；_FilterChip 未激活态改为透明底 + 虚线边框（Border.all 无 dashed 时用 BorderRadius 8 + pfLine 描边 + 10.5px 字号与视图 chips 拉开层级）。<b data-page-node-id="qA9eHsrTJgjxC60AZFebLY">3.</b> 删除 _ExtendedFab 及其 Positioned 调用块。<b data-page-node-id="YKAp15Yb53IFV5JosIzMaA">4.</b> _TaskCard meta Wrap 仅保留 project pill 与到期日两项，移除 🍅 与 ☑ 子任务 meta（详情 sheet 已有，不丢信息）。</td></tr>
+      <tr data-page-node-id="AUNLEXWfFbU6fARH2NFMvF"><td data-page-node-id="JNSmK8qGHSLGo9NNXZKHbq">task_create_sheet.dart</td><td data-page-node-id="oI7QPiMyJsVoeundfb7Py2">将 build() 的 Column 字段分为两组：基础组 = 标题 + 到期日 + 优先级；其余（描述/所属项目/提醒/预计番茄/单番茄时长/重复/标签）包进默认折叠的「更多设置」面板（可用 ExpansionTile 或自绘 expand 状态，保持 pfSheet 内滚动行为不变，注意 body 在有界高度内的既有约束）。提交流程、校验、字段默认值全部不变。</td></tr>
+      <tr data-page-node-id="8DRjla9zu1A0Q42O87yI99"><td data-page-node-id="TcmtOm8azI9EYpt5CIU6i0">review_page.dart</td><td data-page-node-id="vfAIFcIvsvG967VWlXufoN">日复盘（ReviewPeriod.daily）的单一 TextField 替换为四段引导卡列表（今日进展/学到什么·亮点/问题与阻塞/明日计划），四段内容以 '\n\n## 段落标题\n' 约定拼接/解析存入现有 daily_review_content 字段（存储结构不变，旧纯文本回落到第一段）；周/月/年保留单 TextField，hint 换结构化引导语。增加底部状态条：字数 + 「已自动保存 HH:MM」（在 onSave 防抖 800ms 后 setState）。‹ › 与跳日期交互保留。</td></tr>
+      <tr data-page-node-id="hvRAlM8WB5cQRYQQahNzIC"><td data-page-node-id="igGMGFJpBaty1UCJb4QFVE">me_page.dart</td><td data-page-node-id="AGLcGuw5wRdlXlBDjj9fp6">菜单重排：卡1「账号」= 个人资料/安全设置/第三方账号（安全设置行副标题加"含注销账号"，账号注销菜单项从 _OtherMenuCard 移入 AccountPage security 段）；卡2「数据」= 数据同步（立即同步 + 状态 + 自动同步开关合并为一卡两行，维持现逻辑）；卡3「通用」= 设置/帮助与反馈；退出登录独立卡居中。三卡间加组标题小字（账号/数据/通用）。纯移动菜单，不动 AccountPage 内部模块。</td></tr>
+      <tr data-page-node-id="KrSoGeLGD1FcgXTikBkQPt"><td data-page-node-id="4OZWJ7fV3KNFRQOB9UwrD3">focus_page.dart</td><td data-page-node-id="Yn86REwq5jLjPwMs0qRvF5">_showCompletionModal 的 AlertDialog 增加 第 二 个 action「趁热写一笔今日复盘」：pop 后调 ReviewPage.open(context, period: ReviewPeriod.daily)（该 API 已存在）。不改完成链时序。</td></tr>
+    </table>
+  </div>
+
+  <div class="plan" style="border-color:var(--brand100)" data-page-node-id="ustzbUe0S59QlnQr5kVP64">
+    <div class="ph2" style="background:#FFF8F2" data-page-node-id="62pvmjQcV276kAKqO8CDfx">🟢 批次二 · 信息架构调整（已确认 · 最终版）</div>
+    <table data-page-node-id="gvCFKsGHVyHIAuAgUtDpuu">
+      <tr data-page-node-id="NhbTGNjUHkzLe8RN1JaKXq"><th data-page-node-id="NyjtIksUHvw77hzslFyzVl">文件</th><th data-page-node-id="EpjjVfCC9qFPNNdRIMM3kh">改动指令（最终确认版：方案A + 统计并入任务页）</th></tr>
+      <tr><td>stats_page.dart</td><td><b>1.</b> 拆为可嵌入体：现有 build() 内的 PfSliverAppBar 移除，其余（_dimOptions chips、4×_StatCell、3×_HlCell、_TrendCard、_ProjectDonutCard）整体抽出为 <b>StatsBody</b> widget（保留 _dim 状态与 _export 逻辑）。<b>2.</b> 导出动作改为回调 <code>onExport</code>，由宿主 AppBar 的 ⤓ 按钮触发。<b>3.</b> StatsPage 类可保留（便于复用），但不再被 home_page 的 IndexedStack 引用。</td></tr>
+      <tr><td>tasks_page.dart</td><td><b>1.</b> 顶部（AppBar 下方）新增「任务 ｜ 统计」segment 控件，选中态用品牌底；选中「统计」时 body 渲染 StatsBody，同时 AppBar 标题/副标题/右上角动作随 segment 切换（任务＝「任务 / 规划清单，按时兑现 / 🔍 搜索」，统计＝「统计 / 看见你的专注轨迹 / ⤓ 导出」）。<b>2.</b> 视图 chips 删除 ('手账','手账') 与 ('随手记','随手记') 两项，保留 今天/明天/本周/计划/已完成。<b>3.</b> isCalendar/isNotes 分支、_journalKind/_journalTag、_JournalCard、applyJournalFilters 迁移至 journal_page.dart 后删除本文件残留代码与相关 import。<b>4.</b> 批次一的其余三项（删 _ExtendedFab、统计卡行→摘要条、筛选行前缀+虚线、卡片 meta 收敛）同步落地。</td></tr>
+      <tr><td>pages/journal_page.dart（新建）</td><td>三 segment 屏：📅 月历 = 现任务页 isCalendar 分支的 JournalCalendar（sortedTasks: viewTasks('计划')）原样迁移；✍️ 记录 = 现随手记列表 + applyJournalFilters + journal 类型 chips + 标签筛选（逻辑整体搬运，不改动 TaskProvider）；🪞 复盘 = 复盘周期卡列表（日/周/月/年当前周期状态 + 历史入口 → ReviewPage.open）。AppBar 沿用 PfSliverAppBar（title '手账' + 🔍 搜索 action），副标题随 segment 变化。</td></tr>
+      <tr><td>dock_nav.dart</td><td>_tabs 第 4 项由 (emoji '📊', key 'nav.stats') 改为 (emoji '📓', key 'nav.journal')；<b>其余三个 Tab、中间 FAB 空位（左2 + gap + 右2）结构完全不动</b>，无 4→5 Tab 的宽度挤压问题。i18n 新增 nav.journal＝「手账」，nav.stats 保留给任务页 segment 标题使用。</td></tr>
+      <tr><td>home_page.dart</td><td>IndexedStack children 第 4 项 StatsPage → JournalPage；<b>页面总数仍为 4</b>，顺序 [FocusPage, TasksPage, JournalPage, MePage]，其余不动。</td></tr>
+      <tr><td>nav_provider.dart</td><td>页面数不变（4），index 范围 0–3 保持；仅需复核 quick_create_sheet 中跳转目标：统计 → index 1（并切到统计 segment），手账/复盘 → index 2。任务卡 ▶ → 0 不变。</td></tr>
+      <tr><td>me_page.dart</td><td>_OtherMenuCard 移除「复盘」项（主入口已迁手账屏；账号注销按批次一并入安全段）。</td></tr>
+    </table>
+    <div class="ask" style="margin-top:12px">🎯 <b>关键简化（老板提议带来的）</b>：Dock 槽位总数不变、一级页面数不变（仍 4 个）、nav_provider index 范围不变。相比原方案A 预估，省掉了「4→5 Tab 宽度重排」和「index 0–4 扩展」两处风险点，改动集中在 tasks_page / stats_page / journal_page 三个文件。</div>
+  </div>
+</section>
+
+<!-- ================= 4. 决策结果 ================= -->
+<section data-page-node-id="kCSwjCK2MmwR05m93AjMMz">
+  <h2 data-page-node-id="yEBDEhn3ax60ItWSQaikrU">四、决策结果 · 4 项全部已确认</h2>
+  <p class="sub" data-page-node-id="51nCUhZzl99oHaWW3gdVGP">第三节「批次一 + 批次二」已构成完整可执行清单，AI agent 可按序直接落地。</p>
+  <div class="decide" data-page-node-id="HvqHVzTVIErupUvvWsSCXM">
+    <div class="q" data-page-node-id="KuPsILD9fCeSEHl0nxuobN"><b data-page-node-id="ekNAjbNOyLT2481Hf1ZCaC">Q1 · 手账归属 → 方案A</b>
+      <p data-page-node-id="nLUz2ZBHQVVa2a462WxmXs">✅ Dock 第 4 槽「手账」＝ 月历 ｜ 记录 ｜ 复盘，统一记录中心。<b>老板补充确认：统计页不再占 Dock 槽位，整页收为任务页第二 segment</b>——Dock 仍 5 个位置、一级页面仍 4 个，无 Tab 挤压问题。</p>
+      <span class="opt rec" data-page-node-id="eQTnCV7yxLJsQaTFAXzfvM">✅ 方案A：Dock 第 4 槽「手账」= 月历 | 记录 | 复盘</span>
+      <span class="opt rec" data-page-node-id="q1OWXh4Syhnu2iqMuPAuDI">✅ 补充：统计收进任务页「任务 ｜ 统计」segment</span>
+    </div>
+    <div class="q" data-page-node-id="1L3sgltT9FTwanx2uHY0cI"><b data-page-node-id="ySed4fsnKPw4FkmWcfOfA8">Q2 · 复盘入口与落点</b>
+      <p data-page-node-id="dXy9LX0TkqyIiSdFlW0CrI">✅ 主入口＝手账屏 🪞 segment + 专注完成弹窗「趁热写一笔今日复盘」；页面内为四段结构化引导卡 + 自动保存反馈 + 历史列表（见第二节 ③）。</p>
+      <span class="opt rec" data-page-node-id="wVkuxbCZTfS2DH9Uk7cVu2">✅ 手账屏 segment + 专注完成弹窗</span>
+    </div>
+    <div class="q" data-page-node-id="WmGdd8Hu4J0Ho3pgysllhZ"><b data-page-node-id="3fHQvDkc05Y0gYvTVzTgUb">Q3 · 任务页右下扩展 FAB</b>
+      <p data-page-node-id="HiHIUmGQJee1cvDiKjhNeS">✅ 移除，新建统一走 Dock 中间「＋新建」，列表末尾不再被遮挡。</p>
+      <span class="opt rec" data-page-node-id="P3ADM7aWybRP3ych8FmGLE">✅ 移除</span>
+    </div>
+    <div class="q" data-page-node-id="cQ54Q4Kg2I6jfPENEGq5EQ"><b data-page-node-id="hXmwUujJ4bVsW2b4ppMEaY">Q4 · 新建任务表单</b>
+      <p data-page-node-id="piBOLSQRaXs5gh1jt3UQjL">✅ 两段式：基础段（标题 / 到期日 / 优先级）+ 默认折叠的「更多设置」7 项，字段与校验逻辑一个不少。</p>
+      <span class="opt rec" data-page-node-id="IfBwqLwvpQIemQR5GPEA9F">✅ 两段式</span>
+    </div>
+  </div>
+  <div class="cmp" style="margin-top:16px">
+    <h4>执行顺序建议（AI agent 可直接按序执行）</h4>
+    <table>
+      <tr><th>#</th><th>动作</th><th>涉及文件</th><th>风险</th></tr>
+      <tr><td>1</td><td>批次一全部（纯 UI 局部改动）</td><td>tasks_page / task_create_sheet / review_page / me_page / focus_page</td><td><b style="color:var(--ok)">低</b> · 不动导航，可独立验证</td></tr>
+      <tr><td>2</td><td>stats_page 拆出可嵌入的 StatsBody</td><td>stats_page</td><td><b style="color:var(--ok)">低</b> · 纯结构抽取，UI 不变</td></tr>
+      <tr><td>3</td><td>新建 journal_page，从 tasks_page 迁移月历 / 随手记分支</td><td>journal_page（新）/ tasks_page</td><td>中 · 需同步 widget test 引用</td></tr>
+      <tr><td>4</td><td>tasks_page 加「任务 ｜ 统计」segment 并接入 StatsBody</td><td>tasks_page</td><td>中 · 依赖第 2 步</td></tr>
+      <tr><td>5</td><td>Dock 第 4 槽 统计→手账；home_page children 换页</td><td>dock_nav / home_page</td><td><b style="color:var(--ok)">低</b> · 依赖第 3、4 步</td></tr>
+      <tr><td>6</td><td>me_page 移除复盘项；nav_provider 跳转 index 复核</td><td>me_page / nav_provider</td><td><b style="color:var(--ok)">低</b></td></tr>
+    </table>
+  </div>
+</section>
+
+</div>
+
+<script>
+// 屏幕切换
+document.querySelectorAll('.screen-tabs button').forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll('.screen-tabs button').forEach(x=>x.classList.remove('on'));
+    document.querySelectorAll('.stage').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+    document.getElementById(b.dataset.s).classList.add('on');
+  };
+});
+// 通用页签/segment 切换：data-panels 声明可切换面板，data-bar 指定联动的 AppBar
+document.querySelectorAll('[data-seg]').forEach(seg=>{
+  const panels=(seg.dataset.panels||'').split(',').filter(Boolean);
+  const bar=seg.dataset.bar?document.getElementById(seg.dataset.bar):null;
+  seg.querySelectorAll('div[data-p]').forEach(t=>{
+    t.onclick=()=>{
+      seg.querySelectorAll('div[data-p]').forEach(x=>x.classList.remove('on'));
+      t.classList.add('on');
+      panels.forEach(id=>{const e=document.getElementById(id); if(e) e.style.display='none';});
+      const p=document.getElementById(t.dataset.p); if(p) p.style.display='block';
+      if(bar){
+        const ft=bar.querySelector('[data-f="t"]'); if(ft&&t.dataset.t) ft.textContent=t.dataset.t;
+        const fs=bar.querySelector('[data-f="s"]'); if(fs) fs.textContent=t.dataset.sub||'';
+        const fa=bar.querySelector('[data-f="a"]'); if(fa) fa.textContent=t.dataset.a||'';
+      }
+    };
+  });
+});
+</script>
+</body>
+</html>
