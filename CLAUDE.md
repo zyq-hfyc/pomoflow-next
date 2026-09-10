@@ -60,13 +60,25 @@ docs/                本仓库内文档
 ## 测试
 
 - **CI(`.github/workflows/ci.yml`)**:push main 即跑全仓门禁 ——
-  cargo fmt/clippy/test(workspace 全 4 crate)+ UI(svelte-check + tsc + vite
-  build)+ mobile(flutter analyze + test),Ubuntu runner。本地 cargo test
-  跑不了(下述 dlltool 问题)时,直接 push 看 CI。
+  cargo fmt/clippy/test(workspace 全 4 crate)+ UI(svelte-check + vitest +
+  tsc + vite build)+ mobile(flutter analyze + test),Ubuntu runner。本地
+  cargo test 跑不了(下述 dlltool 问题)时,直接 push 看 CI。
 - `cargo check --all-targets` —— 类型检查,本地一定过
 - `cargo test --all-targets` —— 单元 + 集成测试,**Windows 上 WinLibs dlltool 触发文件系统 1006 错误**,
   推荐装 VS Build Tools 或 Linux 跑(或交给 CI)
 - `cargo clippy --all-targets -- -D warnings` —— 零警告
+
+**桌面 UI(`apps/desktop/ui`)**
+
+- `npm run check` —— svelte-check;`npm run build` —— tsc + vite build
+- `npm run test` —— vitest + jsdom 组件级测试(`*.test.ts`,纯 DOM,
+  不需要浏览器也不需要后端)。**svelte-check/build 查不出「跑起来才炸」
+  的问题**(如 effect 读+写同一个 `$state` 自激 → `effect_update_depth_exceeded`
+  → 整页不再重绘),这类必须靠这层挡。
+- **要真跑一遍 UI**(复现前端 bug、看交互效果):`MOCK_TAURI=1 npm run dev`
+  → `http://localhost:1420/#/tasks`。用 `src/mock/tauri-api.ts` 顶掉 Tauri
+  IPC,不必起 Rust;mock 里有任务页/手账页 fixture,缺的命令按文件头注释补。
+  注意同一 URL 只有 hash 变化时浏览器不重新加载,对比前后两次要换查询串。
 
 ## 开发流程
 
