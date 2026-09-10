@@ -356,9 +356,13 @@
     if (!id || scrollLocked) return;
     // 让 Svelte 先把视图/折叠状态刷到 DOM。
     tick().then(() => {
+      // behavior:'instant' 关键:不用 smooth 避免 in-flight 动画抢主线程 +
+      // 拽回旧位。Chromium 滚到目标期间不接受新 click,导致 selectTask(B)
+      // 后列表又被拽回 A,体感 B 没被选中。instant 与 reduced-motion 行为
+      // 一致(Safari 默认 smooth,但 instant 在所有现代浏览器都支持)。
       document
         .getElementById(`task-${id}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        ?.scrollIntoView({ behavior: "instant", block: "center" });
       pendingScrollId = null;
     });
   });

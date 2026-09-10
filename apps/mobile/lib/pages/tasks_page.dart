@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -55,14 +53,13 @@ class _TasksPageState extends State<TasksPage> {
   /// 本帧已消费的 pendingLocateTaskId,避免同一 intent 重复触发滚动。
   String? _consumedLocate;
 
-  /// 跳转定位高亮(2026-09-09 修 Bug 2):_doLocate 完成后置上,500ms 后清掉。
-  /// 复用现有 pattern(本地 state + Timer),不引入新 provider。
+  /// 跳转定位高亮(2026-09-09 修 Bug 2):_doLocate 完成后置上,持久保留
+  /// 直到下次跳转或用户切视图。让模板在被定位后保持视觉"选中"
+  /// 状态(与桌面 selectedTask 的语义对齐),而不是闪一下。
   String? _focusedId;
-  Timer? _focusTimer;
 
   @override
   void dispose() {
-    _focusTimer?.cancel();
     _pageCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
@@ -225,7 +222,11 @@ class _TasksPageState extends State<TasksPage> {
                 ('重复', '重复'),
               ],
               selected: _view,
-              onSelect: (v) => setState(() => _view = v),
+              onSelect: (v) => setState(() {
+                _view = v;
+                // 切视图 → 模板高亮失效,清掉避免误导(2026-09-09 修 Bug 2)。
+                _focusedId = null;
+              }),
             ),
           ),
         ),
@@ -547,14 +548,10 @@ class _TasksPageState extends State<TasksPage> {
       await _scrollTo(id);
     }
     if (!mounted) return;
-    // 跳转定位视觉高亮(2026-09-09 修 Bug 2):target 卡 500ms 内 brand 边框
-    // + pfBrand50 底色。Timer 在 dispose / 新一轮 locate 时 cancel 防重入。
-    _focusTimer?.cancel();
+    // 跳转定位视觉高亮(2026-09-09 修 Bug 2 第二次):持久保留到下次
+    // locate 或 _view 改变。切 _view 时清掉,避免视图切换后旧模板
+    // 仍带高亮的误导。
     setState(() => _focusedId = id);
-    _focusTimer = Timer(const Duration(milliseconds: 500), () {
-      if (!mounted) return;
-      setState(() => _focusedId = null);
-    });
     nav.consumePendingLocate();
     _consumedLocate = null;
   }
