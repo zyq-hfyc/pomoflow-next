@@ -12,16 +12,11 @@
   let { tasks }: Props = $props();
 
   let expandKey = $state<string | null>(null);
+  let selected = $state<string | null>(null);
 
   export function setExpandKey(key: string | null) {
     expandKey = key;
   }
-
-  export function selectedId() {
-    return selected;
-  }
-
-  let selected = $state<string | null>(null);
 </script>
 
 <GroupedTaskList

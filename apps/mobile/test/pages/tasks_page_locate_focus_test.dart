@@ -117,4 +117,27 @@ void main() {
       reason: '切视图后旧模板不应仍带高亮',
     );
   });
+
+  testWidgets('快速连续 locate 不同模板 → 高亮跟到最后一个', (tester) async {
+    // 锁住「最新意图覆盖旧意图」的语义(2026-09-09 二次修复的旧版本用
+    // Timer.cancel + 重设;新版本里直接 setState 覆盖,更简洁):
+    // 旧实现 Timer 没 cancel 时,高亮可能闪前一个;现在不会。
+    final theme = buildAppTheme();
+    final nav = await pumpTasks(tester, [
+      PfTask(id: 'tpl-a', title: '模板甲', repeat: 'weekdays'),
+      PfTask(id: 'tpl-b', title: '模板乙', repeat: 'daily'),
+    ]);
+
+    nav.locateTask('tpl-a');
+    // 不 pumpAndSettle:模拟「还在滚甲的途中」连续切到乙。
+    nav.locateTask('tpl-b');
+    await tester.pumpAndSettle();
+
+    expect(
+      cardBorder(tester, '模板乙').color,
+      theme.pfBrand,
+      reason: '后到的 locate 应覆盖前一个,而不是被前一个的滚动回滚',
+    );
+    expect(cardBorder(tester, '模板甲').color, theme.pfLine);
+  });
 }
