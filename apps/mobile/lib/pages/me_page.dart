@@ -710,6 +710,14 @@ class _MainMenuCard extends StatelessWidget {
           label: '关于 PomoFlow',
           onTap: () => _pushSlide(context, const _AboutPage()),
         ),
+        // 测试用入口(2026-09-07):清理任务/手账/复盘/累计番茄;
+        // 上线前删除此项 + TaskProvider.clearBusinessData() + AppDatabase.clearBusinessData()。
+        _MenuItem(
+          emoji: '🧪',
+          label: '清理业务数据(测试用)',
+          danger: true,
+          onTap: () => _confirmClearBusinessData(context),
+        ),
       ],
     );
   }
@@ -1175,11 +1183,12 @@ class _ScanIconPainter extends CustomPainter {
   bool shouldRepaint(_ScanIconPainter old) => old.color != color;
 }
 
-/// 图标块(.ic 34×34,brand-50 底 + brand-700 内容)。
+/// 图标块(.ic 34×34,brand-50 底 + brand-700 内容;danger 红色底)。
 class _IconBlock extends StatelessWidget {
-  const _IconBlock({required this.emoji});
+  const _IconBlock({required this.emoji, this.danger = false});
 
   final String emoji;
+  final bool danger;
 
   @override
   Widget build(BuildContext context) {
@@ -1188,7 +1197,9 @@ class _IconBlock extends StatelessWidget {
       width: 34,
       height: 34,
       decoration: BoxDecoration(
-        color: theme.pfBrand50,
+        color: danger
+            ? theme.colorScheme.error.withValues(alpha: .10)
+            : theme.pfBrand50,
         borderRadius: BorderRadius.circular(11),
       ),
       alignment: Alignment.center,
@@ -1202,11 +1213,46 @@ class _MenuItem {
     required this.emoji,
     required this.label,
     required this.onTap,
+    this.danger = false,
   });
 
   final String emoji;
   final String label;
+  final bool danger;
   final VoidCallback onTap;
+}
+
+/// 测试用 — 清理业务数据二次确认(2026-09-07):
+Future<void> _confirmClearBusinessData(BuildContext context) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (dctx) => AlertDialog(
+      title: const Text('清理业务数据?'),
+      content: const Text(
+        '将删除所有任务/手账/复盘/累计番茄(同步冲突条目保留)。\n\n'
+        '你的登录态、设置、标签、项目保留。\n\n'
+        '此操作不可撤销 —— 测试用,正式版会移除。',
+        style: TextStyle(fontSize: 14, height: 1.5),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dctx, false),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(dctx, true),
+          style: TextButton.styleFrom(foregroundColor: Colors.red),
+          child: const Text('确认清理'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true) return;
+  if (!context.mounted) return;
+  await context.read<TaskProvider>().clearBusinessData();
+  if (!context.mounted) return;
+  ScaffoldMessenger.of(context)
+      .showSnackBar(const SnackBar(content: Text('业务数据已清空')));
 }
 
 /// 菜单卡(.menu-card):surface 圆角 22,行间 line 分割。
@@ -1253,13 +1299,15 @@ class _MenuRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final dangerColor = theme.colorScheme.error;
+    final labelColor = item.danger ? dangerColor : theme.colorScheme.onSurface;
     return InkWell(
       onTap: item.onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 14),
         child: Row(
           children: [
-            _IconBlock(emoji: item.emoji),
+            _IconBlock(emoji: item.emoji, danger: item.danger),
             const SizedBox(width: 13),
             Expanded(
               child: Text(
@@ -1267,11 +1315,15 @@ class _MenuRow extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
-                  color: theme.colorScheme.onSurface,
+                  color: labelColor,
                 ),
               ),
             ),
-            Icon(Icons.chevron_right, size: 18, color: theme.pfMuted),
+            Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: item.danger ? dangerColor : theme.pfMuted,
+            ),
           ],
         ),
       ),

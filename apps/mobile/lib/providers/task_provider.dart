@@ -1355,6 +1355,16 @@ class TaskProvider extends ChangeNotifier {
   /// 重启才可见,且 focus 页今日番茄(DB 派生)与统计页(内存派生)分叉。
   /// 重新水合 + todayPomos 与 DB 同源重算;_focusTaskId 保留(对端删了
   /// 专注任务时 focusTask getter 自然返回 null 兜底)。
+  /// 测试用(2026-09-07):清空任务/手账/复盘/会话 + meta 缓存;
+  /// 保留登录态与 id 序列号,reload 后用户仍在原登录态可继续添加数据。
+  /// **上线前删除**此方法 + UI 入口,避免误操作清空。
+  Future<void> clearBusinessData() async {
+    final db = _db;
+    if (db == null) return;
+    await db.clearBusinessData();
+    await reloadFromDb();
+  }
+
   Future<void> reloadFromDb() async {
     final db = _db;
     if (db == null) return;

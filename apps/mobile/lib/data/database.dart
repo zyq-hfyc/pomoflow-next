@@ -914,6 +914,32 @@ class AppDatabase {
 
   Future<void> close() => _db.close();
 
+  /// 测试用(2026-09-07):清空所有业务数据(任务/手账/复盘/会话 + meta 缓存);
+  /// 保留 schema_version、账户/同步配置(token、device_id、user_id、
+  /// last_seq、next_id 等)—— 重置后用户仍在原登录态,可重新添加数据继续测。
+  /// **正式上线前删除**此方法与 UI 入口,避免误操作清空。
+  Future<void> clearBusinessData() async {
+    final raw = _db;
+    // 子任务依赖 tasks,先清
+    await raw.delete('subtasks');
+    await raw.delete('tasks');
+    await raw.delete('journals');
+    await raw.delete('daily_reviews');
+    await raw.delete('weekly_reviews');
+    await raw.delete('monthly_reviews');
+    await raw.delete('yearly_reviews');
+    await raw.delete('pomodoro_sessions');
+    // meta 缓存:today_pomos 与 sessions 同步重算(清空即归 0);
+    // today_review 是 focus 页「今日回顾」卡文本,清掉回退占位文案。
+    await raw.delete(
+      'meta',
+      where: 'k IN (?, ?)',
+      whereArgs: ['today_pomos', 'today_review'],
+    );
+    // last_seq / next_id / schema_version / tokens / device_id / user_id 保留,
+    // 保证登录态、id 序列号不被打断。
+  }
+
   // === meta ===================================================================
 
   Future<String?> getMeta(String k) async {
