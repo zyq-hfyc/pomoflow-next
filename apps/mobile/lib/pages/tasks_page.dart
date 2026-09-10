@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -53,9 +55,9 @@ class _TasksPageState extends State<TasksPage> {
   /// 本帧已消费的 pendingLocateTaskId,避免同一 intent 重复触发滚动。
   String? _consumedLocate;
 
-  /// 跳转定位高亮(2026-09-09 修 Bug 2):_doLocate 完成后置上,持久保留
-  /// 直到下次跳转或用户切视图。让模板在被定位后保持视觉"选中"
-  /// 状态(与桌面 selectedTask 的语义对齐),而不是闪一下。
+  /// 跳转定位高亮(2026-09-09 修 Bug 2):_doLocate 一进来就置上(2026-09-10
+  /// 与滚动解耦),持久保留到下次跳转或用户切视图。让模板在被定位后
+  /// 保持视觉"选中"状态(与桌面 selectedTask 的语义对齐),而不是闪一下。
   String? _focusedId;
 
   @override
@@ -520,6 +522,13 @@ class _TasksPageState extends State<TasksPage> {
   /// 两阶段滚动:① animateTo 估算 offset(SliverList 懒构建,
   /// GlobalKey 离屏太远时 currentContext 为 null;把目标拉到 viewport
   /// 让其 built)→ ② Scrollable.ensureVisible 精修到 alignment 0.3。
+  ///
+  /// 2026-09-10 修 Bug 2 真根因:`_focusedId` 原先在 `await _scrollTo(id)`
+  /// **之后**才 setState,于是「高亮」被绑死在「滚动成功」上——真机上
+  /// animateTo 被中断 / ensureVisible 目标失活抛异常时,整段跳过
+  /// setState,卡片既不亮也看不出哪里错了,表现正是用户报的
+  /// 「跳转到了 A,但 A 没有被选中」。现在高亮与滚动解耦:先置高亮,
+  /// 滚动失败只记日志不影响定位结果。
   Future<void> _doLocate(String id) async {
     final nav = context.read<NavProvider>();
     final provider = context.read<TaskProvider>();
@@ -533,27 +542,42 @@ class _TasksPageState extends State<TasksPage> {
       _consumedLocate = null;
       return;
     }
+    if (!mounted) return;
     // 取本帧最新 filtered(若 setState 改 _view 需重读);build 里已算过,
     // 但 callback 已是 post-frame,这里重算一次最稳。
     final filteredNow = _applyFilters(provider.viewTasks(_view));
     final inCurrent = filteredNow.any((t) => t.id == id);
-    if (!inCurrent) {
-      // 切到「重复」视图,filter 重算需一帧,再 postFrame 内继续。
-      setState(() => _view = '重复');
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _scrollTo(id);
-      });
+
+    // 高亮 = 「这次定位到谁」,与滚动成败无关,先置上;持久保留到下次
+    // locate 或用户**主动**切视图(chips onSelect 负责清)。这里程序性
+    // 切到「重复」视图不算用户切视图,不能顺手清掉。
+    setState(() {
+      _focusedId = id;
+      if (!inCurrent) _view = '重复';
+    });
+
+    if (inCurrent) {
+      await _scrollToGuarded(id);
     } else {
-      await _scrollTo(id);
+      // 切到「重复」视图后 filter 需一帧重算,再 postFrame 内滚。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_scrollToGuarded(id));
+      });
     }
+
     if (!mounted) return;
-    // 跳转定位视觉高亮(2026-09-09 修 Bug 2 第二次):持久保留到下次
-    // locate 或 _view 改变。切 _view 时清掉,避免视图切换后旧模板
-    // 仍带高亮的误导。
-    setState(() => _focusedId = id);
     nav.consumePendingLocate();
     _consumedLocate = null;
+  }
+
+  /// [_scrollTo] 的兜底包装:滚动是"尽力而为"的体验优化,失败不能
+  /// 影响定位本身,也不能把异常抛进 postFrame 回调变成未捕获错误。
+  Future<void> _scrollToGuarded(String id) async {
+    try {
+      await _scrollTo(id);
+    } catch (e, st) {
+      debugPrint('locate scroll failed (id=$id): $e\n$st');
+    }
   }
 
   /// 实际执行滚动:两阶段估算 + 精修。
