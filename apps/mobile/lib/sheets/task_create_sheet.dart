@@ -680,6 +680,36 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
     await _loadSubtasks();
   }
 
+  /// 实例 → 所属模板查找(TaskProvider 内存列表;孤儿 → null,
+  /// 不加 DB 兜底:删模板两端都级联删实例,孤儿只会来自同步竞态)。
+  PfTask? _templateOf(PfTask task) {
+    for (final t in context.read<TaskProvider>().tasks) {
+      if (t.id == task.repeatParentId) return t;
+    }
+    return null;
+  }
+
+  /// 系列行:kv 样式,找到模板时整行可点(brand 色)→ 关当前
+  /// sheet 再开模板详情;找不到时 muted 显示「模板已删除」。
+  Widget _seriesRow(BuildContext context, PfTask task, ThemeData theme) {
+    final template = _templateOf(task);
+    final row = _kv(
+      '属于重复系列',
+      template?.title ?? '模板已删除',
+      theme,
+      color: template != null ? theme.pfBrand700 : theme.pfMuted,
+    );
+    if (template == null) return row;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        Navigator.pop(context);
+        showTaskDetailSheet(context, template);
+      },
+      child: row,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final task = widget.task;
@@ -706,6 +736,9 @@ class _TaskDetailBodyState extends State<_TaskDetailBody> {
         _kv('番茄', '🍅 ${task.pomoLabel}', theme),
         _kv('提醒', task.reminderLabel, theme),
         _kv('重复', task.repeatLabel, theme),
+        // 重复实例 → 所属系列行(2026-09-08):点击跳模板详情,解决
+        // "实例淹没模板"问题;孤儿实例(模板被删)不可点。
+        if (task.isRepeatInstance) _seriesRow(context, task, theme),
         const SizedBox(height: 12),
         // === 子任务清单(P1 实体化;随同步跨端)===
         _SubtaskSection(

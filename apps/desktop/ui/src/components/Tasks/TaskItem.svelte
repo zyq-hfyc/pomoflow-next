@@ -9,7 +9,7 @@
   //   - tags 灰色 #tag 形式,最多显示 3 个
   //   - 进度点(最多 8 个)展示 completed_pomodoros / estimated_pomodoros
 
-  import { Check, Play } from "lucide-svelte";
+  import { Check, Play, Repeat as RepeatIcon } from "lucide-svelte";
   import type { Task, Tag } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
   import { datePart } from "../../lib/dueDate";
@@ -41,6 +41,27 @@
     ],
   );
   const dueLabel = $derived(task.due_date ? datePart(task.due_date) : "");
+
+  // 重复模板徽章(2026-09-08 可发现性批):模板 = 带规则且非实例
+  // (repeat_parent_id 为空);实例一律 repeat="none",天然不命中。
+  // 规则文案走 enum.repeat,注意 core 值 weekdays → 字典键 weekday
+  // (与 TaskDetailPanel 的 REPEAT_DICT_KEY 同口径)。
+  const REPEAT_BADGE_KEY: Record<string, keyof typeof t.enum.repeat> = {
+    daily: "daily",
+    weekdays: "weekday",
+    weekly: "weekly",
+    monthly: "monthly",
+    yearly: "yearly",
+    custom: "custom",
+  };
+  const isRepeatTemplate = $derived(
+    !!task.repeat && task.repeat !== "none" && !task.repeat_parent_id,
+  );
+  const repeatText = $derived.by(() => {
+    if (!isRepeatTemplate) return "";
+    const key = REPEAT_BADGE_KEY[task.repeat ?? ""];
+    return key ? t.enum.repeat[key] : "";
+  });
 </script>
 
 <div
@@ -98,8 +119,11 @@
       </div>
     {/if}
 
-    <!-- 第三行：进度点 + 番茄数 + 日期 -->
+    <!-- 第三行：重复徽章 + 进度点 + 番茄数 + 日期 -->
     <div class="row-3">
+      {#if repeatText}
+        <span class="repeat-badge"><RepeatIcon size={11} />{repeatText}</span>
+      {/if}
       {#if estimated > 0}
         <span class="progress">
           <span class="dots">
@@ -210,6 +234,20 @@
     border-radius: 4px;
     color: var(--pri-color, var(--color-accent, #e74c3c));
     background: color-mix(in srgb, var(--pri-color, var(--color-accent, #e74c3c)) 12%, transparent);
+    flex-shrink: 0;
+  }
+  /* 重复模板徽章:仿 .pri-badge 但固定品牌色 + 胶囊形,
+     与移动端品牌 pill(pfBrand50/pfBrand700)对位。 */
+  .repeat-badge {
+    font-size: 0.7rem;
+    font-weight: 500;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    color: var(--color-accent, #e74c3c);
+    background: color-mix(in srgb, var(--color-accent, #e74c3c) 12%, transparent);
     flex-shrink: 0;
   }
 

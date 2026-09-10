@@ -186,13 +186,15 @@ class _TasksPageState extends State<TasksPage> {
           child: Padding(
             padding: const EdgeInsets.only(top: 14),
             child: PfChipsRow(
-              // 终稿 P1:chips 7→5(手账/随手记迁至手账页)
+              // 终稿 P1:chips 7→5(手账/随手记迁至手账页);
+              // 2026-09-08 追加「重复」:只列重复模板(源头任务)。
               options: const [
                 ('今天', '今天'),
                 ('明天', '明天'),
                 ('本周', '本周'),
                 ('计划', '计划'),
                 ('已完成', '已完成'),
+                ('重复', '重复'),
               ],
               selected: _view,
               onSelect: (v) => setState(() => _view = v),
@@ -713,6 +715,28 @@ class _TaskCard extends StatelessWidget {
                             ),
                             child: Text(
                               task.project,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                                color: theme.pfBrand700,
+                              ),
+                            ),
+                          ),
+                        // 重复模板徽章(2026-09-08):标识"源头任务",
+                        // 样式对齐项目 pill;实例卡不加(靠 repeatParentId 区分)。
+                        // repeatLabel 对未知脏值回「不重复」,双保险防空pill。
+                        if (task.isRepeatTemplate && task.repeatLabel != '不重复')
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: theme.pfBrand50,
+                              borderRadius: BorderRadius.circular(PfRadii.pill),
+                            ),
+                            child: Text(
+                              '🔁 ${task.repeatLabel}',
                               style: TextStyle(
                                 fontSize: 11.5,
                                 fontWeight: FontWeight.w600,

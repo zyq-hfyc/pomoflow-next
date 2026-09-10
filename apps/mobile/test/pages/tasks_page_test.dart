@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:pomoflow_mobile/models/task.dart';
 import 'package:pomoflow_mobile/pages/tasks_page.dart';
 import 'package:pomoflow_mobile/providers/task_provider.dart';
 import 'package:pomoflow_mobile/theme/app_theme.dart';
@@ -47,4 +48,45 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('▶'), findsNothing);
   });
+
+  /// 重复模板可发现性回归锁(2026-09-08):
+  /// - 模板卡渲染 🔁 pill 徽章(含规则名),实例卡不渲染;
+  /// - 「重复」chip 只列模板,实例被滤掉。
+  testWidgets(
+    'repeat template shows 🔁 pill and 重复 view lists only templates',
+    (tester) async {
+      final provider = TaskProvider.demo();
+      final today = DateTime.now();
+      await provider.addTask(
+        PfTask(id: 'tpl-1', title: '每周复盘模板', repeat: 'weekly', dueAt: today),
+      );
+      await provider.addTask(
+        PfTask(
+          id: 'inst-1',
+          title: '每周复盘实例',
+          repeatParentId: 'tpl-1',
+          dueAt: today,
+        ),
+      );
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TaskProvider>.value(
+          value: provider,
+          child: MaterialApp(theme: buildAppTheme(), home: const TasksPage()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 今天视图:模板与实例卡都在,🔁 徽章只属于模板(demo 内存库
+      // 不生成实例,种子无重复任务,徽章应唯一)。
+      expect(find.text('每周复盘模板'), findsOneWidget);
+      expect(find.text('每周复盘实例'), findsOneWidget);
+      expect(find.text('🔁 每周'), findsOneWidget);
+
+      // 切「重复」chip → 只剩模板,实例消失。
+      await tester.tap(find.text('重复'));
+      await tester.pumpAndSettle();
+      expect(find.text('每周复盘模板'), findsOneWidget);
+      expect(find.text('每周复盘实例'), findsNothing);
+    },
+  );
 }

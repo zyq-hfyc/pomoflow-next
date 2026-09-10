@@ -11,7 +11,7 @@
   //   - 手账模式:任务页中栏渲染 JournalView(无独立路由);
   //     随手记同理渲染 NotesView(journal 实体,与手机「手账」同步)
 
-  import { Search, Sun, Sunrise, CalendarDays, CalendarCheck, CircleCheck, CalendarRange, NotebookPen, Folder, ChevronDown, ChevronRight, Plus, MoreVertical, Pencil, Trash2 } from "lucide-svelte";
+  import { Search, Sun, Sunrise, CalendarDays, CalendarCheck, CircleCheck, Repeat, CalendarRange, NotebookPen, Folder, ChevronDown, ChevronRight, Plus, MoreVertical, Pencil, Trash2 } from "lucide-svelte";
   import type { Component } from "svelte";
   import type { Project, Task } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
@@ -19,7 +19,7 @@
 
   const t = $derived(getDict());
 
-  type FilterKey = "today" | "tomorrow" | "week" | "planned" | "completed" | "journal" | "notes" | "";
+  type FilterKey = "today" | "tomorrow" | "week" | "planned" | "completed" | "repeat" | "journal" | "notes" | "";
 
   interface Props {
     projects: Project[];
@@ -100,6 +100,12 @@
     }
     if (key === "planned") filtered = items.filter((t) => t.due_date !== null && t.due_date !== undefined);
     if (key === "completed") filtered = items.filter((t) => t.status === "completed");
+    // 重复:仅模板(带规则且 repeat_parent_id 为空),与 TasksPage 同口径。
+    if (key === "repeat") {
+      filtered = items.filter(
+        (t) => !!t.repeat && t.repeat !== "none" && !t.repeat_parent_id,
+      );
+    }
 
     const minutes = filtered.reduce(
       (s, t) => s + (t.estimated_pomodoros || 0) * (t.pomodoro_duration || 25),
@@ -165,6 +171,8 @@
     { key: "week", icon: CalendarDays as any, label: t.filter.week },
     { key: "planned", icon: CalendarCheck as any, label: t.sidebar.planned },
     { key: "completed", icon: CircleCheck as any, label: t.sidebar.completed },
+    // 重复(2026-09-08 可发现性批):只列模板任务,方便找回"源头任务"。
+    { key: "repeat", icon: Repeat as any, label: t.filter.repeat },
     { key: "journal", icon: CalendarRange as any, label: t.sidebar.journal },
     { key: "notes", icon: NotebookPen as any, label: t.sidebar.notes },
   ]);

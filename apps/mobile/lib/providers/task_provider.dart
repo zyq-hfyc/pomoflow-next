@@ -532,7 +532,7 @@ class TaskProvider extends ChangeNotifier {
 
   /// 手账 = 任务月历(桌面 JournalView);随手记 = 四类 journal 列表
   /// (桌面 NotesView)。
-  static const taskViews = ['今天', '明天', '本周', '计划', '已完成', '手账', '随手记'];
+  static const taskViews = ['今天', '明天', '本周', '计划', '已完成', '重复', '手账', '随手记'];
 
   /// 视图分流(桌面 TasksPage 同口径,2026-09-05 对齐批):
   /// - 今天/明天/本周:按 dueAt 日期落窗口,**已完成保留**(排序沉底);
@@ -566,6 +566,9 @@ class TaskProvider extends ChangeNotifier {
       '本周' => _tasks.where((t) => inWeek(t.dueAt)),
       '计划' => _tasks.where((t) => true),
       '已完成' => _tasks.where((t) => t.completed),
+      // 重复 = 仅模板任务(源头),无日期条件 —— 解决"实例淹没模板找不到"问题;
+      // 已完成模板靠 _taskListCompare 沉底。
+      '重复' => _tasks.where((t) => t.isRepeatTemplate),
       _ => const <PfTask>[],
     };
     final list = base.toList()..sort(_taskListCompare);

@@ -39,11 +39,15 @@
     task: ApiTask;
     projects: Project[];
     allTags: Tag[];
+    // 重复实例的所属模板(TasksPage 从列表态解析;孤儿实例 → null)。
+    // 2026-09-08 可发现性批:实例详情可一键跳回模板。
+    templateTask?: ApiTask | null;
+    onOpenTemplate?: (task: ApiTask) => void;
     onClose: () => void;
     onChanged: () => void;
   }
 
-  let { task, projects, allTags, onClose, onChanged }: Props = $props();
+  let { task, projects, allTags, templateTask, onOpenTemplate, onClose, onChanged }: Props = $props();
 
   // === title / note 草稿(IME 安全:输入只改本地,失焦才提交) ===
   let titleDraft = $state(untrack(() => task.title));
@@ -513,6 +517,27 @@
         {/each}
       </select>
     </div>
+
+    <!-- 所属重复系列(仅实例):点击跳回模板详情;孤儿实例显示已删除 -->
+    {#if task.repeat_parent_id}
+      <div class="row">
+        <span class="row-label">
+          <RepeatIcon size={16} />
+          {t.task.detailRepeat}
+        </span>
+        {#if templateTask}
+          <button
+            type="button"
+            class="series-link"
+            onclick={() => templateTask && onOpenTemplate?.(templateTask)}
+          >
+            {fmt(t.task.detailRepeatSeries, { title: templateTask.title })}
+          </button>
+        {:else}
+          <span class="series-missing">{t.task.repeatTemplateMissing}</span>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   <!-- 4. 子任务 -->
@@ -659,6 +684,26 @@
   }
   .tags-toggle:hover {
     color: var(--color-text, #1f1d1b);
+  }
+  /* 系列跳转链(实例详情):仿 .tags-toggle 但 accent 色,表达"可点"。 */
+  .series-link {
+    font-size: 0.8rem;
+    color: var(--color-accent, #e74c3c);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .series-link:hover {
+    text-decoration: underline;
+  }
+  .series-missing {
+    font-size: 0.8rem;
+    color: var(--color-text-muted, #6b6864);
   }
   .tags-editor {
     width: 100%;

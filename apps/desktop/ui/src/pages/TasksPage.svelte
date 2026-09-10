@@ -54,7 +54,7 @@
     tags?: Tag[];
     subtasks?: { id: string; title: string; is_completed: boolean; position: number }[];
   };
-  type FilterKey = "today" | "tomorrow" | "week" | "planned" | "completed" | "journal" | "notes" | "";
+  type FilterKey = "today" | "tomorrow" | "week" | "planned" | "completed" | "repeat" | "journal" | "notes" | "";
 
   let tasks = $state<TaskWithTags[]>([]);
   let projects = $state<Project[]>([]);
@@ -157,6 +157,12 @@
         startDate: completedFilterStartDate,
         endDate: completedFilterEndDate,
       });
+    } else if (filter === "repeat") {
+      // 重复(2026-09-08 可发现性批):只列模板(源头任务),无日期条件;
+      // 实例(repeat_parent_id 非空)不进 —— 与移动端「重复」视图同口径。
+      result = result.filter(
+        (t) => !!t.repeat && t.repeat !== "none" && !t.repeat_parent_id,
+      );
     } else if (filter === "journal") {
       // 手账模式：所有带 due_date 的任务（含 completed，可勾选切换）— v1 语义
       result = result.filter((t) => !!t.due_date);
@@ -269,6 +275,7 @@
       week: t.filter.week,
       planned: t.sidebar.planned,
       completed: t.sidebar.completed,
+      repeat: t.filter.repeat,
       journal: t.sidebar.journal,
       notes: t.sidebar.notes,
       "": t.task.task,
@@ -696,6 +703,10 @@
       task={selectedTask}
       {projects}
       allTags={tags}
+      templateTask={selectedTask.repeat_parent_id
+        ? (tasks.find((x) => x.id === selectedTask!.repeat_parent_id) ?? null)
+        : null}
+      onOpenTemplate={(tpl) => (selectedTask = tpl)}
       onClose={closePanel}
       onChanged={onPanelChanged}
     />
