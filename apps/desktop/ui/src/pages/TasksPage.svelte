@@ -364,6 +364,10 @@
         .getElementById(`task-${id}`)
         ?.scrollIntoView({ behavior: "instant", block: "center" });
       pendingScrollId = null;
+      // 展开意图一次性:消费后清空,否则再次跳转**同一组**时 expandKey
+      // 值不变(非 null → 非 null),GroupedTaskList 的 $effect 收不到
+      // 变更,组若已被用户手动折叠就不会重新展开(2026-09-10)。
+      groupedExpandKey = null;
     });
   });
 

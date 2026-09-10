@@ -17,6 +17,7 @@
   //   - 每组可独立折叠（点头部切换）。
   //   - 内部仍用 TaskItem 渲染单条。
 
+  import { untrack } from "svelte";
   import { ChevronDown, ChevronRight } from "lucide-svelte";
   import type { Task, Tag } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
@@ -44,14 +45,26 @@
 
   let collapsed = $state<Set<string>>(new Set());
 
+  // 跳转定位(2026-09-09)引入,2026-09-10 修真根因:此 effect 以前
+  // **读** collapsed 又**写** collapsed(且每次都 new Set → 引用必变),
+  // expandKey 一旦非 null 就自激,不消耗 expandKey 也不收敛。
+  // Svelte 5 触发 effect_update_depth_exceeded 后中断整批 flush(含
+  // TasksPage 的渲染),表现为:跳转模板 A 成功后,再点任何任务
+  // 状态变了但界面不再更新(选中不切换、右栏详情不刷新),直到重启。
+  //
+  // 修法:只让 expandKey 进依赖图,对 collapsed 的读+写放 untrack。
+  // 顺带语义修正:用户手动折叠「跳转目标」组后不会被 effect 立刻弹开
+  // (expandKey 没变,effect 不会重跑)。
   $effect(() => {
-    // 读 expandKey 才能响应;读到 null 直接返回。
-    if (expandKey === null) return;
     const target = expandKey;
-    // 直接修改副本再赋值,Svelte 5 Set 是响应式的但需赋值触发。
-    const next = new Set(collapsed);
-    next.delete(target);
-    collapsed = next;
+    if (target === null) return;
+    untrack(() => {
+      if (!collapsed.has(target)) return;
+      // 直接修改副本再赋值,Svelte 5 Set 是响应式的但需赋值触发。
+      const next = new Set(collapsed);
+      next.delete(target);
+      collapsed = next;
+    });
   });
 
   function formatHeader(dateStr: string, groupTasks: TaskWithTags[]): string {
