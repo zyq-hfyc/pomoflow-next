@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -53,8 +55,14 @@ class _TasksPageState extends State<TasksPage> {
   /// 本帧已消费的 pendingLocateTaskId,避免同一 intent 重复触发滚动。
   String? _consumedLocate;
 
+  /// 跳转定位高亮(2026-09-09 修 Bug 2):_doLocate 完成后置上,500ms 后清掉。
+  /// 复用现有 pattern(本地 state + Timer),不引入新 provider。
+  String? _focusedId;
+  Timer? _focusTimer;
+
   @override
   void dispose() {
+    _focusTimer?.cancel();
     _pageCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
@@ -319,6 +327,7 @@ class _TasksPageState extends State<TasksPage> {
                 return _TaskCard(
                   key: _cardKeys.putIfAbsent(t.id, GlobalKey.new),
                   task: t,
+                  focused: _focusedId == t.id,
                 );
               },
             ),
@@ -538,6 +547,14 @@ class _TasksPageState extends State<TasksPage> {
       await _scrollTo(id);
     }
     if (!mounted) return;
+    // 跳转定位视觉高亮(2026-09-09 修 Bug 2):target 卡 500ms 内 brand 边框
+    // + pfBrand50 底色。Timer 在 dispose / 新一轮 locate 时 cancel 防重入。
+    _focusTimer?.cancel();
+    setState(() => _focusedId = id);
+    _focusTimer = Timer(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      setState(() => _focusedId = null);
+    });
     nav.consumePendingLocate();
     _consumedLocate = null;
   }
@@ -710,9 +727,13 @@ class _FilterChip extends StatelessWidget {
 /// 终稿 P1:meta 收敛为 项目 pill + 到期日 两项(🍅/子任务计数移除);
 /// 已完成态整卡 Opacity(0.55)(不再灰字+删除线双信号)。
 class _TaskCard extends StatelessWidget {
-  const _TaskCard({required this.task, super.key});
+  const _TaskCard({required this.task, this.focused = false, super.key});
 
   final PfTask task;
+
+  /// 跳转定位高亮(2026-09-09 修 Bug 2):brand 边框 + pfBrand50 底色,
+  /// 500ms 自动消退(由父 setState _focusedId=null 驱动)。
+  final bool focused;
 
   @override
   Widget build(BuildContext context) {
@@ -722,12 +743,17 @@ class _TaskCard extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       child: Opacity(
         opacity: task.completed ? 0.55 : 1.0,
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOut,
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
           decoration: BoxDecoration(
-            color: theme.pfSurface,
+            color: focused ? theme.pfBrand50 : theme.pfSurface,
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: theme.pfLine),
+            border: Border.all(
+              color: focused ? theme.pfBrand : theme.pfLine,
+              width: focused ? 1.5 : 1,
+            ),
             boxShadow: theme.pfShadowSm,
           ),
           child: Row(

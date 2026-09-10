@@ -74,6 +74,9 @@
   // === 跳转定位(2026-09-09):智能滚动到模板任务 ===
   let pendingScrollId = $state<string | null>(null);
   let groupedExpandKey = $state<string | null>(null);
+  // 程序性滚动锁(2026-09-09 修 Bug 1):selectTask 抢占,阻断 handleOpenTemplate
+  // 的残留 tick().then 滚动回调,避免 selectedTask 已切后还被拽回旧位。
+  let scrollLocked = $state(false);
 
   // 组 key 口径与 GroupedTaskList.svelte L75-77 一致。
   function groupKeyFor(task: TaskWithTags): string {
@@ -349,7 +352,8 @@
     void filter;
     void selectedProject;
     void groupedExpandKey;
-    if (!id) return;
+    void scrollLocked;
+    if (!id || scrollLocked) return;
     // 让 Svelte 先把视图/折叠状态刷到 DOM。
     tick().then(() => {
       document
@@ -437,7 +441,13 @@
   }
 
   function selectTask(task: TaskWithTags) {
+    // 用户主动切:锁住程序性滚动,tick 后再放;handleOpenTemplate 的
+    // 旧 tick().then 大半已把 pendingScrollId 清掉,新 effect 不会再滚。
+    scrollLocked = true;
     selectedTask = task;
+    tick().then(() => {
+      scrollLocked = false;
+    });
   }
 
   function closePanel() {
