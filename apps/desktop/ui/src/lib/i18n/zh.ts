@@ -61,6 +61,9 @@ export const zh = {
     tag: '标签',
     priority: '优先级',
     repeat: '重复',
+    // 筛选条「重复任务」按钮(2026-09-11):与侧边「重复」视图菜单区分,
+    // 两个字容易误解为"重复出现的东西",四个字语义明确
+    repeatTasks: '重复任务',
     date: '日　期',
     all: '全部',
     allProject: '全部项目',

@@ -156,9 +156,9 @@
       class="preset-btn"
       class:on={filterRepeat}
       onclick={() => setFilterRepeat(!filterRepeat)}
-      title={t.filter.repeat}
+      title={t.filter.repeatTasks}
     >
-      {t.filter.repeat}
+      {t.filter.repeatTasks}
     </button>
 
     {#if hasFilter}
