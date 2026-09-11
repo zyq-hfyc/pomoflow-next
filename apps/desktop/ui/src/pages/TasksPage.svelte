@@ -95,6 +95,7 @@
   let plannedFilterTag = $state<string | null>(null);
   let plannedFilterPriority = $state<Priority | null>(null);
   let plannedFilterPreset = $state<"week" | "month" | null>(null);
+  let plannedFilterRepeat = $state(false);
   let plannedFilterStartDate = $state("");
   let plannedFilterEndDate = $state("");
 
@@ -102,6 +103,7 @@
   let completedFilterTag = $state<string | null>(null);
   let completedFilterPriority = $state<Priority | null>(null);
   let completedFilterPreset = $state<"week" | "month" | null>(null);
+  let completedFilterRepeat = $state(false);
   let completedFilterStartDate = $state("");
   let completedFilterEndDate = $state("");
 
@@ -157,6 +159,7 @@
         tag: plannedFilterTag,
         priority: plannedFilterPriority,
         preset: plannedFilterPreset,
+        repeatOnly: plannedFilterRepeat,
         startDate: plannedFilterStartDate,
         endDate: plannedFilterEndDate,
       });
@@ -167,6 +170,7 @@
         tag: completedFilterTag,
         priority: completedFilterPriority,
         preset: completedFilterPreset,
+        repeatOnly: completedFilterRepeat,
         startDate: completedFilterStartDate,
         endDate: completedFilterEndDate,
       });
@@ -204,6 +208,8 @@
       tag: string | null;
       priority: Priority | null;
       preset: "week" | "month" | null;
+      // 重复任务开关(2026-09-11):true = 只看重复模板,口径与「重复」视图一致
+      repeatOnly: boolean;
       startDate: string;
       endDate: string;
     },
@@ -212,6 +218,11 @@
     if (f.project !== null) r = r.filter((t) => t.project_id === f.project);
     if (f.tag !== null) r = r.filter((t) => (t.tags ?? []).some((tag) => tag.id === f.tag));
     if (f.priority !== null) r = r.filter((t) => t.priority === f.priority);
+    if (f.repeatOnly) {
+      r = r.filter(
+        (t) => !!t.repeat && t.repeat !== "none" && !t.repeat_parent_id,
+      );
+    }
     if (f.preset === "week") {
       const now = new Date();
       const dow = now.getDay();
@@ -685,6 +696,8 @@
             setFilterPriority={(v) => (completedFilterPriority = v)}
             filterPreset={completedFilterPreset}
             setFilterPreset={(v) => (completedFilterPreset = v)}
+            filterRepeat={completedFilterRepeat}
+            setFilterRepeat={(v) => (completedFilterRepeat = v)}
             filterStartDate={completedFilterStartDate}
             setFilterStartDate={(v) => (completedFilterStartDate = v)}
             filterEndDate={completedFilterEndDate}
@@ -702,6 +715,8 @@
             setFilterPriority={(v) => (plannedFilterPriority = v)}
             filterPreset={plannedFilterPreset}
             setFilterPreset={(v) => (plannedFilterPreset = v)}
+            filterRepeat={plannedFilterRepeat}
+            setFilterRepeat={(v) => (plannedFilterRepeat = v)}
             filterStartDate={plannedFilterStartDate}
             setFilterStartDate={(v) => (plannedFilterStartDate = v)}
             filterEndDate={plannedFilterEndDate}

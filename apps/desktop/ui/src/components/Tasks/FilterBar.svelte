@@ -1,8 +1,11 @@
 <script lang="ts">
-  // 多维筛选条 —— v1 同款 6 个筛选维度：项目 / 标签 / 优先级 / 本周 / 本月 / 日期范围。
+  // 多维筛选条 —— v1 同款 7 个筛选维度：项目 / 标签 / 优先级 / 本周 / 本月 /
+  // 重复任务 / 日期范围。
   //
   // 设计要点：
   //   - 已完成 / 已计划 视图各传入独立 state（切视图互不影响）。
+  //   - 「重复任务」开关：只看重复模板（带规则且非实例），口径与「重复」
+  //     视图一致；与其余筛选独立 AND（可与本周/本月/日期范围叠加）。
   //   - 任何筛选有值 → 显示"清除"按钮。
   //   - 仅在 onExport 传入时显示"导出"按钮（用于"已计划"视图）。
   //   - 受控组件：父组件持有全部 state；本组件只暴露 setter。
@@ -27,6 +30,9 @@
     setFilterPriority: (v: Priority | null) => void;
     filterPreset: Preset;
     setFilterPreset: (v: Preset) => void;
+    // 重复任务开关（2026-09-11）：true = 只看重复模板
+    filterRepeat: boolean;
+    setFilterRepeat: (v: boolean) => void;
     filterStartDate: string;
     setFilterStartDate: (v: string) => void;
     filterEndDate: string;
@@ -45,6 +51,8 @@
     setFilterPriority,
     filterPreset,
     setFilterPreset,
+    filterRepeat,
+    setFilterRepeat,
     filterStartDate,
     setFilterStartDate,
     filterEndDate,
@@ -57,6 +65,7 @@
       filterTag !== null ||
       filterPriority !== null ||
       filterPreset !== null ||
+      filterRepeat ||
       filterStartDate !== "" ||
       filterEndDate !== "",
   );
@@ -66,6 +75,7 @@
     setFilterTag(null);
     setFilterPriority(null);
     setFilterPreset(null);
+    setFilterRepeat(false);
     setFilterStartDate("");
     setFilterEndDate("");
   }
@@ -140,6 +150,15 @@
       onclick={() => setFilterPreset(filterPreset === "month" ? null : "month")}
     >
       {t.filter.month}
+    </button>
+    <button
+      type="button"
+      class="preset-btn"
+      class:on={filterRepeat}
+      onclick={() => setFilterRepeat(!filterRepeat)}
+      title={t.filter.repeat}
+    >
+      {t.filter.repeat}
     </button>
 
     {#if hasFilter}
