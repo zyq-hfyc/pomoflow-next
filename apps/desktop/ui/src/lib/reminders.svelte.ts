@@ -103,6 +103,10 @@ async function checkOnce(): Promise<void> {
     if (Number.isNaN(dueMs)) continue;
     const reminderTime = dueMs - offset;
     if (reminderTime > now) continue; // 未到提醒时间
+    // 提醒点已超过去重窗口(fired 记录只保 7 天):放弃补弹。否则记录
+    // 会被 TTL 清理即刻删掉,30s tick 每 30 秒重弹同一条,无限循环
+    // (v1 同款写法在浏览器里标签页一关就停,桌面常驻进程才暴露)。
+    if (reminderTime < now - FIRED_TTL) continue;
     const key = `${task.id}:${reminderTime}`;
     if (fired[key]) continue; // 已触发过,去重
     if (focusing) continue; // 专注中跳过,结束后的检查会补弹
