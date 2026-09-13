@@ -165,6 +165,8 @@ void main() {
           'user_id',
           'deleted_at_ms',
           'payload',
+          // schema v21:待办勾选完成态(老 payload 缺省 active)
+          'status',
         ]) {
           expect(jCols.map((r) => r['name']), contains(c));
         }
@@ -173,7 +175,7 @@ void main() {
           'PRAGMA table_info(yearly_reviews)',
         );
         expect(yCols.map((r) => r['name']), contains('year'));
-        expect(await db.getMeta('schema_version'), '20');
+        expect(await db.getMeta('schema_version'), '21');
       } finally {
         await db.close();
       }
@@ -346,9 +348,14 @@ void main() {
       // v19 → v20 升级:legacy 库也新建 yearly_reviews
       final yCols = await db.raw.rawQuery('PRAGMA table_info(yearly_reviews)');
       expect(yCols.map((r) => r['name']), contains('year'));
-      expect(await db.getMeta('schema_version'), '20');
+      // v20 → v21 升级:legacy journals 也补 status 列,存量行走列默认
+      // 'active'(值与 core 缺键默认一致,无需数据晋升)
+      final j21Cols = await db.raw.rawQuery('PRAGMA table_info(journals)');
+      expect(j21Cols.map((r) => r['name']), contains('status'));
+      expect(legacyJ['status'], 'active');
+      expect(await db.getMeta('schema_version'), '21');
       expect((legacyRow['due_at_ms'] as int), greaterThan(0));
-      expect(await db.getMeta('schema_version'), '20');
+      expect(await db.getMeta('schema_version'), '21');
     } finally {
       await db.close();
       await tmp.delete(recursive: true);

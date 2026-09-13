@@ -1,19 +1,27 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pomoflow_mobile/models/task.dart';
 import 'package:pomoflow_mobile/pages/journal_page/record_view.dart'
-    show applyJournalFilters;
+    show applyJournalFilters, sortJournalsForDisplay;
 
 /// 手账视图筛选单测(P3h):kind/tag 精确 + 搜索标题/内容/标签模糊,
 /// 多条件叠加。对齐任务侧 _applyFilters 的叠加语义。
+/// 待办勾选批:附 sortJournalsForDisplay 沉底排序锁。
 void main() {
   PfJournal j(
     String id,
     JournalKind kind,
     String title,
     String content,
-    List<String> tags,
-  ) =>
-      PfJournal(id: id, kind: kind, title: title, content: content, tags: tags);
+    List<String> tags, {
+    String status = 'active',
+  }) => PfJournal(
+    id: id,
+    kind: kind,
+    title: title,
+    content: content,
+    tags: tags,
+    status: status,
+  );
 
   final src = [
     j('a', JournalKind.todo, '买菜', '周末的白菜和萝卜', const ['生活']),
@@ -64,5 +72,43 @@ void main() {
   test('搜索 + 筛选叠加,无命中返回空', () {
     final out = applyJournalFilters(src, kind: JournalKind.note, query: '北海道');
     expect(out, isEmpty);
+  });
+
+  group('sortJournalsForDisplay(待办勾选批:已完成沉底)', () {
+    test('completed 沉底,组内保持传入序(created_at 倒序)', () {
+      final mixed = [
+        j('a1', JournalKind.todo, '待办1', '', const [], status: 'active'),
+        j('d1', JournalKind.todo, '已完成1', '', const [], status: 'completed'),
+        j('a2', JournalKind.wish, '愿望2', '', const [], status: 'active'),
+        j('a3', JournalKind.todo, '待办3', '', const [], status: 'active'),
+        j('d2', JournalKind.plan, '已完成2', '', const [], status: 'completed'),
+      ];
+      expect(sortJournalsForDisplay(mixed).map((j) => j.id), [
+        'a1',
+        'a2',
+        'a3',
+        'd1',
+        'd2',
+      ], reason: '未完成在前保序,已完成沉底保序');
+    });
+
+    test('全 active = 原序;全 completed = 原序', () {
+      expect(sortJournalsForDisplay(src).map((x) => x.id), [
+        'a',
+        'b',
+        'c',
+        'd',
+        'e',
+      ]);
+      final allDone = [
+        j('x', JournalKind.todo, 'x', '', const [], status: 'completed'),
+        j('y', JournalKind.note, 'y', '', const [], status: 'completed'),
+      ];
+      expect(sortJournalsForDisplay(allDone).map((x) => x.id), ['x', 'y']);
+    });
+
+    test('空列表安全', () {
+      expect(sortJournalsForDisplay(const []), isEmpty);
+    });
   });
 }

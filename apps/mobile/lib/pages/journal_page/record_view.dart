@@ -27,6 +27,14 @@ List<PfJournal> applyJournalFilters(
   }).toList();
 }
 
+/// 已完成沉底(待办勾选批):active 在前、completed 沉底,组内保持传入序
+/// (= listJournals 的 created_at 倒序)。纯分区不 sort —— Dart List.sort
+/// 非稳定,分区天然保序。纯函数供单测。
+List<PfJournal> sortJournalsForDisplay(List<PfJournal> src) => [
+  ...src.where((j) => !j.isDone),
+  ...src.where((j) => j.isDone),
+];
+
 /// 手账页 · 记录 segment(终稿 B2):迁移自任务页原「随手记」chip 分支
 /// (桌面 NotesView 同构)—— 四类聚合(待办/小记/愿望/年度规划)+
 /// 四类计数卡 + kind/标签筛选 + 搜索(顶栏 🔍 经 [RecordViewState.toggleSearch]
@@ -56,11 +64,13 @@ class RecordViewState extends State<RecordView> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final tasks = context.watch<TaskProvider>();
-    final journals = applyJournalFilters(
-      tasks.journals,
-      kind: _kind,
-      tag: _tag,
-      query: _query,
+    final journals = sortJournalsForDisplay(
+      applyJournalFilters(
+        tasks.journals,
+        kind: _kind,
+        tag: _tag,
+        query: _query,
+      ),
     );
 
     return CustomScrollView(
@@ -197,7 +207,9 @@ class RecordViewState extends State<RecordView> {
   }
 }
 
-/// 手账条目卡:类型 emoji + 标题/内容 + 标签。
+/// 手账条目卡:类型 emoji + 标题/内容 + 标签。kind=todo 额外渲染方形勾选框
+/// (待办勾选批):点击翻转完成态;完成后标题划线变灰,列表层沉底
+/// ([sortJournalsForDisplay])。wish/plan/note 不显示勾选框。
 class JournalCard extends StatelessWidget {
   const JournalCard({super.key, required this.entry});
 
@@ -206,6 +218,7 @@ class JournalCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final done = entry.isDone;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -217,6 +230,16 @@ class JournalCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 勾选框在最左(对齐任务卡/桌面 JournalView 的 affordance 顺序),
+          // emoji ☑️ 保留在右侧作 kind 徽章。
+          if (entry.kind == JournalKind.todo) ...[
+            _TodoCheckbox(
+              done: done,
+              onTap: () =>
+                  context.read<TaskProvider>().toggleJournalDone(entry.id),
+            ),
+            const SizedBox(width: 10),
+          ],
           Text(entry.kind.emoji, style: const TextStyle(fontSize: 20)),
           const SizedBox(width: 12),
           Expanded(
@@ -247,7 +270,16 @@ class JournalCard extends StatelessWidget {
                 ),
                 if (entry.title.isNotEmpty) ...[
                   const SizedBox(height: 6),
-                  Text(entry.title, style: PfType.body),
+                  Text(
+                    entry.title,
+                    style: done
+                        ? PfType.body.copyWith(
+                            decoration: TextDecoration.lineThrough,
+                            decorationColor: theme.pfMuted,
+                            color: theme.pfMuted,
+                          )
+                        : PfType.body,
+                  ),
                 ],
                 if (entry.content.isNotEmpty) ...[
                   const SizedBox(height: 4),
@@ -265,6 +297,46 @@ class JournalCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 方形勾选框(待办勾选批,视觉对齐桌面 TaskCheckbox / v1):18px 方形,
+/// 未完成空框、完成主色底白 √。**独立 hit area** —— 外层卡片 GestureDetector
+/// 整卡开编辑 sheet,内层先赢手势竞技场,点勾选框不触发编辑
+/// (与任务卡 checkbox 同模式)。
+class _TodoCheckbox extends StatelessWidget {
+  const _TodoCheckbox({required this.done, required this.onTap});
+
+  final bool done;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Semantics(
+      label: done ? '待办,取消勾选' : '待办,勾选完成',
+      button: true,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          width: 18,
+          height: 18,
+          margin: const EdgeInsets.only(top: 2),
+          decoration: BoxDecoration(
+            color: done ? theme.pfBrand : Colors.transparent,
+            borderRadius: BorderRadius.circular(2),
+            border: Border.all(
+              color: done ? theme.pfBrand : theme.pfLine,
+              width: 1.5,
+            ),
+          ),
+          child: done
+              ? const Icon(Icons.check, size: 12, color: Colors.white)
+              : null,
+        ),
       ),
     );
   }

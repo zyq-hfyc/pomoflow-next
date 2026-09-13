@@ -675,6 +675,8 @@ class TaskProvider extends ChangeNotifier {
       title: entry.title,
       content: entry.content,
       tags: entry.tags,
+      // v21:待办勾选批 —— status 透传(模型默认 'active',新建无完成态)。
+      status: entry.status,
       createdAt: entry.createdAt ?? now,
       syncMeta: PfSyncMeta(
         revision: entry.syncMeta.revision,
@@ -693,7 +695,8 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// 编辑手账(P3g):内存 copyWith + revision bump,db 侧列更新 + pending。
-  /// 字段全量传(null = 不改);kind 四档。
+  /// 字段全量传(null = 不改);kind 四档。status 不在编辑面 —— copyWith
+  /// 不传即保留(勾选态由 [toggleJournalDone] 专管)。
   Future<void> editJournal(
     String id, {
     JournalKind? kind,
@@ -727,11 +730,50 @@ class TaskProvider extends ChangeNotifier {
           title: next.title,
           content: next.content,
           tags: next.tags,
+          status: next.status,
           originDevice: next.syncMeta.originDevice,
           userId: next.syncMeta.userId,
         );
       } on Exception catch (e) {
         // 同 _markPending 家族:schema 级错误打日志可见,不阻塞 UI。
+        debugPrint('updateJournalFields failed for $id: $e');
+      }
+    }
+    notifyListeners();
+  }
+
+  /// 勾选待办(待办勾选批):kind=todo 的完成态翻转 —— active ↔ completed,
+  /// revision+1 + pending(对齐 editJournal 的同步语义,复用同一落库通道)。
+  /// wish/plan/note 无 UI 勾选入口;此处不校验 kind,语义交给 UI 层保证。
+  Future<void> toggleJournalDone(String id) async {
+    final i = _journals.indexWhere((j) => j.id == id);
+    if (i < 0) return;
+    final old = _journals[i];
+    final next = old.copyWith(
+      status: old.isDone ? 'active' : 'completed',
+      syncMeta: PfSyncMeta(
+        revision: old.syncMeta.revision + 1,
+        updatedAt: DateTime.now(),
+        originDevice: _deviceIdProvider?.call() ?? '',
+        syncState: 'pending',
+        userId: _userIdProvider?.call() ?? old.syncMeta.userId,
+      ),
+    );
+    _journals[i] = next;
+    final db = _db;
+    if (db != null) {
+      try {
+        await db.updateJournalFields(
+          id: id,
+          kind: _journalKindText(next.kind),
+          title: next.title,
+          content: next.content,
+          tags: next.tags,
+          status: next.status,
+          originDevice: next.syncMeta.originDevice,
+          userId: next.syncMeta.userId,
+        );
+      } on Exception catch (e) {
         debugPrint('updateJournalFields failed for $id: $e');
       }
     }

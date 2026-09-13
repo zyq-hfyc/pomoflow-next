@@ -452,6 +452,9 @@ Map<String, Object?> coreJournalPayload(
     'id': row['id'],
     'user_id': userId,
     'kind': (row['kind'] as String?) ?? 'note',
+    // 待办完成态(v21;core serde 缺键默认 active,这里恒发真值 —— 与桌面
+    // wire 全字段显式同策略,对拍噪音小)。
+    'status': (row['status'] as String?) ?? 'active',
     'title': (row['title'] as String?) ?? '',
     'content': (row['content'] as String?) ?? '',
     'tags': tagsCsv.isEmpty
@@ -469,6 +472,9 @@ Map<String, Object?> journalFieldsFromCore(Map? p) {
   if (p == null) return const {};
   final out = <String, Object?>{};
   if (p['kind'] is String) out['kind'] = p['kind'] as String;
+  // 待办完成态:老 payload 无此键 → 不落列(行默认 'active',与 core 缺键
+  // default 语义一致)。
+  if (p['status'] is String) out['status'] = p['status'] as String;
   if (p['title'] is String) out['title'] = p['title'] as String;
   if (p['content'] is String) out['content'] = p['content'] as String;
   if (p['tags'] is List) {

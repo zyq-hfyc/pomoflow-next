@@ -41,12 +41,16 @@ void main() {
       expect(payload['kind'], 'wish');
       expect(payload['tags'], ['旅行', '长期']);
       expect(payload['user_id'], 'u-1');
+      // v21:status 列随 pending 行可查,模型默认 'active' 上云
+      expect(pending.first['status'], 'active');
+      expect(payload['status'], 'active');
 
       // push 成功 → markJournalsSynced
       await db.markJournalsSynced(['jjjjjjjj-jjjj-4jjj-8jjj-jjjjjjjjjj03']);
       expect(await db.listPendingJournals(), isEmpty);
 
       // 远端编辑回来(权威):applyRemoteJournal 更新业务列 + synced 落行
+      // (v21:status=completed 一并落列 —— 桌面勾选完成经 pull 收敛)
       await db.applyRemoteJournal(
         id: 'jjjjjjjj-jjjj-4jjj-8jjj-jjjjjjjjjj03',
         revision: 5,
@@ -59,6 +63,7 @@ void main() {
           'title': '去北海道看雪(改)',
           'content': '改期到春天',
           'tags': ['旅行'],
+          'status': 'completed',
           'created_at': '2026-09-01T00:00:00.000Z',
           'deleted_at': null,
         }),
@@ -67,6 +72,8 @@ void main() {
       expect(listed, hasLength(1));
       expect(listed.first.title, '去北海道看雪(改)');
       expect(listed.first.tags, ['旅行']);
+      expect(listed.first.status, 'completed');
+      expect(listed.first.isDone, isTrue);
       expect(listed.first.syncMeta.syncState, 'synced');
 
       // 远端墓碑:list 不再返回(行本体保留供复活/排障)
@@ -123,7 +130,7 @@ void main() {
         await db.insertJournal(
           PfJournal(
             id: id,
-            kind: JournalKind.note,
+            kind: JournalKind.todo,
             title: '旧标题',
             content: '旧内容',
             createdAt: now,
@@ -137,23 +144,27 @@ void main() {
           ),
         );
 
-        // 编辑:kind 换类 + 字段全改 → revision 3→4、sync_state 转 pending
+        // 勾选完成 + 编辑:kind 换类 + 字段全改 + status 翻转 →
+        // revision 3→4、sync_state 转 pending(toggle 与编辑共用此通道)
         await db.updateJournalFields(
           id: id,
           kind: 'wish',
           title: '新标题',
           content: '新内容',
           tags: const ['改期'],
+          status: 'completed',
           originDevice: 'dev-a',
           userId: 'u-1',
         );
         final pending = await db.listPendingJournals();
         expect(pending, hasLength(1));
         expect(pending.first['kind'], 'wish');
+        expect(pending.first['status'], 'completed');
         expect(pending.first['revision'], 4, reason: '编辑必须升 revision(LWW)');
         final payload = coreJournalPayload(pending.first, 'u-1');
         expect(payload['title'], '新标题');
         expect(payload['tags'], ['改期']);
+        expect(payload['status'], 'completed');
         expect(payload['deleted_at'], isNull);
 
         // push 成功后回到 synced

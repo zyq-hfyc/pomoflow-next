@@ -257,6 +257,7 @@ class PfJournal {
     required this.title,
     this.content = '',
     this.tags = const [],
+    this.status = 'active',
     this.createdAt,
     this.deletedAt,
     this.syncMeta = const PfSyncMeta(),
@@ -268,6 +269,13 @@ class PfJournal {
   final String title;
   final String content;
   final List<String> tags;
+
+  /// 待办完成态('active'|'completed',对齐 core `Journal.status` serde 值,
+  /// 老 wire 缺键默认 active)。仅 kind=todo 有 UI 勾选语义,其余三类恒 active。
+  /// 非空 String,翻转直接 copyWith 传新值即可,无需 PfTask 那套清空哨兵。
+  final String status;
+
+  bool get isDone => status == 'completed';
 
   /// 创建时间(列表展示序;core created_at,老本地行 = epoch 0 不参与排序失真)
   final DateTime? createdAt;
@@ -281,6 +289,7 @@ class PfJournal {
     String? title,
     String? content,
     List<String>? tags,
+    String? status,
     DateTime? createdAt,
     DateTime? deletedAt,
     PfSyncMeta? syncMeta,
@@ -290,6 +299,7 @@ class PfJournal {
     title: title ?? this.title,
     content: content ?? this.content,
     tags: tags ?? this.tags,
+    status: status ?? this.status,
     createdAt: createdAt ?? this.createdAt,
     deletedAt: deletedAt ?? this.deletedAt,
     syncMeta: syncMeta ?? this.syncMeta,

@@ -64,7 +64,10 @@ class AppDatabase {
   /// schema v18 → v19:journals 补 8 同步列(手账跨端同步)。
   /// schema v19 → v20:新建 yearly_reviews 表(年复盘,「+新建 → 复盘」入口
   /// 重构批;日/周/月已存在,补第四种周期粒度)。
-  static const _schemaVersion = 20;
+  /// schema v20 → v21:journals 补 status 列(待办勾选批:kind=todo 的
+  /// 'active'|'completed' 完成态,对齐 core `Journal.status`;存量行走列默认
+  /// 'active' 不标 pending —— 值与 core 缺键默认一致,无需数据晋升)。
+  static const _schemaVersion = 21;
   static const _dbFileName = 'pomoflow.db';
 
   /// 打开/创建数据库 + migrate + 返回包装。
@@ -160,6 +163,10 @@ class AppDatabase {
           if (oldVersion < 20) {
             await _v19ToV20(db);
           }
+          // v20 → v21:journals 补 status 列(待办勾选完成态)。
+          if (oldVersion < 21) {
+            await _v20ToV21(db);
+          }
         },
       ),
     );
@@ -227,6 +234,7 @@ class AppDatabase {
         title TEXT NOT NULL DEFAULT '',
         content TEXT NOT NULL DEFAULT '',
         tags_csv TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active',
         created_at_ms INTEGER NOT NULL DEFAULT 0,
         revision INTEGER NOT NULL DEFAULT 1,
         sync_state TEXT NOT NULL DEFAULT 'synced',
@@ -559,6 +567,22 @@ class AppDatabase {
     await db.insert('meta', {
       'k': 'schema_version',
       'v': '20',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// v20 → v21 升级:journals 补 `status` 列(待办勾选批,对齐 core
+  /// `Journal.status`)。存量行走列默认 'active' —— 与 core serde 缺键默认
+  /// 一致,不标 pending(纯 schema 补列,值不变无需数据晋升;远端 completed
+  /// 值由 pull 自然落到本列)。
+  static Future<void> _v20ToV21(Database db) async {
+    await _addColumnIfMissing(
+      db,
+      'journals',
+      "ALTER TABLE journals ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+    );
+    await db.insert('meta', {
+      'k': 'schema_version',
+      'v': '21',
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -2813,25 +2837,28 @@ class AppDatabase {
   }
 
   /// 编辑落库(P3g):业务列更新 + revision+1 + pending,只动未删行。
+  /// v21 起带 status(编辑与待办勾选 toggle 共用此落库通道)。
   Future<void> updateJournalFields({
     required String id,
     required String kind,
     required String title,
     required String content,
     required List<String> tags,
+    required String status,
     required String originDevice,
     required String userId,
   }) async {
     await _db.rawUpdate(
       "UPDATE journals SET kind = ?, title = ?, content = ?, tags_csv = ?, "
-      "revision = revision + 1, sync_state = 'pending', updated_at_ms = ?, "
-      'origin_device = ?, user_id = ? '
+      "status = ?, revision = revision + 1, sync_state = 'pending', "
+      'updated_at_ms = ?, origin_device = ?, user_id = ? '
       'WHERE id = ? AND deleted_at_ms = 0',
       [
         kind,
         title,
         content,
         tags.join(','),
+        status,
         DateTime.now().millisecondsSinceEpoch,
         originDevice,
         userId,
@@ -2864,7 +2891,7 @@ class AppDatabase {
     int limit = 200,
   }) async {
     return _db.rawQuery(
-      '''SELECT id, kind, title, content, tags_csv, created_at_ms,
+      '''SELECT id, kind, title, content, tags_csv, status, created_at_ms,
                 revision, updated_at_ms, deleted_at_ms,
                 origin_device, user_id, payload
          FROM journals WHERE sync_state = 'pending'
@@ -3039,6 +3066,7 @@ class AppDatabase {
     'title': j.title,
     'content': j.content,
     'tags_csv': _csv(j.tags),
+    'status': j.status,
     'created_at_ms': j.createdAt?.millisecondsSinceEpoch ?? 0,
     'revision': j.syncMeta.revision,
     'sync_state': j.syncMeta.syncState,
@@ -3095,6 +3123,7 @@ class AppDatabase {
     title: (r['title'] as String?) ?? '',
     content: (r['content'] as String?) ?? '',
     tags: _splitCsv((r['tags_csv'] as String?) ?? ''),
+    status: (r['status'] as String?) ?? 'active',
     createdAt:
         (r['created_at_ms'] as int?) != null && (r['created_at_ms'] as int) > 0
         ? DateTime.fromMillisecondsSinceEpoch(r['created_at_ms'] as int)

@@ -295,13 +295,14 @@ void main() {
       expect(f['author'], '');
     });
 
-    test('journal payload round-trip(v19 手账上云)', () {
+    test('journal payload round-trip(v19 手账上云 + v21 待办完成态)', () {
       final p = coreJournalPayload(<String, Object?>{
         'id': 'jjjjjjjj-jjjj-4jjj-8jjj-jjjjjjjjjj02',
         'kind': 'wish',
         'title': '去北海道看雪',
         'content': '冬天或春天都行',
         'tags_csv': '旅行,长期',
+        'status': 'completed',
         'created_at_ms': 1756684800000,
         'revision': 1,
         'updated_at_ms': 1756684800123,
@@ -309,9 +310,18 @@ void main() {
       }, 'u-7');
       expect(p['user_id'], 'u-7');
       expect(p['kind'], 'wish');
+      expect(p['status'], 'completed'); // v21:待办勾选完成态上云
       expect(p['tags'], ['旅行', '长期']); // csv → core serde 数组形态
       expect(p['deleted_at'], isNull);
       expect(p['created_at'], isA<String>());
+
+      // 行缺 status(v20 老行)→ 'active'(core serde 缺键 default 同语义)
+      final legacy = coreJournalPayload(<String, Object?>{
+        'id': 'jjjjjjjj-jjjj-4jjj-8jjj-jjjjjjjjjj09',
+        'kind': 'todo',
+        'title': '老库待办',
+      }, 'u-7');
+      expect(legacy['status'], 'active');
 
       // 墓碑:deleted_at_ms > 0 → deleted_at ISO 串
       final tomb = coreJournalPayload(<String, Object?>{
@@ -325,19 +335,28 @@ void main() {
       }, 'u-7');
       expect(tomb['deleted_at'], isA<String>());
 
-      // pull 方向:tags 数组 → tags_csv,created_at ISO → ms
+      // pull 方向:tags 数组 → tags_csv,created_at ISO → ms,status 直落列
       final f = journalFieldsFromCore(<String, dynamic>{
         'kind': 'plan',
         'title': '2026 年度规划',
         'content': '读 12 本书',
         'tags': ['成长'],
+        'status': 'completed',
         'created_at': '2026-01-01T00:00:00.000Z',
         'deleted_at': null,
       });
       expect(f['kind'], 'plan');
+      expect(f['status'], 'completed');
       expect(f['tags_csv'], '成长');
       expect((f['created_at_ms'] as int), greaterThan(0));
       expect(f['deleted_at_ms'], 0);
+
+      // 老 payload 无 status 键 → 不落列(行走 DB 默认 'active')
+      final fOld = journalFieldsFromCore(<String, dynamic>{
+        'kind': 'note',
+        'title': '远端老数据',
+      });
+      expect(fOld.containsKey('status'), isFalse);
     });
 
     test('pomodoro_duration/repeat round-trip both ways', () {
