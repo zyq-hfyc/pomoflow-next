@@ -7,6 +7,8 @@
   //   - kind 筛选 chips(全部/待办/愿望/年度规划/小记,带条数)
   //   - 卡片列表:类型徽章 + 创建日期 / 标题 / 内容(pre-wrap,4 行截断)/ 标签
   //   - 点卡片 → JournalEditDialog 编辑;新建 → 同弹窗空表单
+  //   - todo 卡片带头部勾选框(待办勾选批 2026-09-13):点击切换完成态,
+  //     完成的沉底 + 标题划线变灰;仅 todo 有完成语义,其余三类不渲染
   //
   // 数据自拉自持(同 JournalView 的复盘列表);syncState().rev 变化重拉,
   // 手机写的随手记同步下来后不重启即可见(B6 统计页同款口径)。
@@ -16,8 +18,9 @@
   import type { Journal, JournalKind, JournalUpsertInput } from "../../lib/api";
   import { syncState } from "../../lib/syncState.svelte";
   import { getDict, fmt } from "../../lib/i18n.svelte";
-  import { JOURNAL_KINDS, KIND_EMOJI } from "../../lib/journalKinds";
+  import { JOURNAL_KINDS, KIND_EMOJI, sortJournals } from "../../lib/journalKinds";
   import JournalEditDialog from "./JournalEditDialog.svelte";
+  import TaskCheckbox from "./TaskCheckbox.svelte";
 
   const t = $derived(getDict());
 
@@ -53,8 +56,10 @@
     void refresh();
   });
 
+  // 未完成在前、已完成沉底(todo 完成语义),组内 created_at 倒序 —— 纯函数
+  // 在 journalKinds.ts,可独立单测
   const filtered = $derived(
-    kindFilter === "all" ? journals : journals.filter((j) => j.kind === kindFilter),
+    sortJournals(kindFilter === "all" ? journals : journals.filter((j) => j.kind === kindFilter)),
   );
 
   const kindCount = $derived(
@@ -89,6 +94,17 @@
       await refresh();
     } catch (e) {
       alert(fmt(t.notes.deleteFailed, { err: String(e) }));
+    }
+  }
+
+  /// todo 勾选框切换:调 toggle_journal 后刷新;失败沿用保存/删除的 alert 风格。
+  /// 勾选框点击的冒泡已在 TaskCheckbox 内 stopPropagation,不会再触发卡片编辑。
+  async function handleToggleTodo(id: string) {
+    try {
+      await api.toggleJournal(id);
+      await refresh();
+    } catch (e) {
+      alert(fmt(t.notes.toggleFailed, { err: String(e) }));
     }
   }
 
@@ -168,12 +184,24 @@
           onkeydown={(e) => onCardKeydown(e, j)}
         >
           <header class="card-head">
-            <span class="kind k-{j.kind}">{KIND_EMOJI[j.kind]} {kindLabels[j.kind]}</span>
+            <div class="head-left">
+              {#if j.kind === "todo"}
+                <TaskCheckbox
+                  completed={j.status === "completed"}
+                  onToggle={() => void handleToggleTodo(j.id)}
+                />
+              {/if}
+              <span class="kind k-{j.kind}">{KIND_EMOJI[j.kind]} {kindLabels[j.kind]}</span>
+            </div>
             {#if j.created_at}
               <span class="date">{fmt(t.notes.createdAt, { date: fmtDate(j.created_at) })}</span>
             {/if}
           </header>
-          {#if j.title}<h3 class="card-title">{j.title}</h3>{/if}
+          {#if j.title}
+            <h3 class="card-title" class:done={j.kind === "todo" && j.status === "completed"}>
+              {j.title}
+            </h3>
+          {/if}
           {#if j.content}<p class="card-content">{j.content}</p>{/if}
           {#if j.tags.length > 0}
             <div class="tags">
@@ -316,6 +344,12 @@
     gap: 0.75rem;
     margin-bottom: 0.3rem;
   }
+  .head-left {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
   .kind {
     font-size: 0.72rem;
     padding: 0.1rem 0.55rem;
@@ -351,6 +385,11 @@
     font-weight: 600;
     color: var(--color-text, #1f1d1b);
     overflow-wrap: anywhere;
+  }
+  /* 完成的待办标题划线变灰(对齐 TaskItem .task-card.done .title) */
+  .card-title.done {
+    text-decoration: line-through;
+    color: var(--color-text-muted, #6b6864);
   }
   .card-content {
     margin: 0;

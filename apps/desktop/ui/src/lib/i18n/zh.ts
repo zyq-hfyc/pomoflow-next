@@ -597,6 +597,7 @@ export const zh = {
     deleteConfirmHint: '删除后会同步到所有已登录设备',
     saveFailed: '保存失败:{err}',
     deleteFailed: '删除失败:{err}',
+    toggleFailed: '切换完成状态失败:{err}',
     createdAt: '创建于 {date}',
   },
   journal: {

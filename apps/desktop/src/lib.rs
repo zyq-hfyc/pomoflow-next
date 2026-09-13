@@ -112,6 +112,7 @@ pub fn run() {
             commands::delete_motto,
             commands::list_journals,
             commands::upsert_journal,
+            commands::toggle_journal,
             commands::delete_journal,
             commands::get_notification_template,
             commands::upsert_notification_template,

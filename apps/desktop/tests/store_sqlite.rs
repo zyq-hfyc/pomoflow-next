@@ -470,3 +470,63 @@ fn task_limit_caps_result() {
         .unwrap();
     assert_eq!(top.len(), 3);
 }
+
+// === Journal(随手记)===
+// P3i 桌面读写闭环。随手记「保存没反应/列表不出现」排查批(2026-09-12):
+// store 往返 + 软删过滤,锁定"命令层 → store → list"链路本身没问题,
+// 有问题也只可能发生在更上层(Tauri 参数/前端)。
+use pomoflow_core::model::Journal;
+
+#[test]
+fn journals_round_trip_and_soft_delete() {
+    let s = store();
+
+    // 新建(与 commands::upsert_journal 的新建路径同构:Journal::new + 校验)
+    let mut j = Journal::new("note", "测试小记");
+    j.content = "内容".to_string();
+    j.tags = vec!["生活".to_string(), "灵感".to_string()];
+    pomoflow_core::validate::validate_journal(&j).unwrap();
+    s.upsert_journal(j.clone()).unwrap();
+
+    let list = s.list_journals().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].id, j.id);
+    assert_eq!(list[0].kind, "note");
+    assert_eq!(list[0].title, "测试小记");
+    assert_eq!(list[0].content, "内容");
+    assert_eq!(list[0].tags, vec!["生活", "灵感"]);
+
+    // 编辑保留 id,revision +1(clone 传入:j2 留给下面的勾选切换用)
+    let mut j2 = j.clone();
+    j2.title = "改标题".to_string();
+    j2.revision = j.revision.saturating_add(1);
+    s.upsert_journal(j2.clone()).unwrap();
+    let list = s.list_journals().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].title, "改标题");
+    assert_eq!(list[0].revision, 2);
+
+    // 勾选切换(2026-09-13 待办勾选批):toggle_journal 命令在 store 侧就是
+    // 「status 翻转 + revision+1 再 upsert」—— 读回确认 status 列真的落库
+    let mut j_done = j2.clone();
+    j_done.status = TaskStatus::Completed;
+    j_done.revision = j_done.revision.saturating_add(1);
+    s.upsert_journal(j_done).unwrap();
+    let list = s.list_journals().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].status, TaskStatus::Completed);
+    assert_eq!(list[0].revision, 3);
+
+    // 空标题 + 纯内容合法(P3i 口径)
+    let mut j3 = Journal::new("note", "");
+    j3.content = "只有内容".to_string();
+    pomoflow_core::validate::validate_journal(&j3).unwrap();
+    s.upsert_journal(j3.clone()).unwrap();
+    assert_eq!(s.list_journals().unwrap().len(), 2);
+
+    // 软删后从列表消失
+    s.delete_journal(&j.id).unwrap();
+    let list = s.list_journals().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].id, j3.id);
+}

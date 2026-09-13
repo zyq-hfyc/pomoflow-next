@@ -596,6 +596,7 @@ export const en: Dict = {
     deleteConfirmHint: 'Deletion syncs to all signed-in devices',
     saveFailed: 'Failed to save: {err}',
     deleteFailed: 'Failed to delete: {err}',
+    toggleFailed: 'Failed to toggle completion: {err}',
     createdAt: 'Created {date}',
   },
   journal: {

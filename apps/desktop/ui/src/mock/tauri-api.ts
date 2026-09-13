@@ -58,6 +58,16 @@ const mockTasks: Record<string, unknown>[] = [
   task({ id: "44444444-4444-4444-8444-444444444444", title: "明天的任务C", due_date: today(1) }),
 ];
 
+/// 随手记(journal)fixture 存储:与后端命令同语义(新建 id 自分配,
+/// 列表 created_at 倒序)。
+const mockJournals: Record<string, unknown>[] = [];
+
+let journalSeq = 0;
+function newJournalId(): string {
+  journalSeq += 1;
+  return `j-mock-${String(journalSeq).padStart(4, "0")}`;
+}
+
 const dailyReviews: { id: string; date: string; content: string }[] = [
   {
     id: "a0a6d0ad-15b6-49bd-b2be-0f9f4e186211",
@@ -105,6 +115,64 @@ const invoke: Invoke = async (cmd, args) => {
       if (i >= 0) mockTasks[i] = { ...mockTasks[i], ...next };
       else mockTasks.push(task(next));
       return mockTasks.find((x) => x.id === next.id);
+    }
+    // 随手记(journal):与 commands.rs 的 upsert_journal 同语义 ——
+    // 编辑保留 created_at 并 revision+1,新建 id 自分配,列表 created_at 倒序。
+    case "list_journals": {
+      const list = [...mockJournals];
+      list.sort(
+        (a, b) =>
+          new Date(String(b.created_at)).getTime() -
+          new Date(String(a.created_at)).getTime(),
+      );
+      return list;
+    }
+    case "upsert_journal": {
+      const input = args as Record<string, unknown>;
+      const existing = input.id
+        ? mockJournals.find((j) => j.id === input.id)
+        : undefined;
+      if (existing) {
+        Object.assign(existing, {
+          kind: input.kind,
+          title: input.title,
+          content: input.content,
+          tags: input.tags,
+          // 编辑不改完成态(后端命令克隆库内现值,表单不暴露 status)
+          status: existing.status ?? "active",
+          revision: Number(existing.revision ?? 1) + 1,
+          updated_at: new Date().toISOString(),
+        });
+        return existing;
+      }
+      const now = new Date().toISOString();
+      const j = {
+        id: newJournalId(),
+        kind: input.kind,
+        title: input.title,
+        content: input.content,
+        tags: input.tags,
+        status: "active",
+        revision: 1,
+        created_at: now,
+        updated_at: now,
+      };
+      mockJournals.push(j);
+      return j;
+    }
+    // 待办勾选切换:翻转 status + revision+1(与 commands.rs toggle_journal 同语义)。
+    case "toggle_journal": {
+      const hit = mockJournals.find((j) => j.id === args?.id);
+      if (!hit) throw new Error(`journal not found: ${String(args?.id)}`);
+      hit.status = hit.status === "completed" ? "active" : "completed";
+      hit.revision = Number(hit.revision ?? 1) + 1;
+      hit.updated_at = new Date().toISOString();
+      return hit;
+    }
+    case "delete_journal": {
+      const i = mockJournals.findIndex((j) => j.id === args?.id);
+      if (i >= 0) mockJournals.splice(i, 1);
+      return null;
     }
     // 其余命令通用兜底(空数据让 UI 走空态;手账链路够用)。
     case "list_weekly_reviews":

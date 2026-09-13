@@ -704,6 +704,31 @@ pub fn upsert_journal(
     state.store.upsert_journal(journal).map_err(map_err)
 }
 
+/// 待办勾选切换:翻转 status(active↔completed),revision+1 后落库。
+///
+/// 完成语义只属于 kind=todo(wish/plan/note 恒为 Active,前端不渲染勾选框);
+/// 此处不校验 kind —— status 字段四类共享(core model 注释,wire 形态统一),
+/// 翻转对任何 kind 都落得住。Store trait 无 get_journal(同 upsert_journal
+/// 的编辑路径),list 全量找 id。
+#[tauri::command]
+pub fn toggle_journal(id: String, state: State<'_, AppState>) -> Result<Journal, String> {
+    let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
+    let mut journal = state
+        .store
+        .list_journals()
+        .map_err(map_err)?
+        .into_iter()
+        .find(|j| j.id == id)
+        .ok_or_else(|| format!("journal not found: {}", id.as_str()))?;
+    journal.status = match journal.status {
+        TaskStatus::Active => TaskStatus::Completed,
+        TaskStatus::Completed => TaskStatus::Active,
+    };
+    journal.revision = journal.revision.saturating_add(1);
+    journal.updated_at = Timestamp::now();
+    state.store.upsert_journal(journal).map_err(map_err)
+}
+
 /// 软删除随手记(墓碑 + pending,随同步收敛;与移动端 deleteJournal 同语义,
 /// 不进垃圾箱 —— 手账是轻量随手记,删除由前端二次确认把守)。
 #[tauri::command]

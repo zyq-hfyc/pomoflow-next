@@ -155,6 +155,8 @@ export type JournalKind = "todo" | "wish" | "plan" | "note";
 export interface Journal extends SyncMeta, UserScoped {
   id: string;
   kind: JournalKind;
+  /** 完成态 —— 仅 todo 有 UI 语义(勾选框),wish/plan/note 恒 active */
+  status?: "active" | "completed";
   title: string;
   content: string;
   /** 自由文本标签(不关联 tag 实体) */
@@ -370,6 +372,10 @@ export const upsertJournal = (input: JournalUpsertInput) =>
 
 export const deleteJournal = (id: string) =>
   invoke<void>("delete_journal", { id });
+
+/** 待办勾选切换:翻转完成态(active↔completed);仅 todo 卡片使用。 */
+export const toggleJournal = (id: string) =>
+  invoke<Journal>("toggle_journal", { id });
 
 // === NotificationTemplate ===
 
