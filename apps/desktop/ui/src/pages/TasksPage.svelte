@@ -5,7 +5,8 @@
   //        journal 视图换成手账月视图（JournalView）；notes 视图换成随手记
   //        （NotesView,P3i —— 四类手账,与手机「手账」同一 journal 实体）
   //   [右] 选中任务的详情面板（TaskDetailPanel）；journal 视图为月度复盘面板
-  //        （MonthReviewPanel）
+  //        （MonthReviewPanel）；notes 视图为随手记详情面板（NoteDetailPanel,
+  //        2026-09-13 面板化批 —— 取代原 JournalEditDialog 弹窗）
   //
   // 视图模式：
   //   - today / tomorrow / week / planned / completed / journal / notes（7 档）
@@ -31,6 +32,7 @@
     Priority,
     Reminder,
     Repeat,
+    Journal,
   } from "../lib/api";
   import { currentRoute, navigate } from "../lib/router.svelte";
   import { startWithTaskFromList } from "../lib/timer.svelte";
@@ -48,6 +50,7 @@
   import JournalView from "../components/Tasks/JournalView.svelte";
   import MonthReviewPanel from "../components/Tasks/MonthReviewPanel.svelte";
   import NotesView from "../components/Tasks/NotesView.svelte";
+  import NoteDetailPanel from "../components/Tasks/NoteDetailPanel.svelte";
 
   // list_tasks 返回 TaskView(拍平 tags + subtasks);导出 xlsx 需要子任务
   type TaskWithTags = Task & {
@@ -70,6 +73,15 @@
   let searchQuery = $state("");
 
   let selectedTask = $state<TaskWithTags | null>(null);
+
+  // === 随手记状态(2026-09-13 面板化批:自 NotesView 上移,与 selectedTask 同型) ===
+  // 数据 + 选中态在页面层持有 —— 右栏 DOM 归本页,NoteDetailPanel 与 NotesView
+  // 是兄弟节点,refresh 后按 id 重找选中项只能在这一层做(照 :319-322 任务模式)。
+  let journals = $state<Journal[]>([]);
+  let journalsLoading = $state(true);
+  let notesError = $state<string | null>(null);
+  let selectedJournal = $state<Journal | null>(null);
+  let notesCreating = $state(false);
 
   // === 跳转定位(2026-09-09):智能滚动到模板任务 ===
   let pendingScrollId = $state<string | null>(null);
@@ -335,6 +347,58 @@
     void syncState().rev;
     void refresh();
   });
+
+  // === 随手记数据(面板化批) ===
+  async function refreshJournals() {
+    try {
+      journals = await api.listJournals();
+      notesError = null;
+      if (selectedJournal) {
+        // 与任务 refresh(:319-322)同语义:同步删掉选中的 → 面板自动回空态
+        selectedJournal = journals.find((j) => j.id === selectedJournal!.id) ?? null;
+      }
+    } catch (e) {
+      notesError = String(e);
+    } finally {
+      journalsLoading = false;
+    }
+  }
+
+  // 独立 effect,不并入主 refresh():主 effect 若读 filter 会把 filter 变成
+  // refresh 的依赖,切视图就重拉 tasks,改变现有行为。
+  $effect(() => {
+    void syncState().rev; // 手机端同步落库 → 重拉
+    if (filter === "notes") void refreshJournals(); // 挂载/切入 notes 视图 → 拉
+  });
+
+  function selectJournal(j: Journal) {
+    selectedJournal = j;
+    notesCreating = false;
+  }
+  function startNewNote() {
+    selectedJournal = null;
+    notesCreating = true;
+  }
+  function closeNotePanel() {
+    selectedJournal = null;
+    notesCreating = false;
+  }
+  function onNotePanelChanged() {
+    void refreshJournals();
+  }
+  function onNoteCreated(j: Journal) {
+    selectedJournal = j; // 先同步选中(收窄竞态窗口)
+    notesCreating = false;
+    void refreshJournals();
+  }
+  async function toggleJournalTodo(id: string) {
+    try {
+      await api.toggleJournal(id);
+      await refreshJournals();
+    } catch (e) {
+      alert(fmt(t.notes.toggleFailed, { err: String(e) }));
+    }
+  }
 
   // 智能跳转定位:模板已在当前 filtered → 原地滚(必要时展开组);
   // 否则切到「重复」视图(全部模板扁平无折叠)再滚。pendingScrollId
@@ -617,7 +681,16 @@
         onTasksChange={() => void refresh()}
       />
     {:else if filter === "notes"}
-      <NotesView />
+      <NotesView
+        {journals}
+        loading={journalsLoading}
+        error={notesError}
+        selectedId={notesCreating ? null : (selectedJournal?.id ?? null)}
+        onSelect={selectJournal}
+        onNew={startNewNote}
+        onToggleTodo={(id) => void toggleJournalTodo(id)}
+        onClearError={() => (notesError = null)}
+      />
     {:else}
       <div class="inner">
         <!-- 标题 -->
@@ -774,11 +847,20 @@
     {/if}
   </div>
 
-  <!-- 右：手账模式为月度复盘面板，随手记为提示列，其余为任务详情（v1：未选中任务时显示全高空态） -->
+  <!-- 右：手账模式为月度复盘面板，随手记为详情面板，其余为任务详情（v1：未选中任务时显示全高空态） -->
   {#if filter === "journal"}
     <MonthReviewPanel year={journalYear} month={journalMonth} {reviewVersion} />
   {:else if filter === "notes"}
-    <aside class="detail-empty">{t.notes.panelHint}</aside>
+    {#if selectedJournal || notesCreating}
+      <NoteDetailPanel
+        journal={selectedJournal}
+        onClose={closeNotePanel}
+        onChanged={onNotePanelChanged}
+        onCreated={onNoteCreated}
+      />
+    {:else}
+      <aside class="detail-empty">{t.notes.panelHint}</aside>
+    {/if}
   {:else if selectedTask}
     <TaskDetailPanel
       task={selectedTask}

@@ -1,35 +1,47 @@
 <script lang="ts">
-  // 随手记视图(P3i)—— 桌面「随手记」= 移动端「手账」,journal 实体第 11 个
-  // 同步实体在桌面的读写闭环(P3f 起只落库无 UI)。
-  //
-  // 结构:
+  // 随手记视图 —— 展示组件(2026-09-13 面板化批)。
   //   - 头部:标题 + 副标题 + 新建按钮
   //   - kind 筛选 chips(全部/待办/愿望/年度规划/小记,带条数)
   //   - 卡片列表:类型徽章 + 创建日期 / 标题 / 内容(pre-wrap,4 行截断)/ 标签
-  //   - 点卡片 → JournalEditDialog 编辑;新建 → 同弹窗空表单
-  //   - todo 卡片带头部勾选框(待办勾选批 2026-09-13):点击切换完成态,
-  //     完成的沉底 + 标题划线变灰;仅 todo 有完成语义,其余三类不渲染
+  //   - todo 卡片带头部勾选框:点击切换完成态,完成的沉底 + 标题划线变灰
+  //   - 点卡片 → onSelect 通知父层在右侧面板显示详情(原弹窗已面板化);
+  //     新建 → onNew;选中卡片高亮(selectedId)
   //
-  // 数据自拉自持(同 JournalView 的复盘列表);syncState().rev 变化重拉,
-  // 手机写的随手记同步下来后不重启即可见(B6 统计页同款口径)。
+  // 数据由父层(TasksPage)持有并经 props 灌入;同步 rev 驱动的重拉也在父层。
+  // 本组件只负责筛选/排序/渲染,选中/新建/勾选/清除错误全经事件上抛。
 
   import { Plus } from "lucide-svelte";
-  import * as api from "../../lib/api";
-  import type { Journal, JournalKind, JournalUpsertInput } from "../../lib/api";
-  import { syncState } from "../../lib/syncState.svelte";
+  import type { Journal, JournalKind } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
-  import { JOURNAL_KINDS, KIND_EMOJI, sortJournals } from "../../lib/journalKinds";
-  import JournalEditDialog from "./JournalEditDialog.svelte";
+  import { JOURNAL_KINDS, KIND_EMOJI, sortJournals, fmtJournalDate } from "../../lib/journalKinds";
   import TaskCheckbox from "./TaskCheckbox.svelte";
 
   const t = $derived(getDict());
 
-  let journals = $state<Journal[]>([]);
-  let loading = $state(true);
-  let error = $state<string | null>(null);
+  interface Props {
+    journals: Journal[];
+    loading: boolean;
+    error: string | null;
+    /** 当前在面板里编辑的卡片 id(新建态为 null) */
+    selectedId: string | null;
+    onSelect: (j: Journal) => void;
+    onNew: () => void;
+    onToggleTodo: (id: string) => void;
+    onClearError: () => void;
+  }
+
+  let {
+    journals,
+    loading,
+    error,
+    selectedId,
+    onSelect,
+    onNew,
+    onToggleTodo,
+    onClearError,
+  }: Props = $props();
+
   let kindFilter = $state<JournalKind | "all">("all");
-  let dialogOpen = $state(false);
-  let editing = $state<Journal | null>(null);
 
   const kindLabels = $derived<Record<JournalKind | "all", string>>({
     all: t.notes.kindAll,
@@ -37,23 +49,6 @@
     wish: t.notes.kindWish,
     plan: t.notes.kindPlan,
     note: t.notes.kindNote,
-  });
-
-  async function refresh() {
-    try {
-      journals = await api.listJournals();
-      error = null;
-    } catch (e) {
-      error = String(e);
-    } finally {
-      loading = false;
-    }
-  }
-
-  // 挂载拉一次;之后每轮同步(rev 变化)重拉 —— 手机端写入也能及时出现
-  $effect(() => {
-    void syncState().rev;
-    void refresh();
   });
 
   // 未完成在前、已完成沉底(todo 完成语义),组内 created_at 倒序 —— 纯函数
@@ -67,62 +62,10 @@
       k === "all" ? journals.length : journals.filter((j) => j.kind === k).length,
   );
 
-  function openCreate() {
-    editing = null;
-    dialogOpen = true;
-  }
-
-  function openEdit(j: Journal) {
-    editing = j;
-    dialogOpen = true;
-  }
-
-  async function handleSave(input: JournalUpsertInput) {
-    try {
-      await api.upsertJournal(input);
-      dialogOpen = false;
-      await refresh();
-    } catch (e) {
-      alert(fmt(t.notes.saveFailed, { err: String(e) }));
-    }
-  }
-
-  async function handleDelete(id: string) {
-    try {
-      await api.deleteJournal(id);
-      dialogOpen = false;
-      await refresh();
-    } catch (e) {
-      alert(fmt(t.notes.deleteFailed, { err: String(e) }));
-    }
-  }
-
-  /// todo 勾选框切换:调 toggle_journal 后刷新;失败沿用保存/删除的 alert 风格。
-  /// 勾选框点击的冒泡已在 TaskCheckbox 内 stopPropagation,不会再触发卡片编辑。
-  async function handleToggleTodo(id: string) {
-    try {
-      await api.toggleJournal(id);
-      await refresh();
-    } catch (e) {
-      alert(fmt(t.notes.toggleFailed, { err: String(e) }));
-    }
-  }
-
-  function fmtDate(iso?: string): string {
-    if (!iso) return "";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    return d.toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "numeric",
-      day: "numeric",
-    });
-  }
-
   function onCardKeydown(e: KeyboardEvent, j: Journal) {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      openEdit(j);
+      onSelect(j);
     }
   }
 </script>
@@ -133,7 +76,7 @@
       <h1 class="title">{t.notes.title}</h1>
       <p class="subtitle">{t.notes.subtitle}</p>
     </div>
-    <button type="button" class="add-btn" onclick={openCreate}>
+    <button type="button" class="add-btn" onclick={onNew}>
       <Plus size={15} />
       {t.notes.add}
     </button>
@@ -167,7 +110,7 @@
   {#if error}
     <div class="error" role="alert">
       <span>⚠ {error}</span>
-      <button type="button" onclick={() => (error = null)}>×</button>
+      <button type="button" onclick={onClearError}>×</button>
     </div>
   {:else if loading}
     <p class="hint">{t.common.loading}</p>
@@ -178,9 +121,10 @@
       {#each filtered as j (j.id)}
         <div
           class="card"
+          class:selected={selectedId === j.id}
           role="button"
           tabindex="0"
-          onclick={() => openEdit(j)}
+          onclick={() => onSelect(j)}
           onkeydown={(e) => onCardKeydown(e, j)}
         >
           <header class="card-head">
@@ -188,13 +132,13 @@
               {#if j.kind === "todo"}
                 <TaskCheckbox
                   completed={j.status === "completed"}
-                  onToggle={() => void handleToggleTodo(j.id)}
+                  onToggle={() => onToggleTodo(j.id)}
                 />
               {/if}
               <span class="kind k-{j.kind}">{KIND_EMOJI[j.kind]} {kindLabels[j.kind]}</span>
             </div>
             {#if j.created_at}
-              <span class="date">{fmt(t.notes.createdAt, { date: fmtDate(j.created_at) })}</span>
+              <span class="date">{fmt(t.notes.createdAt, { date: fmtJournalDate(j.created_at) })}</span>
             {/if}
           </header>
           {#if j.title}
@@ -214,14 +158,6 @@
       {/each}
     </div>
   {/if}
-
-  <JournalEditDialog
-    open={dialogOpen}
-    initial={editing}
-    onSave={(input) => void handleSave(input)}
-    onDelete={(id) => void handleDelete(id)}
-    onClose={() => (dialogOpen = false)}
-  />
 </div>
 
 <style>
@@ -336,6 +272,12 @@
     border-color: color-mix(in srgb, var(--color-accent, #e74c3c) 55%, var(--color-border, #e5e2dd));
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
     outline: none;
+  }
+  /* 面板化批(2026-09-13):正在面板里编辑的卡片高亮 —— 照 TaskItem :181-185 */
+  .card.selected {
+    background: color-mix(in srgb, var(--color-accent, #e74c3c) 6%, transparent);
+    border-color: var(--color-accent, #e74c3c);
+    box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.06));
   }
   .card-head {
     display: flex;
