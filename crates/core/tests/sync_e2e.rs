@@ -501,6 +501,7 @@ fn journal_syncs_and_tombstone_propagates() {
     let mut j = Journal::new("wish", "去北海道看雪");
     j.content = "冬天或春天都行".into();
     j.tags = vec!["旅行".into()];
+    j.status = pomoflow_core::model::TaskStatus::Completed;
     let jid = j.id.clone();
     a.upsert_journal(j).unwrap();
     full_push(&mut cloud, &a);
@@ -511,6 +512,11 @@ fn journal_syncs_and_tombstone_propagates() {
     assert_eq!(b_list[0].kind, "wish");
     assert_eq!(b_list[0].tags, vec!["旅行".to_string()]);
     assert_eq!(b_list[0].user_id, user, "nil user_id 写入时应盖章");
+    assert_eq!(
+        b_list[0].status,
+        pomoflow_core::model::TaskStatus::Completed,
+        "完成态应随实体快照跨库收敛"
+    );
 
     // A 删除 → 墓碑 revision+1;B pull 后 list 不再返回
     a.delete_journal(&jid).unwrap();

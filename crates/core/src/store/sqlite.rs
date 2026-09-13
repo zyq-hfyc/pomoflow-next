@@ -486,6 +486,7 @@ CREATE INDEX IF NOT EXISTS idx_mottos_updated ON mottos(updated_at_ms DESC);
 CREATE TABLE IF NOT EXISTS journals (
   id TEXT PRIMARY KEY NOT NULL,
   kind TEXT NOT NULL DEFAULT 'note',
+  status TEXT NOT NULL DEFAULT 'active',
   title TEXT NOT NULL DEFAULT '',
   content TEXT NOT NULL DEFAULT '',
   tags_csv TEXT NOT NULL DEFAULT '',
@@ -1068,11 +1069,13 @@ fn row_to_journal(row: &Row<'_>) -> rusqlite::Result<Journal> {
     let user_id_s: String = row.get("user_id")?;
     let user_id = Id::parse(&user_id_s).unwrap_or_else(Id::nil);
     let tags_csv: String = row.get("tags_csv")?;
+    let status_s: String = row.get("status")?;
 
     core_try(Ok(Journal {
         id,
         user_id,
         kind: row.get("kind")?,
+        status: task_status_parse(&status_s).map_err(core_err)?,
         title: row.get("title")?,
         content: row.get("content")?,
         tags: if tags_csv.is_empty() {
@@ -2428,11 +2431,12 @@ impl SqliteStore {
         let conn = self.lock()?;
         conn.execute(
             "INSERT INTO journals
-              (id, user_id, kind, title, content, tags_csv, created_at_ms,
+              (id, user_id, kind, status, title, content, tags_csv, created_at_ms,
                revision, deleted_at_ms, updated_at_ms, sync_state, origin_device)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(id) DO UPDATE SET
                 kind=excluded.kind,
+                status=excluded.status,
                 title=excluded.title,
                 content=excluded.content,
                 tags_csv=excluded.tags_csv,
@@ -2446,6 +2450,7 @@ impl SqliteStore {
                 journal.id.as_str(),
                 journal.user_id.as_str(),
                 journal.kind,
+                task_status_str(journal.status),
                 journal.title,
                 journal.content,
                 tags_csv,
@@ -3051,14 +3056,16 @@ fn journal_sqlite_roundtrip_and_pending() {
     let mut j = crate::model::Journal::new("note", "小记一条");
     j.content = "内容带逗号,与 csv 测试".into();
     j.tags = vec!["生活".into(), "随记".into()];
+    j.status = crate::model::TaskStatus::Completed;
     let jid = j.id.clone();
     a.upsert_journal(j).unwrap();
 
-    // 行映射 roundtrip:tags_csv ↔ Vec<String>
+    // 行映射 roundtrip:tags_csv ↔ Vec<String> + status 列 ↔ TaskStatus
     let listed = a.list_journals().unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].tags, vec!["生活".to_string(), "随记".to_string()]);
     assert_eq!(listed[0].content, "内容带逗号,与 csv 测试");
+    assert_eq!(listed[0].status, crate::model::TaskStatus::Completed);
 
     // pending → Change payload 可反序列化回 Journal(push 方向)
     let change = a
@@ -3070,6 +3077,7 @@ fn journal_sqlite_roundtrip_and_pending() {
     assert_eq!(change.entity_id, jid.as_str());
     let payload: crate::model::Journal = serde_json::from_value(change.payload).unwrap();
     assert_eq!(payload.kind, "note");
+    assert_eq!(payload.status, crate::model::TaskStatus::Completed);
 
     // 远端权威 apply_remote(synced 落行,不再 pending)+ 软删收敛
     a.mark_synced(&[(EntityKind::Journal, jid.as_str().to_string())])

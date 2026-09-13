@@ -35,6 +35,7 @@ const MIGRATIONS: &[MigrationFn] = &[
     migration_004_conflict_log,
     migration_005_journal,
     migration_006_yearly_review,
+    migration_007_journal_status,
 ];
 
 /// 当前代码支持的最新 schema 版号(= 已应用迁移数)。
@@ -399,6 +400,13 @@ fn migration_006_yearly_review(conn: &Connection) -> CoreResult<()> {
     )
     .map_err(|e| CoreError::storage(format!("yearly_review: {e}")))?;
     Ok(())
+}
+
+/// v6 → v7:手账完成态列(2026-09-13 待办勾选批,kind=todo 的 UI 勾选)。
+/// 存量行一律视为未完成(DEFAULT 'active');新库由 SCHEMA_SQL 一次到位,
+/// 此处幂等兜底(journals 表不存在时 add_column 自行 no-op)。
+fn migration_007_journal_status(conn: &Connection) -> CoreResult<()> {
+    add_column(conn, "journals", "status", "TEXT NOT NULL DEFAULT 'active'")
 }
 
 #[cfg(test)]

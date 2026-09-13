@@ -211,11 +211,12 @@ fn session_missing_required_fields_is_rejected() {
     }
 }
 
-/// `sync_wire.dart coreJournalPayload` 的合法产物样例(v19 手账同步)。
+/// `sync_wire.dart coreJournalPayload` 的合法产物样例(v21 手账同步,含完成态)。
 const JOURNAL_JSON: &str = r#"{
   "id": "jrn0000000zzz",
   "user_id": "u-7",
   "kind": "wish",
+  "status": "active",
   "title": "去北海道看雪",
   "content": "冬天 或 春天都行",
   "tags": ["旅行", "长期"],
@@ -234,8 +235,21 @@ fn mobile_journal_payload_deserializes() {
     assert_eq!(j.kind, "wish");
     assert_eq!(j.title, "去北海道看雪");
     assert_eq!(j.tags, vec!["旅行".to_string(), "长期".to_string()]);
+    assert_eq!(j.status, pomoflow_core::model::TaskStatus::Active);
     assert_eq!(j.revision, 1);
     assert!(j.deleted_at.is_none());
+}
+
+#[test]
+fn journal_payload_without_status_defaults_active() {
+    // 旧移动端(v20 之前)payload 不带 status —— core 必须照收并默认未完成,
+    // 否则升级期(桌面已发 status、手机未升)同步直接炸。
+    let v: serde_json::Value = serde_json::from_str(JOURNAL_JSON).unwrap();
+    let mut obj = v.as_object().unwrap().clone();
+    obj.remove("status");
+    let j: Journal = serde_json::from_value(serde_json::Value::Object(obj))
+        .expect("缺 status 键必须可反序列化(serde default)");
+    assert_eq!(j.status, pomoflow_core::model::TaskStatus::Active);
 }
 
 #[test]

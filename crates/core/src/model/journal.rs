@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Id, Timestamp};
+use super::{Id, TaskStatus, Timestamp};
 
 /// 手账一条 —— 按类型分四档展示,内容自由。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,6 +18,11 @@ pub struct Journal {
     /// 四档固定取值:`todo` / `wish` / `plan` / `note`(移动端 JournalKind)
     #[serde(default = "journal_default_kind")]
     pub kind: String,
+    /// 完成态 —— 语义上仅对 `kind=todo` 有 UI(待办勾选框,wish/plan/note
+    /// 恒为 Active),字段四类共享是为了 wire 形态统一(2026-09-13 待办勾选批)。
+    /// 复用 Task 的两档枚举保持跨实体一致;老 payload 无此键 → default Active。
+    #[serde(default)]
+    pub status: TaskStatus,
     #[serde(default)]
     pub title: String,
     #[serde(default)]
@@ -52,6 +57,7 @@ impl Journal {
             id: Id::new(),
             user_id: Id::nil(),
             kind: kind.into(),
+            status: TaskStatus::Active,
             title: title.into(),
             content: String::new(),
             tags: Vec::new(),
