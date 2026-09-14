@@ -385,13 +385,8 @@ pub fn stop_pomodoro(
     state: State<'_, AppState>,
 ) -> Result<PomodoroSession, String> {
     let id = Id::parse(&session_id).ok_or_else(|| format!("invalid session_id: {session_id}"))?;
-    let mut session = state
-        .store
-        .list_pomodoros()
-        .map_err(map_err)?
-        .into_iter()
-        .find(|s| s.id == id)
-        .ok_or_else(|| format!("pomodoro not found: {session_id}"))?;
+    // 单条取(2026-09-14):此前 list 全表后内存 find,会话表只增不减
+    let mut session = state.store.get_pomodoro(&id).map_err(map_err)?;
 
     // 捕获待累加的 task_id,后面 session 会被 move 进 upsert
     let task_to_bump = if is_completed {
@@ -683,17 +678,10 @@ pub fn upsert_journal(
     state: State<'_, AppState>,
 ) -> Result<Journal, String> {
     let existing = match id.as_deref().and_then(Id::parse) {
-        Some(jid) => {
-            let found = state
-                .store
-                .list_journals()
-                .map_err(map_err)?
-                .into_iter()
-                .find(|j| j.id == jid);
-            // 库里没有 = 前端拿着过期列表编辑,让上层报错刷新而不是静默新建
-            // (否则旧 id 落库会造出一条永远同步不出去的孤儿行)
-            Some(found.ok_or_else(|| format!("journal not found: {}", jid.as_str()))?)
-        }
+        // 库里没有(NotFound)= 前端拿着过期列表编辑,让上层报错刷新而不是
+        // 静默新建(否则旧 id 落库会造出一条永远同步不出去的孤儿行)。
+        // 单条取(2026-09-14):此前 list 全表后内存 find
+        Some(jid) => Some(state.store.get_journal(&jid).map_err(map_err)?),
         None => None,
     };
 
@@ -723,18 +711,12 @@ pub fn upsert_journal(
 ///
 /// 完成语义只属于 kind=todo(wish/plan/note 恒为 Active,前端不渲染勾选框);
 /// 此处不校验 kind —— status 字段四类共享(core model 注释,wire 形态统一),
-/// 翻转对任何 kind 都落得住。Store trait 无 get_journal(同 upsert_journal
-/// 的编辑路径),list 全量找 id。
+/// 翻转对任何 kind 都落得住。
 #[tauri::command]
 pub fn toggle_journal(id: String, state: State<'_, AppState>) -> Result<Journal, String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
-    let mut journal = state
-        .store
-        .list_journals()
-        .map_err(map_err)?
-        .into_iter()
-        .find(|j| j.id == id)
-        .ok_or_else(|| format!("journal not found: {}", id.as_str()))?;
+    // 单条取(2026-09-14):此前 list 全表后内存 find
+    let mut journal = state.store.get_journal(&id).map_err(map_err)?;
     journal.status = match journal.status {
         TaskStatus::Active => TaskStatus::Completed,
         TaskStatus::Completed => TaskStatus::Active,

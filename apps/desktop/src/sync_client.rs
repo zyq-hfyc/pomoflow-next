@@ -21,9 +21,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use pomoflow_core::store::{ConflictRecord, SqliteStore, Store};
-use pomoflow_core::sync::engine::{apply_pull_response, apply_push_outcomes, build_push_request};
-use pomoflow_core::sync::ChangeLogStore;
-use pomoflow_core::sync::{resolve_conflict, Resolution};
+use pomoflow_core::sync::engine::{
+    apply_pull_response, apply_push_outcomes, build_push_request, PullOverridden,
+};
 use pomoflow_core::sync::{
     ApplyOutcome, Change, PullRequest, PullResponse, PushRequest, PushResponse, SyncCursor,
 };
@@ -411,8 +411,10 @@ async fn run_sync(store: &SqliteStore) -> Result<SyncReport, String> {
         )
         .await?;
         let n = resp.changes.len();
-        record_pull_conflicts(store, &resp.changes).map_err(|e| e.to_string())?;
-        apply_pull_response(store, &resp.changes).map_err(es)?;
+        // 冲突清单由 apply_pull_response 随批量 candidates 读取一并带回
+        //(此前这里逐条重查 candidate,同一条数据每轮同步查两次;2026-09-14 修)
+        let overridden = apply_pull_response(store, &resp.changes).map_err(es)?;
+        record_pull_conflicts(store, &overridden).map_err(|e| e.to_string())?;
         cursor = resp.next_cursor;
         store
             .set_meta(META_CURSOR, &cursor.last_seq.to_string())
@@ -493,34 +495,25 @@ fn record_push_conflicts(
     Ok(())
 }
 
-/// pull 阶段远端胜本地 → 记录 direction='overrode'。
-fn record_pull_conflicts(store: &SqliteStore, changes: &[Change]) -> Result<(), String> {
+/// pull 阶段远端胜本地 → 记录 direction='overrode'。清单由
+/// `apply_pull_response` 一次带回(冲突判定用的 candidate 与引擎内部
+/// 同一次批量读取,不再逐条重查;2026-09-14)。
+fn record_pull_conflicts(store: &SqliteStore, overridden: &[PullOverridden]) -> Result<(), String> {
     let now = chrono::Utc::now().timestamp_millis();
-    for remote in changes {
-        let Some(local) = store
-            .local_candidate(remote.entity, &remote.entity_id)
-            .map_err(|e| format!("local_candidate: {e}"))?
-        else {
-            continue; // 本地无此行,不存在覆盖
-        };
-        match resolve_conflict(&local, remote) {
-            Resolution::Left => continue, // 本地胜,不记录
-            Resolution::Right | Resolution::Tie => {
-                let title = entity_title(remote);
-                store
-                    .insert_conflict(ConflictRecord {
-                        entity: entity_kind_name(remote.entity),
-                        entity_id: remote.entity_id.to_string(),
-                        entity_title: title,
-                        direction: "overrode".into(),
-                        remote_device: remote.device_id.clone(),
-                        local_updated_ms: local.updated_at.timestamp_millis(),
-                        remote_updated_ms: remote.updated_at.timestamp_millis(),
-                        occurred_at_ms: now,
-                    })
-                    .map_err(|e| format!("insert conflict: {e}"))?;
-            }
-        }
+    for PullOverridden { local, remote } in overridden {
+        let title = entity_title(remote);
+        store
+            .insert_conflict(ConflictRecord {
+                entity: entity_kind_name(remote.entity),
+                entity_id: remote.entity_id.to_string(),
+                entity_title: title,
+                direction: "overrode".into(),
+                remote_device: remote.device_id.clone(),
+                local_updated_ms: local.updated_at.timestamp_millis(),
+                remote_updated_ms: remote.updated_at.timestamp_millis(),
+                occurred_at_ms: now,
+            })
+            .map_err(|e| format!("insert conflict: {e}"))?;
     }
     Ok(())
 }
