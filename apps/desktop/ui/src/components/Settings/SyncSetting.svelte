@@ -28,6 +28,7 @@
     type ConflictLogItem,
   } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
+  import { toDateTimeISO } from "../../lib/calendar";
   import { syncState, markSyncing, markSyncDone } from "../../lib/syncState.svelte";
   import { navigate } from "../../lib/router.svelte";
 
@@ -214,8 +215,7 @@
       return fmt(t.settings.sync.relHoursAgo, { n: Math.floor(diff / 3_600_000) });
     if (diff < 7 * 86_400_000)
       return fmt(t.settings.sync.relDaysAgo, { n: Math.floor(diff / 86_400_000) });
-    const pad = (n: number) => n.toString().padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return toDateTimeISO(d);
   }
 
   function applyAutoEvent(e: AutoSyncEvent) {

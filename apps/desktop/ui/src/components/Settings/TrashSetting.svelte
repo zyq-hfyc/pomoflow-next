@@ -9,6 +9,7 @@
   import { syncState } from "../../lib/syncState.svelte";
   import { listDeletedTasks, restoreTask, purgeTask } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
+  import { toDateTimeISO } from "../../lib/calendar";
   import type { TaskView } from "../../lib/api";
 
   const t = $derived(getDict());
@@ -89,8 +90,7 @@
     try {
       const d = new Date(s);
       if (isNaN(d.getTime())) return s;
-      const pad = (n: number) => n.toString().padStart(2, "0");
-      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      return toDateTimeISO(d);
     } catch {
       return s;
     }

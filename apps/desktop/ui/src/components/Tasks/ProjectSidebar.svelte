@@ -16,6 +16,8 @@
   import type { Project, Task } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
   import { datePart, todayStr, tomorrowStr } from "../../lib/dueDate";
+  import { startOfWeek, endOfWeek } from "../../lib/weekMonth";
+  import { buildProjectTree, flattenProjectTree } from "../../lib/projectTree";
 
   const t = $derived(getDict());
 
@@ -58,23 +60,7 @@
   let addingParentId = $state<string | null | "root">(null);
   let newName = $state("");
 
-  // === 计算 helpers ===
-  function startOfWeek(d: Date): Date {
-    const day = d.getDay();
-    const diff = day === 0 ? -6 : 1 - day; // 周一为一周开始
-    const out = new Date(d);
-    out.setDate(out.getDate() + diff);
-    out.setHours(0, 0, 0, 0);
-    return out;
-  }
-
-  function endOfWeek(d: Date): Date {
-    const s = startOfWeek(d);
-    const e = new Date(s);
-    e.setDate(e.getDate() + 6);
-    e.setHours(23, 59, 59, 999);
-    return e;
-  }
+  // === 计算 helpers(周窗口:单一来源 lib/weekMonth) ===
 
   interface TaskStats {
     timeStr: string;
@@ -117,48 +103,12 @@
     return { timeStr, count: filtered.length };
   }
 
-  interface TreeNode extends Project {
-    children: TreeNode[];
-    depth: number;
-  }
-
-  function buildTree(items: Project[]): TreeNode[] {
-    const map = new Map<string, TreeNode>();
-    const roots: TreeNode[] = [];
-    for (const p of items) map.set(p.id, { ...p, children: [], depth: 0 });
-    for (const p of items) {
-      const node = map.get(p.id);
-      if (!node) continue;
-      if (p.parent_id && map.has(p.parent_id)) {
-        map.get(p.parent_id)!.children.push(node);
-      } else {
-        roots.push(node);
-      }
-    }
-    const setDepth = (nodes: TreeNode[], depth: number) => {
-      for (const node of nodes) {
-        node.depth = depth;
-        setDepth(node.children, depth + 1);
-      }
-    };
-    setDepth(roots, 0);
-    return roots;
-  }
-
-  function flattenTree(nodes: TreeNode[], expanded: Set<string>): TreeNode[] {
-    const result: TreeNode[] = [];
-    for (const node of nodes) {
-      result.push(node);
-      if (expanded.has(node.id) && node.children.length > 0) {
-        result.push(...flattenTree(node.children, expanded));
-      }
-    }
-    return result;
-  }
+  // 树构建/平铺:单一来源 lib/projectTree(display_order 排序对齐设置页,
+  // 此前侧栏不排序,拖拽排序在清单树里不生效 —— 2026-09-14 修)
 
   // === derived ===
-  const tree = $derived(buildTree(projects));
-  const flatTree = $derived(flattenTree(tree, expanded));
+  const tree = $derived(buildProjectTree(projects));
+  const flatTree = $derived(flattenProjectTree(tree, expanded));
 
   // 6 个时间筛选项(label 走词典 → $derived,语言切换即更新)
   // lucide-svelte 1.x 导出的是 Svelte 4 SvelteComponentTyped，与 Svelte 5 Component 类型不兼容。

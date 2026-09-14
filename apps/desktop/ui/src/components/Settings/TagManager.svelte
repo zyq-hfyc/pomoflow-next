@@ -8,6 +8,7 @@
   //   - 行内改名 / 换色 / 删除(v1 行为;编辑态禁用拖拽避免误拖表单)
 
   import { syncState } from "../../lib/syncState.svelte";
+  import { autoClearError } from "../../lib/autoClear.svelte";
   import { GripVertical } from "lucide-svelte";
   import * as api from "../../lib/api";
   import type { Tag } from "../../lib/api";
@@ -54,12 +55,8 @@
     void load();
   });
 
-  // 3 秒后自动清除错误提示(v1 同款)
-  $effect(() => {
-    if (!reorderError) return;
-    const id = window.setTimeout(() => (reorderError = null), 3000);
-    return () => window.clearTimeout(id);
-  });
+  // 3 秒后自动清除错误提示(单一来源 lib/autoClear)
+  autoClearError(() => reorderError, () => (reorderError = null));
 
   function arrayMove<T>(arr: T[], from: number, to: number): T[] {
     const copy = arr.slice();

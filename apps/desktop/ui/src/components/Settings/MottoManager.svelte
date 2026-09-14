@@ -10,6 +10,7 @@
   import type { Motto } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
   import { bumpMottoVersion } from "../../lib/mottoVersion.svelte";
+  import { autoClearError } from "../../lib/autoClear.svelte";
 
   const t = $derived(getDict());
 
@@ -41,12 +42,8 @@
     void load();
   });
 
-  // 3 秒后自动清除错误提示
-  $effect(() => {
-    if (!error) return;
-    const id = window.setTimeout(() => (error = null), 3000);
-    return () => window.clearTimeout(id);
-  });
+  // 3 秒后自动清除错误提示(单一来源 lib/autoClear)
+  autoClearError(() => error, () => (error = null));
 
   function validate(): string | null {
     const txt = text.trim();

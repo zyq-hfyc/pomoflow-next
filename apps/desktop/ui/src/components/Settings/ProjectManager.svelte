@@ -18,6 +18,12 @@
   import type { Project, ReorderItem } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
   import { DEFAULT_PROJECT_COLOR } from "../../lib/presetColors";
+  import { autoClearError } from "../../lib/autoClear.svelte";
+  import {
+    buildProjectTree,
+    flattenProjectTree,
+    type ProjectTreeNode,
+  } from "../../lib/projectTree";
 
   const t = $derived(getDict());
 
@@ -54,67 +60,13 @@
     void load();
   });
 
-  // 3 秒后自动清除错误提示(v1 同款)
-  $effect(() => {
-    if (!reorderError) return;
-    const id = window.setTimeout(() => (reorderError = null), 3000);
-    return () => window.clearTimeout(id);
-  });
+  // 3 秒后自动清除错误提示(单一来源 lib/autoClear)
+  autoClearError(() => reorderError, () => (reorderError = null));
 
-  // === 树构建 ===
+  // === 树构建(单一来源 lib/projectTree) ===
 
-  interface TreeNode extends Project {
-    children: TreeNode[];
-    depth: number;
-  }
-
-  function buildTree(items: Project[]): TreeNode[] {
-    const map = new Map<string, TreeNode>();
-    const roots: TreeNode[] = [];
-    for (const p of items) map.set(p.id, { ...p, children: [], depth: 0 });
-    for (const p of items) {
-      const node = map.get(p.id);
-      if (!node) continue;
-      if (p.parent_id && map.has(p.parent_id)) {
-        map.get(p.parent_id)!.children.push(node);
-      } else {
-        roots.push(node);
-      }
-    }
-    // 同父下按 display_order 排序;并列时按 created_at / id 兜底(稳定)
-    const sortByOrder = (nodes: TreeNode[]) => {
-      nodes.sort(
-        (a, b) =>
-          (a.display_order ?? 0) - (b.display_order ?? 0) ||
-          (a.created_at ?? "").localeCompare(b.created_at ?? "") ||
-          a.id.localeCompare(b.id),
-      );
-      nodes.forEach((n) => sortByOrder(n.children));
-    };
-    sortByOrder(roots);
-    const setDepth = (nodes: TreeNode[], depth: number) => {
-      for (const node of nodes) {
-        node.depth = depth;
-        setDepth(node.children, depth + 1);
-      }
-    };
-    setDepth(roots, 0);
-    return roots;
-  }
-
-  function flattenTree(nodes: TreeNode[], open: Set<string>): TreeNode[] {
-    const result: TreeNode[] = [];
-    for (const node of nodes) {
-      result.push(node);
-      if (open.has(node.id) && node.children.length > 0) {
-        result.push(...flattenTree(node.children, open));
-      }
-    }
-    return result;
-  }
-
-  const tree = $derived(buildTree(projects));
-  const flatTree = $derived(flattenTree(tree, expanded));
+  const tree = $derived(buildProjectTree(projects));
+  const flatTree = $derived(flattenProjectTree(tree, expanded));
 
   function toggleExpand(id: string) {
     const next = new Set(expanded);
@@ -205,7 +157,7 @@
     await load();
   }
 
-  function startEdit(node: TreeNode) {
+  function startEdit(node: ProjectTreeNode) {
     editingId = node.id;
     editName = node.name;
     editColor = node.color ?? DEFAULT_PROJECT_COLOR;
@@ -310,7 +262,7 @@
   }
 
   /** 拖到某节点上 → 成为它的子级。前置校验:环 / 深度 / 无变化。 */
-  function dropOnNode(node: TreeNode) {
+  function dropOnNode(node: ProjectTreeNode) {
     const draggedId = dragId;
     resetDragState();
     if (!draggedId || draggedId === node.id) return;
@@ -354,14 +306,14 @@
     overRoot = false;
   }
 
-  function onRowDragStart(e: DragEvent, node: TreeNode) {
+  function onRowDragStart(e: DragEvent, node: ProjectTreeNode) {
     if (!e.dataTransfer) return;
     dragId = node.id;
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", node.id);
   }
 
-  function onRowDragOver(e: DragEvent, node: TreeNode) {
+  function onRowDragOver(e: DragEvent, node: ProjectTreeNode) {
     if (!dragId) return;
     e.preventDefault();
     e.stopPropagation();
@@ -370,7 +322,7 @@
     overRoot = false;
   }
 
-  function onRowDrop(e: DragEvent, node: TreeNode) {
+  function onRowDrop(e: DragEvent, node: ProjectTreeNode) {
     e.preventDefault();
     e.stopPropagation();
     dropOnNode(node);
