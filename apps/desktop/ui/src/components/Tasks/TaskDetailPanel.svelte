@@ -30,6 +30,7 @@
   import { toLocal, toIsoUtc, hasTimePart, fillCurrentTime } from "../../lib/dueDate";
   import { projectTreeOptions } from "../../lib/projectTree";
   import { getSettings } from "../../lib/settings.svelte";
+  import { syncState } from "../../lib/syncState.svelte";
   import SubTaskItem from "./SubTaskItem.svelte";
   import RepeatCustomDialog from "./RepeatCustomDialog.svelte";
 
@@ -133,6 +134,7 @@
   let editingTags = $state(false);
 
   $effect(() => {
+    void syncState().rev; // 同步落库(别端打标签)→ 重拉
     void loadTagsForTask();
   });
 
@@ -172,6 +174,7 @@
   let subtaskInput = $state("");
 
   $effect(() => {
+    void syncState().rev; // 同步落库(别端增删子任务)→ 重拉
     void loadSubtasks();
   });
 

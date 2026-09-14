@@ -28,7 +28,7 @@
     type ConflictLogItem,
   } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
-  import { markSyncing, markSyncDone } from "../../lib/syncState.svelte";
+  import { syncState, markSyncing, markSyncDone } from "../../lib/syncState.svelte";
   import { navigate } from "../../lib/router.svelte";
 
   const t = $derived(getDict());
@@ -61,9 +61,16 @@
   let conflictCount = $state(0);
   let conflictBusy = $state(false);
 
+  // 冲突日志随 rev 刷新:挂载 + 手动同步(markSyncDone)+ 自动同步成功事件
+  // 都会 bump rev —— 此前只有手动「立即同步」后 loadConflicts,自动同步
+  // 落库的冲突要重进设置页才可见(2026-09-14,rev 漏接收尾)。
+  $effect(() => {
+    void syncState().rev;
+    void loadConflicts();
+  });
+
   onMount(() => {
     void load();
-    void loadConflicts();
     // 监听后台自动同步结果;组件卸载(切标签)时取消,避免重复监听累积
     let unlisten: (() => void) | null = null;
     void onAutoSync(applyAutoEvent).then((un) => (unlisten = un));
@@ -252,8 +259,7 @@
     resultText = "";
     try {
       const r = await syncNow();
-      markSyncDone(); // bump rev → 手账/任务/计时页面自动重拉
-      await loadConflicts(); // 同步后刷新冲突日志
+      markSyncDone(); // bump rev → 手账/任务/计时页面与冲突日志自动重拉
       resultText = fmt(t.settings.sync.result, {
         pushed: r.pushed,
         pulled: r.pulled,

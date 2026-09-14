@@ -18,10 +18,12 @@ vi.mock("../../lib/api", () => ({
   listSubtasksForTask: vi.fn(async () => []),
   upsertSubtask: vi.fn(),
   deleteSubtask: vi.fn(),
+  onAutoSync: vi.fn(async () => () => {}),
 }));
 
 import * as api from "../../lib/api";
 import type { Task } from "../../lib/api";
+import { markSyncDone } from "../../lib/syncState.svelte";
 import Harness from "./TaskDetailPanel.test-harness.svelte";
 
 function task(p: Partial<Task> & Pick<Task, "id">): Task {
@@ -132,5 +134,19 @@ describe("TaskDetailPanel · 草稿与删除(2026-09-14 优化批)", () => {
     expect(api.deleteTask).toHaveBeenCalledWith("t1");
     expect(onClose).toHaveBeenCalled();
     expect(onChanged).toHaveBeenCalled();
+  });
+
+  test("同步落库(rev bump)→ 标签/子任务重拉(面板数据不陈旧)", async () => {
+    renderWith(task({ id: "t1", title: "A" }));
+    flushSync();
+    await settle();
+    expect(api.listTagsForTask).toHaveBeenCalledTimes(1);
+    expect(api.listSubtasksForTask).toHaveBeenCalledTimes(1);
+    // 模拟同步引擎落库后 bump rev(markSyncDone = 手动同步成功路径)
+    markSyncDone();
+    flushSync();
+    await settle();
+    expect(api.listTagsForTask).toHaveBeenCalledTimes(2);
+    expect(api.listSubtasksForTask).toHaveBeenCalledTimes(2);
   });
 });

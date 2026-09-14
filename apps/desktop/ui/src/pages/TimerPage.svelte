@@ -18,7 +18,7 @@
   //
   // 完成弹窗(CompletionModal):到点 / 主动停止时弹出。
 
-  import { onMount } from "svelte";
+  import { untrack } from "svelte";
   import { Play, Pause, Square, SkipForward } from "lucide-svelte";
   import {
     getTimerState,
@@ -140,15 +140,26 @@
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   }
 
-  // === 完成后刷新 ===
+  // === 数据刷新(挂载 + todayCount 变化 + 同步落库) ===
   // 完成链(通知/弹窗/接续)在 lib/timer.svelte 引擎层处理(v1 AppContext 语义,
-  // 路由切换不丢);这里只监听 todayCount 变化刷新页面数据。
+  // 路由切换不丢)。effect 依赖只有 todayCount 与 rev;六个 refresh 全部
+  // untrack 调度 —— refreshSidebarTasks 首个 await 前同步读 filter,不包的
+  // 话 filter 会被吸进本 effect 依赖,筛选一变连 todayMinutes/activeTasks
+  // 都跟着重拉(与下方专门的 filter effect 重复;2026-09-14 修)。
+  // rev 驱动补齐 projects/tags/今日复盘:别端同步下来,筛选下拉与今日复盘
+  // 即时可见(2026-09-14,rev 漏接收尾)。挂载也走本 effect(原 onMount 六连
+  // 拉与本 effect 三连拉重复,合并)。
   $effect(() => {
     void timer.todayCount;
-    void syncState().rev; // 同步完成 → 侧栏任务/时长重拉
-    void refreshTodayMinutes();
-    void refreshSidebarTasks();
-    void refreshAllActiveTasks();
+    void syncState().rev;
+    untrack(() => {
+      void refreshProjects();
+      void refreshTags();
+      void refreshSidebarTasks();
+      void refreshAllActiveTasks();
+      void refreshTodayReview();
+      void refreshTodayMinutes();
+    });
   });
 
   // v1 TimerPage:活动任务一旦变成 completed(无论在哪页勾选)→ 清除选中,
@@ -252,17 +263,6 @@
     refreshSidebarTasks();
   });
 
-  onMount(async () => {
-    // 今日统计由引擎 initTodayStatsSync 全局同步(App 挂载),此处不再重复
-    await Promise.all([
-      refreshProjects(),
-      refreshTags(),
-      refreshSidebarTasks(),
-      refreshAllActiveTasks(),
-      refreshTodayReview(),
-      refreshTodayMinutes(),
-    ]);
-  });
 
   // === 操作 ===
   // 开始当前模式(专注可无任务;时长取任务自带或全局,v1 startTimer)
@@ -314,14 +314,12 @@
   // 右侧栏:勾选/取消子任务(只写库 + 刷新当前列表)
   async function handleToggleSubtask(subtaskId: string, done: boolean) {
     try {
-      // 先拉一次拿到当前字段,再写回(简化:只更新 is_completed)
-      // 直接 upsert 可能丢字段,这里通过列表查找
-      const list = await Promise.all(
-        sidebarTasks.map((t) => api.listSubtasksForTask(t.id)),
-      );
+      // sidebarTasks 的 TaskView 已内嵌 subtasks(与列表同源同批次刷新),
+      // 直接查找写回 —— 旧写法为找一个子任务对每个侧栏任务各发一次
+      // listSubtasksForTask(N+1;2026-09-14 修)
       let target: SubTask | null = null;
-      for (const arr of list) {
-        const hit = arr.find((x) => x.id === subtaskId);
+      for (const t of sidebarTasks) {
+        const hit = t.subtasks?.find((x) => x.id === subtaskId);
         if (hit) {
           target = hit;
           break;
