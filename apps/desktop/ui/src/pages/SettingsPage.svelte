@@ -55,7 +55,7 @@
     { key: "notification", icon: Bell as any, label: t.settings.tab.notification },
     { key: "sync", icon: RefreshCw as any, label: t.settings.tab.sync },
     { key: "language", icon: Languages as any, label: t.settings.tab.language },
-    { key: "trash", icon: Trash2 as any, label: t.settings.tab.trash ?? "回收站" },
+    { key: "trash", icon: Trash2 as any, label: t.settings.tab.trash },
   ]);
 </script>
 

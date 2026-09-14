@@ -13,6 +13,7 @@
   import { ChevronDown, Check } from "lucide-svelte";
   import type { Task } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
+  import { priorityColor } from "../../lib/priorityColors";
 
   const t = $derived(getDict());
 
@@ -26,13 +27,7 @@
 
   let open = $state(false);
 
-  // 优先级颜色 —— v1 TaskSelector.tsx 同款
-  const priorityColors: Record<string, string> = {
-    high: "var(--color-priority-high, #c97b6e)",
-    medium: "var(--color-priority-medium, #d4a373)",
-    low: "var(--color-priority-low, #9ca3af)",
-    none: "var(--color-text-muted, #9ca3af)",
-  };
+  // 优先级颜色 —— 单一来源 lib/priorityColors(v1 TaskSelector.tsx 同款)
 
   function pick(task: Task | null) {
     onSelect(task);
@@ -89,7 +84,7 @@
           </span>
           <span
             class="pri-dot"
-            style="background-color: {priorityColors[task.priority ?? 'none'] ?? priorityColors.none}"
+            style="background-color: {priorityColor(task.priority ?? 'none')}"
           ></span>
         </button>
       {/each}

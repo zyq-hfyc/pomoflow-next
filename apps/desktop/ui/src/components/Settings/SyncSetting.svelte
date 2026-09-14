@@ -182,23 +182,24 @@
   }
 
   function entityLabel(entity: string): string {
+    // i18n(2026-09-14 去重批):此前硬编码中文,英文界面仍显示中文
     const map: Record<string, string> = {
-      task: "任务",
-      project: "项目",
-      tag: "标签",
-      sub_task: "子任务",
-      daily_review: "日复盘",
-      weekly_review: "周复盘",
-      monthly_review: "月复盘",
-      motto: "座右铭",
-      pomodoro_session: "番茄",
-      task_tag: "任务标签",
+      task: t.settings.sync.entityTask,
+      project: t.settings.sync.entityProject,
+      tag: t.settings.sync.entityTag,
+      sub_task: t.settings.sync.entitySubTask,
+      daily_review: t.settings.sync.entityDailyReview,
+      weekly_review: t.settings.sync.entityWeeklyReview,
+      monthly_review: t.settings.sync.entityMonthlyReview,
+      motto: t.settings.sync.entityMotto,
+      pomodoro_session: t.settings.sync.entityPomodoro,
+      task_tag: t.settings.sync.entityTaskTag,
     };
     return map[entity] ?? entity;
   }
 
   function shortDevice(device: string): string {
-    if (!device) return "未知设备";
+    if (!device) return t.settings.sync.relUnknownDevice;
     return device.length > 14 ? `${device.slice(0, 14)}…` : device;
   }
 
@@ -206,10 +207,13 @@
     const d = new Date(ms);
     const now = new Date();
     const diff = now.getTime() - d.getTime();
-    if (diff < 60_000) return "刚刚";
-    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
-    if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`;
+    if (diff < 60_000) return t.settings.sync.relJustNow;
+    if (diff < 3_600_000)
+      return fmt(t.settings.sync.relMinutesAgo, { n: Math.floor(diff / 60_000) });
+    if (diff < 86_400_000)
+      return fmt(t.settings.sync.relHoursAgo, { n: Math.floor(diff / 3_600_000) });
+    if (diff < 7 * 86_400_000)
+      return fmt(t.settings.sync.relDaysAgo, { n: Math.floor(diff / 86_400_000) });
     const pad = (n: number) => n.toString().padStart(2, "0");
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }

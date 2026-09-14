@@ -39,6 +39,7 @@
   import { checkRemindersNow } from "../lib/reminders.svelte";
   import { getDict, fmt } from "../lib/i18n.svelte";
   import { todayStr, tomorrowStr, datePart, hasTimePart, toIsoUtc } from "../lib/dueDate";
+  import { compareByStatusPriorityCreated } from "../lib/taskSort";
   import { toISO } from "../lib/calendar";
   import ProjectSidebar from "../components/Tasks/ProjectSidebar.svelte";
   import TaskItem from "../components/Tasks/TaskItem.svelte";
@@ -122,22 +123,12 @@
   // === derived: 主筛选结果 ===
   const filtered = $derived.by(() => {
     let result = [...tasks];
-    const priorityOrder: Record<Priority, number> = { high: 0, medium: 1, low: 2, none: 3 };
 
     // 搜索 → 忽略 filter / selectedProject
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter((t) => t.title.toLowerCase().includes(q));
-      result.sort((a, b) => {
-        if (a.status !== b.status) return a.status === "active" ? -1 : 1;
-        const pa = priorityOrder[a.priority || "none"] ?? 3;
-        const pb = priorityOrder[b.priority || "none"] ?? 3;
-        if (pa !== pb) return pa - pb;
-        return (
-          new Date(a.created_at ?? 0).getTime() -
-          new Date(b.created_at ?? 0).getTime()
-        );
-      });
+      result.sort(compareByStatusPriorityCreated);
       return result;
     }
 
@@ -197,17 +188,8 @@
       result = result.filter((t) => !!t.due_date);
     }
 
-    // 排序：active 在前 → 优先级 → 创建时间
-    result.sort((a, b) => {
-      if (a.status !== b.status) return a.status === "active" ? -1 : 1;
-      const pa = priorityOrder[a.priority || "none"] ?? 3;
-      const pb = priorityOrder[b.priority || "none"] ?? 3;
-      if (pa !== pb) return pa - pb;
-      return (
-        new Date(a.created_at ?? 0).getTime() -
-        new Date(b.created_at ?? 0).getTime()
-      );
-    });
+    // 排序：active 在前 → 优先级 → 创建时间(单一来源 lib/taskSort)
+    result.sort(compareByStatusPriorityCreated);
 
     return result;
   });
@@ -812,7 +794,7 @@
         {#if error}
           <div class="error" role="alert">
             <span>⚠ {error}</span>
-            <button onclick={() => (error = null)}>×</button>
+            <button onclick={() => (error = null)} aria-label={t.common.close}>×</button>
           </div>
         {/if}
 

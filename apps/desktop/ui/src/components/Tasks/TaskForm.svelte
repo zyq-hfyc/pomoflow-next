@@ -22,71 +22,19 @@
   import { getDict } from "../../lib/i18n.svelte";
   import type { Dict } from "../../lib/i18n";
   import type { Project, Tag, Priority, Reminder, Repeat } from "../../lib/api";
+  import {
+    REMINDER_OPTIONS,
+    REPEAT_OPTIONS,
+    reminderLabel,
+    repeatLabel,
+    type ReminderValue,
+    type RepeatValue,
+  } from "../../lib/repeatReminderOptions";
 
   const t = $derived(getDict());
 
-  // value 与 Rust `Reminder` serde(snake_case)输出一一对应:
-  // Minutes5 → "minutes5"(无下划线),以此类推
-  const REMINDER_OPTIONS = [
-    { value: "none" },
-    { value: "on_time" },
-    { value: "minutes5" },
-    { value: "minutes30" },
-    { value: "hour1" },
-    { value: "day1" },
-    { value: "days2" },
-  ] as const;
-
-  const REPEAT_OPTIONS = [
-    { value: "none" },
-    { value: "daily" },
-    { value: "weekdays" },
-    { value: "weekly" },
-    { value: "monthly" },
-    { value: "yearly" },
-    { value: "custom" },
-  ] as const;
-
-  // v2 Rust serde 值 → v1 词典 enum 键(v1 词典键形如 '' / '5m' / 'weekday')
-  const REMINDER_DICT_KEY: Record<
-    (typeof REMINDER_OPTIONS)[number]["value"],
-    keyof Dict["enum"]["reminder"]
-  > = {
-    none: "",
-    on_time: "on_time",
-    minutes5: "5m",
-    minutes30: "30m",
-    hour1: "1h",
-    day1: "1d",
-    days2: "2d",
-  };
-  const REPEAT_DICT_KEY: Record<
-    (typeof REPEAT_OPTIONS)[number]["value"],
-    keyof Dict["enum"]["repeat"]
-  > = {
-    none: "",
-    daily: "daily",
-    weekdays: "weekday",
-    weekly: "weekly",
-    monthly: "monthly",
-    yearly: "yearly",
-    custom: "custom",
-  };
-
-  function reminderLabel(v: (typeof REMINDER_OPTIONS)[number]["value"]): string {
-    return t.enum.reminder[REMINDER_DICT_KEY[v]];
-  }
-  function repeatLabel(v: (typeof REPEAT_OPTIONS)[number]["value"]): string {
-    return t.enum.repeat[REPEAT_DICT_KEY[v]];
-  }
-
-  type ReminderValue = (typeof REMINDER_OPTIONS)[number]["value"];
-  type RepeatValue = (typeof REPEAT_OPTIONS)[number]["value"];
-  // options 的 value 就是 Rust enum 的 serde 输出,与 api.ts 的类型一致:
-  const _optionsMatchApi: ReminderValue = "none" satisfies Reminder;
-  const _repeatOptionsMatchApi: RepeatValue = "none" satisfies Repeat;
-  void _optionsMatchApi;
-  void _repeatOptionsMatchApi;
+  // reminder / repeat 选项 + 词典:单一来源 lib/repeatReminderOptions
+  // (类型级 api 断言也在 lib 里,取代原先的 satisfies 占位 hack)
 
   interface AddData {
     title: string;
@@ -307,7 +255,7 @@
           onchange={() => (timeWarning = false)}
         >
           {#each REMINDER_OPTIONS as opt (opt.value)}
-            <option value={opt.value}>{reminderLabel(opt.value)}</option>
+            <option value={opt.value}>{reminderLabel(t, opt.value)}</option>
           {/each}
         </select>
       </div>
@@ -327,7 +275,7 @@
           }}
         >
           {#each REPEAT_OPTIONS as opt (opt.value)}
-            <option value={opt.value}>{repeatLabel(opt.value)}</option>
+            <option value={opt.value}>{repeatLabel(t, opt.value)}</option>
           {/each}
         </select>
       </div>

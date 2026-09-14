@@ -19,6 +19,7 @@
   // 完成弹窗(CompletionModal):到点 / 主动停止时弹出。
 
   import { untrack } from "svelte";
+  import { compareByPriorityThenCreated, compareByStatusPriorityCreated } from "../lib/taskSort";
   import { Play, Pause, Square, SkipForward } from "lucide-svelte";
   import {
     getTimerState,
@@ -200,17 +201,8 @@
         tz_offset_min: -new Date().getTimezoneOffset(),
         limit: null,
       });
-      // v1 TimerPage:130-138 —— 未完成在前 → 优先级 high>medium>low>none → 创建时间升序
-      const order: Record<string, number> = { high: 0, medium: 1, low: 2, none: 3 };
-      sidebarTasks = (list as TaskWithExtras[]).sort((a, b) => {
-        if (a.status !== b.status) return a.status === "active" ? -1 : 1;
-        const pa = order[a.priority ?? "none"] ?? 3;
-        const pb = order[b.priority ?? "none"] ?? 3;
-        if (pa !== pb) return pa - pb;
-        return (
-          new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime()
-        );
-      });
+      // v1 TimerPage:130-138 —— 未完成在前 → 优先级 → 创建时间升序(单一来源 lib/taskSort)
+      sidebarTasks = (list as TaskWithExtras[]).sort(compareByStatusPriorityCreated);
     } catch (e) {
       console.warn("refresh tasks", e);
     }
@@ -221,15 +213,7 @@
   async function refreshAllActiveTasks() {
     try {
       const list = await api.listTasks({ status: "active", limit: null });
-      const order: Record<string, number> = { high: 0, medium: 1, low: 2, none: 3 };
-      allActiveTasks = (list as TaskWithExtras[]).sort((a, b) => {
-        const pa = order[a.priority ?? "none"] ?? 3;
-        const pb = order[b.priority ?? "none"] ?? 3;
-        if (pa !== pb) return pa - pb;
-        return (
-          new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime()
-        );
-      });
+      allActiveTasks = (list as TaskWithExtras[]).sort(compareByPriorityThenCreated);
     } catch (e) {
       console.warn("refresh active tasks", e);
     }

@@ -110,7 +110,7 @@
   {#if error}
     <div class="error" role="alert">
       <span>⚠ {error}</span>
-      <button type="button" onclick={onClearError}>×</button>
+      <button type="button" onclick={onClearError} aria-label={t.common.close}>×</button>
     </div>
   {:else if loading}
     <p class="hint">{t.common.loading}</p>

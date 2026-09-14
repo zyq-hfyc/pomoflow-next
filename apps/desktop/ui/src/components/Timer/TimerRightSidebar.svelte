@@ -16,6 +16,7 @@
   import type { Project, SubTask, Tag, Task } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
   import { datePart } from "../../lib/dueDate";
+  import { priorityColor } from "../../lib/priorityColors";
   import type {
     TimerFilter,
     Priority,
@@ -55,13 +56,7 @@
     onToggleSubtask,
   }: Props = $props();
 
-  // 优先级颜色 —— 与 v1 TimerPage.tsx `priorityColors` 对齐
-  const priorityColors: Record<string, string> = {
-    high: "var(--color-priority-high, #c97b6e)",
-    medium: "var(--color-priority-medium, #d4a373)",
-    low: "var(--color-priority-low, #9ca3af)",
-    none: "var(--color-text-muted, #9ca3af)",
-  };
+  // 优先级颜色 —— 单一来源 lib/priorityColors(与 v1 TimerPage.tsx 对齐)
 
   let expandedTasks = $state<Set<string>>(new Set());
 
@@ -232,8 +227,7 @@
           <!-- 优先级点 -->
           <span
             class="pri-dot"
-            style="background-color: {priorityColors[task.priority || 'none'] ??
-              priorityColors.none}"
+            style="background-color: {priorityColor(task.priority || 'none')}"
           ></span>
 
           <!-- 任务信息 -->

@@ -13,6 +13,7 @@
   import type { Task, Tag } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
   import { datePart } from "../../lib/dueDate";
+  import { priorityColor as priColor } from "../../lib/priorityColors";
 
   const t = $derived(getDict());
 
@@ -29,12 +30,7 @@
   const isCompleted = $derived(task.status === "completed");
   const estimated = $derived(task.estimated_pomodoros || 0);
   const completedCount = $derived(task.completed_pomodoros || 0);
-  const priorityColor = $derived({
-    high: "var(--color-priority-high, #c97b6e)",
-    medium: "var(--color-priority-medium, #d4a373)",
-    low: "var(--color-priority-low, #9ca3af)",
-    none: "var(--color-priority-low, #9ca3af)",
-  }[task.priority || "none"]);
+  const priorityColor = $derived(priColor(task.priority));
   const priorityLabel = $derived(
     { high: t.priority.high, medium: t.priority.medium, low: t.priority.low, none: "" }[
       task.priority || "none"

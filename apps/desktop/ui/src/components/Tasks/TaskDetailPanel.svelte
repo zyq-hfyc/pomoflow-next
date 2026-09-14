@@ -31,6 +31,13 @@
   import { projectTreeOptions } from "../../lib/projectTree";
   import { getSettings } from "../../lib/settings.svelte";
   import { syncState } from "../../lib/syncState.svelte";
+  import { priorityColor } from "../../lib/priorityColors";
+  import {
+    REMINDER_OPTIONS,
+    REPEAT_OPTIONS,
+    reminderLabel,
+    repeatLabel,
+  } from "../../lib/repeatReminderOptions";
   import SubTaskItem from "./SubTaskItem.svelte";
   import RepeatCustomDialog from "./RepeatCustomDialog.svelte";
 
@@ -251,58 +258,7 @@
     }
   }
 
-  // === reminder / repeat 选项(value 与 Rust serde snake_case 对应) ===
-  const REMINDER_OPTIONS = [
-    { value: "none" },
-    { value: "on_time" },
-    { value: "minutes5" },
-    { value: "minutes30" },
-    { value: "hour1" },
-    { value: "day1" },
-    { value: "days2" },
-  ] as const;
-
-  const REPEAT_OPTIONS = [
-    { value: "none" },
-    { value: "daily" },
-    { value: "weekdays" },
-    { value: "weekly" },
-    { value: "monthly" },
-    { value: "yearly" },
-    { value: "custom" },
-  ] as const;
-
-  const REMINDER_DICT_KEY: Record<
-    (typeof REMINDER_OPTIONS)[number]["value"],
-    keyof Dict["enum"]["reminder"]
-  > = {
-    none: "",
-    on_time: "on_time",
-    minutes5: "5m",
-    minutes30: "30m",
-    hour1: "1h",
-    day1: "1d",
-    days2: "2d",
-  };
-  const REPEAT_DICT_KEY: Record<
-    (typeof REPEAT_OPTIONS)[number]["value"],
-    keyof Dict["enum"]["repeat"]
-  > = {
-    none: "",
-    daily: "daily",
-    weekdays: "weekday",
-    weekly: "weekly",
-    monthly: "monthly",
-    yearly: "yearly",
-    custom: "custom",
-  };
-
-  function reminderLabel(v: (typeof REMINDER_OPTIONS)[number]["value"]): string {
-    return t.enum.reminder[REMINDER_DICT_KEY[v]];
-  }
-  function repeatLabel(v: (typeof REPEAT_OPTIONS)[number]["value"]): string {
-    return t.enum.repeat[REPEAT_DICT_KEY[v]];
-  }
+  // === reminder / repeat 选项 + 词典(单一来源 lib/repeatReminderOptions) ===
 
   // === repeat:自定义规则弹窗 ===
   let repeatDialogOpen = $state(false);
@@ -338,20 +294,14 @@
     }
   }
 
-  // === 优先级色点(v1 PRIORITY_COLORS) ===
-  const PRIORITY_COLORS: Record<string, string> = {
-    high: "var(--color-priority-high, #c97b6e)",
-    medium: "var(--color-priority-medium, #d4a373)",
-    low: "var(--color-priority-low, #a8a298)",
-    none: "var(--color-neutral-400, #a8a298)",
-  };
+  // === 优先级色点(单一来源 lib/priorityColors;此前 low/none fallback 已漂移) ===
 </script>
 
 <aside class="panel" aria-label={t.task.detailPanelAria}>
   <!-- 1. 头部:优先级点 + 标题 + 关闭 -->
   <div class="head">
     <div class="head-left">
-      <span class="pri-dot" style="background-color: {PRIORITY_COLORS[task.priority ?? "none"]}"></span>
+      <span class="pri-dot" style="background-color: {priorityColor(task.priority)}"></span>
       <input
         class="title-input"
         bind:value={titleDraft}
@@ -411,7 +361,7 @@
       <span class="row-label">
         <span
           class="pri-swatch"
-          style="background-color: {PRIORITY_COLORS[task.priority ?? "none"]}"
+          style="background-color: {priorityColor(task.priority)}"
         ></span>
         {t.task.detailPriority}
       </span>
@@ -508,7 +458,7 @@
         }}
       >
         {#each REMINDER_OPTIONS as o (o.value)}
-          <option value={o.value}>{reminderLabel(o.value)}</option>
+          <option value={o.value}>{reminderLabel(t, o.value)}</option>
         {/each}
       </select>
     </div>
@@ -532,7 +482,7 @@
         }}
       >
         {#each REPEAT_OPTIONS as o (o.value)}
-          <option value={o.value}>{repeatLabel(o.value)}</option>
+          <option value={o.value}>{repeatLabel(t, o.value)}</option>
         {/each}
       </select>
     </div>
