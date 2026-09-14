@@ -42,6 +42,10 @@ use crate::model::{
 use crate::store::{ConflictRecord, Store, TaskDateFilter, TaskQuery};
 use crate::sync::{change_of, Change, ChangeLogStore, EntityKind};
 
+/// IN 查询分块大小(2026-09-14):占位符数量有界 —— SQLite 变量上限随
+/// 版本不同(旧版 999),500 足够小且不至于把一次查询碎成几十次。
+const IN_CHUNK: usize = 500;
+
 /// `pomoflow-core::Store` trait 的 SQLite 持久化实现。
 #[derive(Debug, Clone)]
 pub struct SqliteStore {
@@ -1638,33 +1642,35 @@ impl Store for SqliteStore {
         }
         let conn = self.lock()?;
         // 用 IN (...) 一次查所有 task_tag 关联,内存里再 join tags。
-        let placeholders = std::iter::repeat_n("?", task_ids.len())
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            "SELECT tt.task_id, t.* FROM tags t
-             JOIN task_tags tt ON tt.tag_id = t.id
-             WHERE tt.task_id IN ({placeholders}) AND t.deleted_at_ms IS NULL
-             ORDER BY t.name"
-        );
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| CoreError::storage(format!("prepare list_tags_for_tasks: {e}")))?;
-        let mut rows = stmt
-            .query(rusqlite::params_from_iter(
-                task_ids.iter().map(|i| i.as_str()),
-            ))
-            .map_err(|e| CoreError::storage(format!("query: {e}")))?;
-        while let Some(row) = rows
-            .next()
-            .map_err(|e| CoreError::storage(format!("row: {e}")))?
-        {
-            let task_id_s: String = row
-                .get::<_, String>(0)
-                .map_err(|e| CoreError::storage(format!("row.task_id: {e}")))?;
-            let tag =
-                row_to_tag(row).map_err(|e| CoreError::storage(format!("row_to_tag: {e}")))?;
-            out.entry(Id(task_id_s)).or_default().push(tag);
+        // 分块查(2026-09-14):占位符数量有界(SQLite 变量上限随版本不同),
+        // 同一 task 的标签必落在同一块,块内 ORDER BY 语义不变。
+        for chunk in task_ids.chunks(IN_CHUNK) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT tt.task_id, t.* FROM tags t
+                 JOIN task_tags tt ON tt.tag_id = t.id
+                 WHERE tt.task_id IN ({placeholders}) AND t.deleted_at_ms IS NULL
+                 ORDER BY t.name"
+            );
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| CoreError::storage(format!("prepare list_tags_for_tasks: {e}")))?;
+            let mut rows = stmt
+                .query(rusqlite::params_from_iter(chunk.iter().map(|i| i.as_str())))
+                .map_err(|e| CoreError::storage(format!("query: {e}")))?;
+            while let Some(row) = rows
+                .next()
+                .map_err(|e| CoreError::storage(format!("row: {e}")))?
+            {
+                let task_id_s: String = row
+                    .get::<_, String>(0)
+                    .map_err(|e| CoreError::storage(format!("row.task_id: {e}")))?;
+                let tag =
+                    row_to_tag(row).map_err(|e| CoreError::storage(format!("row_to_tag: {e}")))?;
+                out.entry(Id(task_id_s)).or_default().push(tag);
+            }
         }
         Ok(out)
     }
@@ -1979,32 +1985,34 @@ impl Store for SqliteStore {
             return Ok(out);
         }
         let conn = self.lock()?;
-        let placeholders = std::iter::repeat_n("?", task_ids.len())
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            "SELECT * FROM subtasks
-             WHERE task_id IN ({placeholders}) AND deleted_at_ms IS NULL
-             ORDER BY task_id, position ASC, updated_at_ms ASC"
-        );
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| CoreError::storage(format!("prepare list_subtasks_for_tasks: {e}")))?;
-        let mut rows = stmt
-            .query(rusqlite::params_from_iter(
-                task_ids.iter().map(|i| i.as_str()),
-            ))
-            .map_err(|e| CoreError::storage(format!("query: {e}")))?;
-        while let Some(row) = rows
-            .next()
-            .map_err(|e| CoreError::storage(format!("row: {e}")))?
-        {
-            let task_id_s: String = row
-                .get::<_, String>("task_id")
-                .map_err(|e| CoreError::storage(format!("row.task_id: {e}")))?;
-            let st = row_to_subtask(row)
-                .map_err(|e| CoreError::storage(format!("row_to_subtask: {e}")))?;
-            out.entry(Id(task_id_s)).or_default().push(st);
+        // 分块查(2026-09-14):占位符数量有界;同一 task 的子任务必落在
+        // 同一块,块内 ORDER BY 语义不变。
+        for chunk in task_ids.chunks(IN_CHUNK) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT * FROM subtasks
+                 WHERE task_id IN ({placeholders}) AND deleted_at_ms IS NULL
+                 ORDER BY task_id, position ASC, updated_at_ms ASC"
+            );
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| CoreError::storage(format!("prepare list_subtasks_for_tasks: {e}")))?;
+            let mut rows = stmt
+                .query(rusqlite::params_from_iter(chunk.iter().map(|i| i.as_str())))
+                .map_err(|e| CoreError::storage(format!("query: {e}")))?;
+            while let Some(row) = rows
+                .next()
+                .map_err(|e| CoreError::storage(format!("row: {e}")))?
+            {
+                let task_id_s: String = row
+                    .get::<_, String>("task_id")
+                    .map_err(|e| CoreError::storage(format!("row.task_id: {e}")))?;
+                let st = row_to_subtask(row)
+                    .map_err(|e| CoreError::storage(format!("row_to_subtask: {e}")))?;
+                out.entry(Id(task_id_s)).or_default().push(st);
+            }
         }
         Ok(out)
     }
@@ -2232,6 +2240,17 @@ impl Store for SqliteStore {
         conn.execute("DELETE FROM conflict_log", [])
             .map_err(|e| CoreError::storage(format!("clear_conflicts: {e}")))?;
         Ok(())
+    }
+
+    fn trim_conflicts(&self, cutoff_ms: i64) -> CoreResult<usize> {
+        let conn = self.lock()?;
+        let n = conn
+            .execute(
+                "DELETE FROM conflict_log WHERE occurred_at_ms < ?",
+                params![cutoff_ms],
+            )
+            .map_err(|e| CoreError::storage(format!("trim_conflicts: {e}")))?;
+        Ok(n)
     }
 
     fn count_conflicts(&self) -> CoreResult<usize> {
@@ -3335,6 +3354,31 @@ fn local_candidates_bulk_matches_single() {
         }
         assert_eq!(&one, single);
     }
+}
+
+/// 冲突日志保留期(2026-09-14):trim 只删 cutoff 之前的条目。
+#[test]
+fn trim_conflicts_removes_only_older_than_cutoff() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let rec = |occurred: i64| ConflictRecord {
+        entity: "task".into(),
+        entity_id: "t1".into(),
+        entity_title: "标题".into(),
+        direction: "overrode".into(),
+        remote_device: "dev-b".into(),
+        local_updated_ms: occurred - 1,
+        remote_updated_ms: occurred,
+        occurred_at_ms: occurred,
+    };
+    store.insert_conflict(rec(1000)).unwrap();
+    store.insert_conflict(rec(2000)).unwrap();
+    let removed = store.trim_conflicts(1500).unwrap();
+    assert_eq!(removed, 1);
+    assert_eq!(store.count_conflicts().unwrap(), 1);
+    assert_eq!(
+        store.list_recent_conflicts(10).unwrap()[0].occurred_at_ms,
+        2000
+    );
 }
 
 /// 迁移 008(2026-09-14):热路径索引存在 + pending 索引已按 updated_at_ms

@@ -215,6 +215,9 @@ pub trait Store: std::fmt::Debug {
     fn list_recent_conflicts(&self, limit: usize) -> CoreResult<Vec<ConflictRecord>>;
     /// 清空全部冲突记录。
     fn clear_conflicts(&self) -> CoreResult<()>;
+    /// 清理 `cutoff_ms` 之前的冲突日志条目,返回删除数(同步成功后调用;
+    /// 纯本地日志无同步语义,2026-09-14 加保留期策略)。
+    fn trim_conflicts(&self, cutoff_ms: i64) -> CoreResult<usize>;
     /// 当前冲突记录总数。
     fn count_conflicts(&self) -> CoreResult<usize>;
 }
@@ -1390,6 +1393,16 @@ impl Store for InMemoryStore {
             .map_err(|e| CoreError::storage(e.to_string()))?;
         g.conflicts.clear();
         Ok(())
+    }
+
+    fn trim_conflicts(&self, cutoff_ms: i64) -> CoreResult<usize> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let before = g.conflicts.len();
+        g.conflicts.retain(|r| r.occurred_at_ms >= cutoff_ms);
+        Ok(before - g.conflicts.len())
     }
 
     fn count_conflicts(&self) -> CoreResult<usize> {
