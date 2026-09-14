@@ -24,6 +24,7 @@
   import { accountState, loadAccountState } from "./lib/accountState.svelte";
   import { initSyncListener } from "./lib/syncState.svelte";
   import SyncIndicator from "./components/ui/SyncIndicator.svelte";
+  import ToastHost from "./components/ToastHost.svelte";
   import { getDict } from "./lib/i18n.svelte";
   import {
     getTimerState,
@@ -99,6 +100,7 @@
 </script>
 
 <main class="app app-bg">
+    <ToastHost />
   <header class="topbar">
     <!-- v1:logo(品牌番茄 SVG)+ 字标居左,导航紧跟其后靠左 -->
     {#if accountState().user}

@@ -24,6 +24,7 @@
   import * as api from "../../lib/api";
   import type { Journal, JournalKind, JournalUpsertInput } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
+  import { toastError } from "../../lib/toast.svelte";
   import { JOURNAL_KINDS, KIND_EMOJI, fmtJournalDate } from "../../lib/journalKinds";
   import TaskCheckbox from "./TaskCheckbox.svelte";
 
@@ -107,7 +108,7 @@
       });
       onChanged();
     } catch (e) {
-      alert(fmt(t.notes.saveFailed, { err: String(e) }));
+      toastError(fmt(t.notes.saveFailed, { err: String(e) }));
     }
   }
 
@@ -125,7 +126,7 @@
       });
       onCreated(created);
     } catch (e) {
-      alert(fmt(t.notes.saveFailed, { err: String(e) }));
+      toastError(fmt(t.notes.saveFailed, { err: String(e) }));
     } finally {
       creating = false;
     }
@@ -183,7 +184,7 @@
       await api.toggleJournal(journal.id);
       onChanged();
     } catch (e) {
-      alert(fmt(t.notes.toggleFailed, { err: String(e) }));
+      toastError(fmt(t.notes.toggleFailed, { err: String(e) }));
     }
   }
 
@@ -198,7 +199,7 @@
       onClose();
       onChanged(); // 顺序照 TaskDetailPanel :225-233
     } catch (e) {
-      alert(fmt(t.notes.deleteFailed, { err: String(e) }));
+      toastError(fmt(t.notes.deleteFailed, { err: String(e) }));
     }
   }
 </script>

@@ -26,6 +26,7 @@
     Task as ApiTask,
   } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
+  import { toastError } from "../../lib/toast.svelte";
   import type { Dict } from "../../lib/i18n";
   import { toLocal, toIsoUtc, hasTimePart, fillCurrentTime } from "../../lib/dueDate";
   import { projectTreeOptions } from "../../lib/projectTree";
@@ -94,7 +95,7 @@
       onChanged();
     } catch (e) {
       console.error("patch task failed", e);
-      alert(fmt(t.task.saveFailed, { err: String(e) }));
+      toastError(fmt(t.task.saveFailed, { err: String(e) }));
     }
   }
 
@@ -115,7 +116,7 @@
       onChanged();
     } catch (e) {
       console.error("patch repeat failed", e);
-      alert(fmt(t.task.saveFailed, { err: String(e) }));
+      toastError(fmt(t.task.saveFailed, { err: String(e) }));
     }
   }
 
@@ -166,7 +167,7 @@
       onChanged();
     } catch (e) {
       selectedTagIds = prev;
-      alert(fmt(t.task.setTagsFailed, { err: String(e) }));
+      toastError(fmt(t.task.setTagsFailed, { err: String(e) }));
     }
   }
 
@@ -211,7 +212,7 @@
       subtasks = [...subtasks, saved];
       onChanged();
     } catch (e) {
-      alert(fmt(t.task.addSubtaskFailed, { err: String(e) }));
+      toastError(fmt(t.task.addSubtaskFailed, { err: String(e) }));
     }
   }
 
@@ -225,7 +226,7 @@
       if (prev) {
         subtasks = subtasks.map((s) => (s.id === prev.id ? prev : s));
       }
-      alert(fmt(t.task.updateSubtaskFailed, { err: String(e) }));
+      toastError(fmt(t.task.updateSubtaskFailed, { err: String(e) }));
     }
   }
 
@@ -237,7 +238,7 @@
       onChanged();
     } catch (e) {
       subtasks = prev;
-      alert(fmt(t.task.deleteSubtaskFailed, { err: String(e) }));
+      toastError(fmt(t.task.deleteSubtaskFailed, { err: String(e) }));
     }
   }
 
@@ -254,7 +255,7 @@
       onClose();
       onChanged();
     } catch (e) {
-      alert(fmt(t.task.saveFailed, { err: String(e) }));
+      toastError(fmt(t.task.saveFailed, { err: String(e) }));
     }
   }
 
@@ -286,7 +287,7 @@
     }
     if (!hasTimePart(dueDraft)) {
       const filled = fillCurrentTime(dueDraft);
-      alert(t.task.detailTimeFilled);
+      toastError(t.task.detailTimeFilled);
       dueDraft = filled;
       void patchTask({ reminder: v, due_date: toIsoUtc(filled) });
     } else {

@@ -38,6 +38,7 @@
   import { startWithTaskFromList } from "../lib/timer.svelte";
   import { checkRemindersNow } from "../lib/reminders.svelte";
   import { getDict, fmt } from "../lib/i18n.svelte";
+  import { toastError } from "../lib/toast.svelte";
   import { todayStr, tomorrowStr, datePart, hasTimePart, toIsoUtc } from "../lib/dueDate";
   import { compareByStatusPriorityCreated } from "../lib/taskSort";
   import { startOfWeek, endOfWeek, startOfMonth, endOfMonth } from "../lib/weekMonth";
@@ -367,7 +368,7 @@
       await api.toggleJournal(id);
       await refreshJournals();
     } catch (e) {
-      alert(fmt(t.notes.toggleFailed, { err: String(e) }));
+      toastError(fmt(t.notes.toggleFailed, { err: String(e) }));
     }
   }
 
