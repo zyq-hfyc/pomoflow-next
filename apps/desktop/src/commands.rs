@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use chrono::{NaiveDate, Utc};
+use log::error;
 use pomoflow_core::model::{
     DailyReview, Id, Journal, MonthlyReview, Motto, NotificationTemplate, PomodoroSession, Project,
     SubTask, Tag, Task, TaskStatus, TaskView, Timestamp, WeeklyReview, YearlyReview,
@@ -135,7 +136,13 @@ pub fn upsert_task(
     }
 
     // === 重复编排(v1 create_task / update_task 翻译) ===
-    let existing = store.get_task(&task.id).ok();
+    // 「库里没有」(NotFound)才视为新建;IO 错误若被 `.ok()` 当 None,
+    // 会把一次更新降级为创建(revision 归 1 / status 强制 Active)。
+    let existing = match store.get_task(&task.id) {
+        Ok(e) => Some(e),
+        Err(pomoflow_core::error::CoreError::NotFound { .. }) => None,
+        Err(e) => return Err(map_err(e)),
+    };
     let mut task = task;
     // v1 TaskCreate/TaskUpdate 保护字段语义:status / completed_pomodoros /
     // completed_at 不允许编辑载荷直改(v1 schema 干脆不暴露这三个字段),只能经
@@ -403,19 +410,27 @@ pub fn stop_pomodoro(
     // 完成且绑定了任务 → 累加 task.completed_pomodoros;达预估自动完成任务
     // (v1 crud.py:488-490:completed >= estimated 且未完成 → 置 completed+completed_at;
     //  裸比较 —— estimated=0 时一次专注即完成,v1 原样)
-    // 失败仅静默(不影响主返回:PomodoroSession 已成功落库,统计可重算)
+    // 失败只记日志不回滚(主返回不受影响:PomodoroSession 已成功落库,统计
+    // 可重算;但任务计数不会自愈,静默丢过站曾让番茄白跑 —— 2026-09-14 修)。
     if let Some(task_id) = task_to_bump {
-        if let Ok(mut task) = state.store.get_task(&task_id) {
-            task.completed_pomodoros = task.completed_pomodoros.saturating_add(1);
-            if task.completed_pomodoros >= task.estimated_pomodoros
-                && task.status != TaskStatus::Completed
-            {
-                task.status = TaskStatus::Completed;
-                task.completed_at = Some(Utc::now());
+        match state.store.get_task(&task_id) {
+            Ok(mut task) => {
+                task.completed_pomodoros = task.completed_pomodoros.saturating_add(1);
+                if task.completed_pomodoros >= task.estimated_pomodoros
+                    && task.status != TaskStatus::Completed
+                {
+                    task.status = TaskStatus::Completed;
+                    task.completed_at = Some(Utc::now());
+                }
+                task.revision = task.revision.saturating_add(1);
+                task.updated_at = Timestamp::now();
+                if let Err(e) = state.store.upsert_task(task) {
+                    error!("stop_pomodoro: bump completed_pomodoros failed (task {task_id}): {e}");
+                }
             }
-            task.revision = task.revision.saturating_add(1);
-            task.updated_at = Timestamp::now();
-            let _ = state.store.upsert_task(task);
+            Err(e) => {
+                error!("stop_pomodoro: load task for bump failed (task {task_id}): {e}");
+            }
         }
     }
 
