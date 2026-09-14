@@ -54,7 +54,35 @@ pub fn run() {
     if migrate::needs_migration(&path) {
         backup_store_file(&path);
     }
-    let store = SqliteStore::open(&path).expect("open sqlite store");
+    let store = match SqliteStore::open(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            // 自愈(2026-09-14):此前损坏的 DB 直接 panic,应用无法启动且无
+            // 恢复路径。把损坏文件(连同 -wal/-shm)挪成 .corrupt-<时间戳>
+            // 留作手工恢复,用全新库启动并发系统通知告知用户。
+            error!("open sqlite store failed: {e}");
+            let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+            for suffix in ["", "-wal", "-shm"] {
+                let mut from = path.clone().into_os_string();
+                from.push(suffix);
+                let from = std::path::PathBuf::from(from);
+                if from.exists() {
+                    let mut to = from.clone().into_os_string();
+                    to.push(format!(".corrupt-{stamp}"));
+                    let to = std::path::PathBuf::from(to);
+                    match std::fs::rename(&from, &to) {
+                        Ok(()) => warn!("corrupt store moved to {}", to.display()),
+                        Err(re) => warn!("move corrupt store failed: {re}"),
+                    }
+                }
+            }
+            let _ = notify_rust::Notification::new()
+                .summary("PomoFlow")
+                .body("数据文件异常，已用全新数据库启动；原文件已保留（store.db.corrupt-*），可尝试手动恢复。")
+                .show();
+            SqliteStore::open(&path).expect("open sqlite store after corruption recovery")
+        }
+    };
     // 手动/后台同步共用的串行化锁(P1b;锁本体随 setup 移交后台任务)
     let sync_lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
     let state = AppState {

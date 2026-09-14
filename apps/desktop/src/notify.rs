@@ -59,7 +59,10 @@ pub fn send_notification(app: tauri::AppHandle, title: String, body: String) -> 
         let mut notification = Notification::new();
         #[cfg(windows)]
         notification.app_id(&identifier);
-        let _ = notification.summary(&title).body(&body).show();
+        // 失败留痕(2026-09-14):此前 `let _ =` 静默,提醒没弹用户无从知晓
+        if let Err(e) = notification.summary(&title).body(&body).show() {
+            log::warn!("send notification failed: {e}");
+        }
     });
     Ok(())
 }

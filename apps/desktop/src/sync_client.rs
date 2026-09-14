@@ -17,7 +17,7 @@
 //! 才真正执行;结果经 `sync://auto` 事件发给设置页展示。手动/自动共用
 //! `sync_lock` 串行化,防止两个循环交错推拉。
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use pomoflow_core::store::{ConflictRecord, SqliteStore, Store};
@@ -357,10 +357,7 @@ async fn run_sync(store: &SqliteStore) -> Result<SyncReport, String> {
         meta_nonempty(store, META_TOKEN)?.ok_or("未配置访问令牌")?;
     }
     let static_token = meta_nonempty(store, META_TOKEN)?;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = shared_client(true).clone();
     let user = store.local_user_id().clone();
     let device = store.local_device_id().to_string();
     let mut report = SyncReport::default();
@@ -423,6 +420,13 @@ async fn run_sync(store: &SqliteStore) -> Result<SyncReport, String> {
         if n == 0 {
             break;
         }
+    }
+
+    // 冲突日志保留期(2026-09-14):成功同步后清理过期条目(纯本地日志,
+    // 不参与同步;失败只告警不影响同步结果)
+    let cutoff = chrono::Utc::now().timestamp_millis() - CONFLICT_RETENTION_MS;
+    if let Err(e) = store.trim_conflicts(cutoff) {
+        log::warn!("trim conflicts failed: {e}");
     }
 
     Ok(report)
@@ -634,10 +638,7 @@ async fn auth_request(
     operator_token: Option<&str>,
 ) -> Result<AuthStatus, String> {
     let url = meta_nonempty(store, META_URL)?.ok_or("请先填写并保存服务器地址")?;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = shared_client(false).clone();
     let (device_id, device_name) = device_report(store);
     let mut req = client
         .post(format!("{url}{path}"))
@@ -731,10 +732,8 @@ pub async fn auth_logout(state: State<'_, AppState>) -> Result<(), String> {
         meta_nonempty(&store, META_URL)?,
         meta_nonempty(&store, META_REFRESH)?,
     ) {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .map_err(|e| e.to_string())?;
+        // 登出是尽力而为(结果不阻断):超时由 10s 统一到共享客户端的 15s
+        let client = shared_client(false).clone();
         let _ = client
             .post(format!("{url}/v1/auth/logout"))
             .json(&serde_json::json!({ "refresh_token": refresh }))
@@ -857,10 +856,7 @@ pub struct SessionInfo {
 async fn session_context(store: &SqliteStore) -> Result<(String, reqwest::Client, String), String> {
     let url = meta_nonempty(store, META_URL)?.ok_or("未配置同步服务器")?;
     let refresh = meta_nonempty(store, META_REFRESH)?.ok_or("尚未登录账号".to_string())?;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = shared_client(false).clone();
     Ok((url, client, refresh))
 }
 
@@ -873,10 +869,7 @@ pub async fn auth_change_password(
     let store = state.store.clone();
     let url = meta_nonempty(&store, META_URL)?.ok_or("未配置同步服务器")?;
     let access = meta_nonempty(&store, META_ACCESS)?.ok_or("尚未登录账号".to_string())?;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = shared_client(false).clone();
     let (device_id, device_name) = device_report(&store);
     let body = serde_json::json!({
         "old_password": old_password, "new_password": new_password,
@@ -993,11 +986,31 @@ struct SendCodeResp {
     expires_in: i64,
 }
 
+/// 冲突日志保留期(2026-09-14):成功同步后清理 30 天前的条目。
+const CONFLICT_RETENTION_MS: i64 = 30 * 24 * 3600 * 1000;
+
+/// 共享 HTTP 客户端(2026-09-14):此前每个 auth/sync 请求新建 Client,
+/// 白白丢掉连接池与 TLS 会话复用。两档超时:同步批量大传输 30s,其余 15s。
+/// 调用侧 `.clone()` 只复制句柄(Arc 内核,引用计数自增)。
+fn shared_client(sync_timeout: bool) -> &'static reqwest::Client {
+    static SYNC: OnceLock<reqwest::Client> = OnceLock::new();
+    static PLAIN: OnceLock<reqwest::Client> = OnceLock::new();
+    let (cell, secs) = if sync_timeout {
+        (&SYNC, 30)
+    } else {
+        (&PLAIN, 15)
+    };
+    cell.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(secs))
+            .build()
+            // 仅 TLS 后端初始化失败才可能炸;rustls 纯 Rust 实现,实际不可达
+            .expect("build shared reqwest client")
+    })
+}
+
 fn short_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())
+    Ok(shared_client(false).clone())
 }
 
 fn account_url(store: &SqliteStore, path: &str) -> Result<String, String> {
