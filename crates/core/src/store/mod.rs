@@ -134,6 +134,10 @@ pub trait Store: std::fmt::Debug {
         start_ms: i64,
         end_ms: i64,
     ) -> CoreResult<Vec<PomodoroSession>>;
+    /// counts 口径(is_completed && task_id 非空 && 未软删,v1 过滤条件)的
+    /// 全时段会话数。overview 的 total_sessions 用 SQL COUNT,免全表反序列化
+    /// (2026-09-14)。
+    fn count_pomodoros(&self) -> CoreResult<u64>;
     fn upsert_pomodoro(&self, session: PomodoroSession) -> CoreResult<PomodoroSession>;
     /// 单条取会话(2026-09-14;命令层此前 list 全表后内存 find,会话只增不减)
     fn get_pomodoro(&self, id: &Id) -> CoreResult<PomodoroSession>;
@@ -871,6 +875,18 @@ impl Store for InMemoryStore {
             .collect();
         out.sort_by_key(|s| std::cmp::Reverse(s.started_at));
         Ok(out)
+    }
+
+    fn count_pomodoros(&self) -> CoreResult<u64> {
+        // counts 口径(v1 过滤:已完成 && 绑任务 && 未软删;stats 模块注释 §1)
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        Ok(g.pomodoros
+            .values()
+            .filter(|s| s.deleted_at.is_none() && s.is_completed && s.task_id.is_some())
+            .count() as u64)
     }
 
     fn upsert_pomodoro(&self, mut session: PomodoroSession) -> CoreResult<PomodoroSession> {

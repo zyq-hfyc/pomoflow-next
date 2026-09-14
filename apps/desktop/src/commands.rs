@@ -847,15 +847,37 @@ pub fn stats_overview(
     tz_offset_min: i32,
     state: State<'_, AppState>,
 ) -> Result<OverviewStats, String> {
-    let sessions = state.store.list_pomodoros().map_err(map_err)?;
+    // 窗口下界 = 三档起点最早者(week_start 可能先于 month_start,如月末
+    // 那周;today 恒 >= 两者,一并取 min 兜底)。会话窗口查 + 全时段 COUNT
+    // (2026-09-14):此前 list 全表反序列化,数年数据后每次开统计页都拉
+    // 全部历史会话。
+    let since = [today.as_str(), week_start.as_str(), month_start.as_str()]
+        .iter()
+        .filter_map(|d| {
+            NaiveDate::parse_from_str(d, "%Y-%m-%d")
+                .ok()
+                .and_then(|day| day.and_hms_opt(0, 0, 0))
+                .map(|dt| dt.and_utc().timestamp_millis() - tz_offset_min as i64 * 60_000)
+        })
+        .min();
+    let sessions = match since {
+        Some(ms) => state
+            .store
+            .list_pomodoros_between(ms, i64::MAX)
+            .map_err(map_err)?,
+        None => Vec::new(),
+    };
+    let total_sessions = state.store.count_pomodoros().map_err(map_err)?;
+    // 全量任务(不走分页 list_tasks:limit 夹紧 ≤5000,超限时老任务被截断,统计会少算)
     let tasks = state.store.list_tasks_for_stats().map_err(map_err)?;
-    Ok(stats::overview_stats(
+    Ok(stats::overview_stats_windowed(
         &sessions,
         &tasks,
         &today,
         &week_start,
         &month_start,
         tz_offset_min,
+        total_sessions,
     ))
 }
 

@@ -308,6 +308,33 @@ pub fn overview_stats(
     }
 }
 
+/// overview 的窗口协同版(2026-09-14,免全表反序列化):
+/// `recent_sessions` 是存储层按 `[since, ∞)` 窗口取回的会话(since = 三档
+/// 起点最早者,命令层换算 UTC 毫秒);`total_count` 是存储层 COUNT 的
+/// counts 口径全时段数。三档窗口聚合在切片上做,全时段 total_sessions 用
+/// COUNT —— 结果与 [`overview_stats`] 全量输入完全一致(命令层 differential
+/// 测试锁定)。
+pub fn overview_stats_windowed(
+    recent_sessions: &[PomodoroSession],
+    tasks: &[Task],
+    today: &str,
+    week_start: &str,
+    month_start: &str,
+    tz_offset_min: i32,
+    total_count: u64,
+) -> OverviewStats {
+    let mut o = overview_stats(
+        recent_sessions,
+        tasks,
+        today,
+        week_start,
+        month_start,
+        tz_offset_min,
+    );
+    o.total_sessions = sat_u32(total_count);
+    o
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

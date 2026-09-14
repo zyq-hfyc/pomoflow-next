@@ -1747,6 +1747,20 @@ impl Store for SqliteStore {
         Ok(out)
     }
 
+    fn count_pomodoros(&self) -> CoreResult<u64> {
+        // counts 口径(v1 过滤:已完成 && 绑任务 && 未软删;stats 模块注释 §1)
+        let conn = self.lock()?;
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pomodoros
+                 WHERE deleted_at_ms IS NULL AND is_completed = 1 AND task_id IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| CoreError::storage(format!("count_pomodoros: {e}")))?;
+        u64::try_from(n).map_err(|_| CoreError::storage("count_pomodoros overflow"))
+    }
+
     fn upsert_pomodoro(&self, session: PomodoroSession) -> CoreResult<PomodoroSession> {
         self.upsert_pomodoro_marked(session, true)
     }
@@ -3417,4 +3431,103 @@ fn migration_008_creates_query_indexes() {
         sql.contains("updated_at_ms"),
         "idx_tasks_pending 应为 (updated_at_ms) 列序:{sql}"
     );
+}
+
+/// 统计窗口取数(生产路径)与全表扫描 + 纯函数的 differential 锁(2026-09-14):
+/// 同一份数据跨三个时区,overview / range 的窗口路径结果必须与全量一致 ——
+/// 覆盖跨时区日界(23:30Z 东八区落次日)、放弃/无任务会话、月界外数据。
+#[test]
+fn stats_windowed_path_matches_full_scan() {
+    use crate::stats::{self, StatsGroup};
+
+    let store = SqliteStore::open_in_memory().unwrap();
+    let mk = |started: &str, minutes: u32, completed: bool, with_task: bool| {
+        let started = DateTime::parse_from_rfc3339(started)
+            .unwrap()
+            .with_timezone(&Utc);
+        PomodoroSession {
+            id: crate::model::Id::new(),
+            user_id: crate::model::Id::nil(),
+            task_id: with_task.then(crate::model::Id::new),
+            project_id: None,
+            duration: minutes,
+            started_at: started,
+            ended_at: started,
+            is_completed: completed,
+            created_at: crate::model::Timestamp(started),
+            revision: 1,
+            deleted_at: None,
+            updated_at: crate::model::Timestamp(started),
+        }
+    };
+    for s in [
+        mk("2026-01-15T09:00:00Z", 25, true, true),
+        mk("2026-01-15T23:30:00Z", 40, true, true), // 东八区落在次日
+        mk("2025-12-20T09:00:00Z", 45, true, true), // 仅全时段
+        mk("2026-01-13T10:00:00Z", 25, false, true), // 中途放弃
+        mk("2026-01-13T11:00:00Z", 25, true, false), // 无任务专注
+    ] {
+        store.upsert_pomodoro(s).unwrap();
+    }
+    let mut done = Task::new("已完成");
+    done.status = TaskStatus::Completed;
+    store.upsert_task(done).unwrap();
+    let projects: Vec<Project> = Vec::new();
+
+    for tz in [0i32, 480, -300] {
+        let all = store.list_pomodoros().unwrap();
+        let tasks = store.list_tasks_for_stats().unwrap();
+        let full =
+            stats::overview_stats(&all, &tasks, "2026-01-15", "2026-01-12", "2026-01-01", tz);
+
+        // 生产窗口路径:三档起点最早者(此处 = month_start)本地 00:00 换算
+        let month = chrono::NaiveDate::parse_from_str("2026-01-01", "%Y-%m-%d").unwrap();
+        let since = month
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis()
+            - tz as i64 * 60_000;
+        let recent = store.list_pomodoros_between(since, i64::MAX).unwrap();
+        let total = store.count_pomodoros().unwrap();
+        let windowed = stats::overview_stats_windowed(
+            &recent,
+            &tasks,
+            "2026-01-15",
+            "2026-01-12",
+            "2026-01-01",
+            tz,
+            total,
+        );
+        assert_eq!(full, windowed, "tz={tz}");
+
+        // range 同理(生产路径本就是窗口查询)
+        let full_r = stats::range_stats(
+            &all,
+            &tasks,
+            &projects,
+            "2026-01-01",
+            "2026-01-31",
+            StatsGroup::Day,
+            tz,
+        );
+        let end = chrono::NaiveDate::parse_from_str("2026-01-31", "%Y-%m-%d").unwrap();
+        let until = (end + chrono::Duration::days(1))
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis()
+            - tz as i64 * 60_000;
+        let win_sessions = store.list_pomodoros_between(since, until).unwrap();
+        let win_r = stats::range_stats(
+            &win_sessions,
+            &tasks,
+            &projects,
+            "2026-01-01",
+            "2026-01-31",
+            StatsGroup::Day,
+            tz,
+        );
+        assert_eq!(full_r, win_r, "tz={tz}");
+    }
 }
