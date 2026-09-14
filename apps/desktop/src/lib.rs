@@ -21,6 +21,11 @@ pub mod tray;
 ///
 /// 失败只告警不阻断 —— 备份是保险措施,不应阻止应用启动。
 fn backup_store_file(path: &std::path::Path) {
+    // WAL 模式下最近提交可能还在 <path>-wal 里:先 checkpoint 合并回主文件,
+    // 保证 .bak 单文件即完整快照(2026-09-14 随 WAL 启用补上)。
+    if let Err(e) = SqliteStore::checkpoint_wal_file(path) {
+        warn!("store wal checkpoint failed (continuing): {e}");
+    }
     let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
     let backup = path.with_extension(format!("db.{stamp}.bak"));
     match std::fs::copy(path, &backup) {

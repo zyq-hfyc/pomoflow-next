@@ -67,6 +67,16 @@ impl SqliteStore {
         conn.execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(|e| CoreError::storage(format!("pragma foreign_keys: {e}")))?;
 
+        // WAL + synchronous=NORMAL(2026-09-14 优化批,文件头「未来要做的事」
+        // 清单项):读不阻塞写、checkpoint 批量落盘 —— auto-sync 与前台 command
+        // 共用一把连接锁,默认 rollback journal 下同步扫描期间前台命令卡等锁。
+        // journal_mode 是带结果行的 pragma,走 query_row;返回值即生效模式。
+        let _journal_mode: String = conn
+            .query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))
+            .map_err(|e| CoreError::storage(format!("pragma journal_mode: {e}")))?;
+        conn.execute_batch("PRAGMA synchronous = NORMAL;")
+            .map_err(|e| CoreError::storage(format!("pragma synchronous: {e}")))?;
+
         // 新库一次建成最新结构;旧库的表已存在,由版本化迁移补齐(幂等)。
         // 迁移前备份由调用方(桌面端 / migrate-v1)用 migrate::needs_migration 判断。
         conn.execute_batch(SCHEMA_SQL)
@@ -91,6 +101,22 @@ impl SqliteStore {
         super::migrate::run_migrations(&conn)
             .map_err(|e| CoreError::storage(format!("run migrations: {e}")))?;
         Self::with_conn(conn)
+    }
+
+    /// 把 `<path>-wal` 里已提交的页合并回主库文件并截断 WAL(TRUNCATE)。
+    ///
+    /// 桌面端迁移前备份(`lib.rs::backup_store_file`)在打开 store 之前调用:
+    /// WAL 模式下最近提交可能还在 -wal 里,不 checkpoint 就只拷主文件会得到
+    /// 缺尾的 .bak。库不存在 / 从未进过 WAL 时为无害 no-op(空 checkpoint)。
+    pub fn checkpoint_wal_file(path: impl AsRef<Path>) -> CoreResult<()> {
+        let conn = Connection::open(path.as_ref())
+            .map_err(|e| CoreError::storage(format!("open sqlite for checkpoint: {e}")))?;
+        let _row: (i64, i64, i64) = conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .map_err(|e| CoreError::storage(format!("wal checkpoint: {e}")))?;
+        Ok(())
     }
 
     /// 公共收尾:加载同步元数据(meta 表由迁移 002 保证存在)。
@@ -3167,4 +3193,33 @@ fn yearly_review_roundtrip_and_pending() {
         .expect("空内容行应可作 candidate 查出");
     let cand_payload: crate::model::YearlyReview = serde_json::from_value(cand.payload).unwrap();
     assert_eq!(cand_payload.content, "");
+}
+
+/// WAL 落地锁(2026-09-14 优化批):文件库 open 即启用 WAL —— journal_mode
+/// 是文件头持久属性,全新连接读出也应是 wal;checkpoint_wal_file 对同一库
+/// 可执行(迁移前备份依赖它把 -wal 合并回主文件)。内存库无 journal 概念,
+/// 不在本测覆盖。
+#[test]
+fn file_open_enables_wal_and_checkpoint_runs() {
+    let dir = std::env::temp_dir().join(format!(
+        "pomoflow_wal_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("wal.db");
+    {
+        let _store = SqliteStore::open(&path).unwrap();
+    }
+    let conn = Connection::open(&path).unwrap();
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(mode, "wal", "文件库 open 后 journal_mode 应为 wal");
+    drop(conn);
+    SqliteStore::checkpoint_wal_file(&path).expect("checkpoint 应成功");
+    let _ = std::fs::remove_dir_all(&dir);
 }
