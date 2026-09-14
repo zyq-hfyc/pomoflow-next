@@ -12,7 +12,7 @@
 //! ⑧ tags 中英文逗号解析。
 
 import { describe, expect, test, beforeEach, vi } from "vitest";
-import { flushSync, mount } from "svelte";
+import { flushSync, mount, unmount } from "svelte";
 
 vi.mock("../../lib/api", () => ({
   upsertJournal: vi.fn(),
@@ -23,6 +23,7 @@ vi.mock("../../lib/api", () => ({
 import * as api from "../../lib/api";
 import type { Journal } from "../../lib/api";
 import NoteDetailPanel from "./NoteDetailPanel.svelte";
+import RefreshHarness from "./NoteDetailPanel.test-harness.svelte";
 
 function journal(p: Partial<Journal> & Pick<Journal, "id">): Journal {
   return {
@@ -278,5 +279,26 @@ describe("NoteDetailPanel · 新建态", () => {
     resolve(journal({ id: "c-1" }));
     await settle();
     expect(api.upsertJournal).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("NoteDetailPanel · refresh 回灌不冲草稿(2026-09-14 优化批)", () => {
+  test("同 id 新对象(refresh 回灌)→ 正在编辑的草稿保留", async () => {
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    const mounted = mount(RefreshHarness, { target }) as Record<string, unknown>;
+    const setJournal = mounted!.setJournal as (j: Journal | null) => void;
+    setJournal(journal({ id: "j1", title: "旧标题", content: "旧内容" }));
+    flushSync();
+    const input = titleInput(target);
+    input.value = "编辑中标题";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    // 后台同步重拉:同 id、内容已变的新对象(旧实现会把草稿重置成远端值)
+    setJournal(journal({ id: "j1", title: "远端新标题", content: "远端新内容" }));
+    flushSync();
+    expect(input.value).toBe("编辑中标题");
+    expect(api.upsertJournal).not.toHaveBeenCalled();
+    unmount(mounted);
   });
 });

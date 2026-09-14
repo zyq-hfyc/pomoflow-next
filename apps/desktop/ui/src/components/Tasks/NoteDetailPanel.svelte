@@ -10,7 +10,8 @@
   //   5. 创建日期(编辑态)+ 删除两步确认文字链(右下角,armed 红 pill)
   //
   // 草稿模式照 TaskDetailPanel :52-62:输入只改本地 state,失焦才提交(IME 安全);
-  // journal prop 切换(含 refresh 回灌新对象)时 $effect 重置草稿并解除删除武装。
+  // journal prop 按 id 判定切换(真切换目标才重置草稿;refresh 回灌同 id
+  // 新对象保留草稿,2026-09-14)并解除删除武装。
   //
   // 新建 vs 编辑:`journal === null` 即新建草稿态。新建态无删除链/无勾选框/
   // 无日期,标题自动聚焦;首个字段失焦且「标题或内容非空」→ createFromDraft()
@@ -59,8 +60,16 @@
     note: t.notes.kindNote,
   });
 
+  // 草稿归属的 journal id(非响应式):只在 id 变化(真切换目标)时重置。
+  // refresh 回灌同 id 新对象(后台同步重拉)不清掉正在编辑的草稿 ——
+  // 与 TaskDetailPanel 同款(2026-09-14)。新建态(null)初值即 null,
+  // 草稿已由上方 untrack 初始化为空,首跑跳过正合适。
+  let draftsJournalId: string | null = null;
+
   $effect(() => {
-    // 切换目标(含 refresh 回灌新对象) → 重置草稿 + 解除删除武装
+    // 切换目标(id 变化) → 重置草稿 + 解除删除武装
+    if (draftsJournalId === (journal?.id ?? null)) return;
+    draftsJournalId = journal?.id ?? null;
     titleDraft = journal?.title ?? "";
     contentDraft = journal?.content ?? "";
     tagsDraft = (journal?.tags ?? []).join(", ");

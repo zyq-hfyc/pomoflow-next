@@ -8,7 +8,7 @@
   //                / 提醒(缺时间自动补) / 重复(含自定义弹窗)
   //   4. 子任务列表(勾选 + 铅笔/垃圾桶)+ 添加输入(Enter)
   //   5. 备注 textarea(失焦保存)
-  //   6. 右下角小号「删除任务」文字链(垃圾桶图标,v1 无确认框)
+  //   6. 右下角小号「删除任务」文字链(垃圾桶图标,两步确认:一击武装、二击执行)
   //
   // 面板为全高列(320px + 左边框),与左侧列表区同高对齐,内部滚动。
 
@@ -53,12 +53,22 @@
   let titleDraft = $state(untrack(() => task.title));
   let noteDraft = $state(untrack(() => task.description ?? ""));
   let dueDraft = $state(untrack(() => toLocal(task.due_date)));
+  // 删除两步确认的武装态(照 NoteDetailPanel;切换任务时解除)
+  let deleteArmed = $state(false);
+
+  // 草稿归属的任务 id(非响应式):只在 id 变化(真切换任务)时重置草稿。
+  // refresh 回灌同 id 新对象 —— 后台 auto-sync 重拉、本机保存后的列表刷新 ——
+  // 不再清掉正在编辑的草稿(2026-09-14 修:按对象引用重置会被 auto-sync
+  // 静默清空编辑中内容)。
+  let draftsTaskId: string | null = null;
 
   $effect(() => {
-    // task 切换 → 重置草稿
+    if (draftsTaskId === task.id) return;
+    draftsTaskId = task.id;
     titleDraft = task.title;
     noteDraft = task.description ?? "";
     dueDraft = toLocal(task.due_date);
+    deleteArmed = false;
   });
 
   function nowIso(): string {
@@ -221,8 +231,14 @@
     }
   }
 
-  // === 删除任务(v1:右下角文字链,无确认框) ===
+  // === 删除任务(右下角文字链,两步确认:一击武装,二击执行) ===
+  // v1 无确认框属危险漏删点,补齐与 NoteDetailPanel 同款交互(2026-09-14;
+  // 全应用删除口径统一在去重批做)。
   async function deleteTask() {
+    if (!deleteArmed) {
+      deleteArmed = true;
+      return;
+    }
     try {
       await api.deleteTask(task.id);
       onClose();
@@ -572,11 +588,12 @@
     ></textarea>
   </div>
 
-  <!-- 6. 删除(右下角文字链) -->
+  <!-- 6. 删除(右下角文字链,两步确认) -->
   <div class="del-wrap">
-    <button type="button" class="del-btn" onclick={() => void deleteTask()}>
+    {#if deleteArmed}<span class="del-hint">{t.task.detailDeleteConfirmHint}</span>{/if}
+    <button type="button" class="del-btn" class:armed={deleteArmed} onclick={() => void deleteTask()}>
       <Trash2 size={14} />
-      {t.task.detailDelete}
+      {deleteArmed ? t.task.detailDeleteConfirm : t.task.detailDelete}
     </button>
   </div>
 
@@ -861,11 +878,20 @@
     color: var(--color-text-muted, #6b6864);
   }
 
-  /* 删除 */
+  /* 删除(两步确认,armed 红 pill 照 NoteDetailPanel) */
   .del-wrap {
     display: flex;
     justify-content: flex-end;
+    align-items: center;
+    gap: 0.5rem;
     margin-top: 1.5rem;
+  }
+  .del-hint {
+    color: var(--color-text-muted, #6b6864);
+    font-size: 0.7rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .del-btn {
     display: inline-flex;
@@ -878,8 +904,15 @@
     cursor: pointer;
     padding: 0;
     transition: color 0.15s;
+    white-space: nowrap;
   }
   .del-btn:hover {
     color: var(--color-accent, #e74c3c);
+  }
+  .del-btn.armed {
+    background: #dc2626;
+    color: #fff;
+    border-radius: var(--radius-lg, 12px);
+    padding: 0.2rem 0.6rem;
   }
 </style>

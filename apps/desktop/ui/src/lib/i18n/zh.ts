@@ -130,6 +130,8 @@ export const zh = {
     deleteSubtask: '删除子任务',
     detailAddNote: '添加备注...',
     detailDelete: '删除任务',
+    detailDeleteConfirm: '确认删除',
+    detailDeleteConfirmHint: '删除后会同步到所有已登录设备',
     detailNoProject: '无',
     detailNoTagsAvailable: '暂无可用标签',
     detailEmpty: '点击任务查看详情',

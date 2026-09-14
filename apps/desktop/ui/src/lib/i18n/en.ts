@@ -129,6 +129,8 @@ export const en: Dict = {
     deleteSubtask: 'Delete subtask',
     detailAddNote: 'Add note...',
     detailDelete: 'Delete task',
+    detailDeleteConfirm: 'Confirm delete',
+    detailDeleteConfirmHint: 'Deletion syncs to all signed-in devices',
     detailNoProject: 'None',
     detailNoTagsAvailable: 'No tags available',
     detailEmpty: 'Click a task to view details',
