@@ -10,6 +10,11 @@ export function toISO(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** 本地日期时间串 `YYYY-MM-DD HH:MM`(冲突日志/垃圾箱的时间列,2026-09-14 收编)。 */
+export function toDateTimeISO(d: Date): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** 计算某月(周一在该月)的所有周一日期(自然周起点)。 */
 export function getMondays(year: number, month: number): Date[] {
   const mondays: Date[] = [];

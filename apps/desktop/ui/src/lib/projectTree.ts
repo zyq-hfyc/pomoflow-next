@@ -37,3 +37,63 @@ export function projectTreeOptions(projects: Project[]): ProjectTreeOption[] {
   for (const rootId of roots) walk(rootId, 0);
   return result;
 }
+
+// === 树展示(ProjectSidebar / ProjectManager 共用,2026-09-14 去重)=======
+
+export interface ProjectTreeNode extends Project {
+  children: ProjectTreeNode[];
+  depth: number;
+}
+
+/**
+ * 构建清单树:同父下按 display_order 排序(并列时 created_at / id 兜底稳定)。
+ * 2026-09-14 去重:ProjectManager / ProjectSidebar 两份合一 —— 侧栏此前
+ * 不排序,拖拽排序只在设置页生效、清单树里不生效。
+ */
+export function buildProjectTree(items: Project[]): ProjectTreeNode[] {
+  const map = new Map<string, ProjectTreeNode>();
+  const roots: ProjectTreeNode[] = [];
+  for (const p of items) map.set(p.id, { ...p, children: [], depth: 0 });
+  for (const p of items) {
+    const node = map.get(p.id);
+    if (!node) continue;
+    if (p.parent_id && map.has(p.parent_id)) {
+      map.get(p.parent_id)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  const sortByOrder = (nodes: ProjectTreeNode[]) => {
+    nodes.sort(
+      (a, b) =>
+        (a.display_order ?? 0) - (b.display_order ?? 0) ||
+        (a.created_at ?? "").localeCompare(b.created_at ?? "") ||
+        a.id.localeCompare(b.id),
+    );
+    nodes.forEach((n) => sortByOrder(n.children));
+  };
+  sortByOrder(roots);
+  const setDepth = (nodes: ProjectTreeNode[], depth: number) => {
+    for (const node of nodes) {
+      node.depth = depth;
+      setDepth(node.children, depth + 1);
+    }
+  };
+  setDepth(roots, 0);
+  return roots;
+}
+
+/** 按 expanded 集(节点 id)平铺可见序列。 */
+export function flattenProjectTree(
+  nodes: ProjectTreeNode[],
+  expanded: Set<string>,
+): ProjectTreeNode[] {
+  const result: ProjectTreeNode[] = [];
+  for (const node of nodes) {
+    result.push(node);
+    if (expanded.has(node.id) && node.children.length > 0) {
+      result.push(...flattenProjectTree(node.children, expanded));
+    }
+  }
+  return result;
+}

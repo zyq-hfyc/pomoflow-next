@@ -40,6 +40,7 @@
   import { getDict, fmt } from "../lib/i18n.svelte";
   import { todayStr, tomorrowStr, datePart, hasTimePart, toIsoUtc } from "../lib/dueDate";
   import { compareByStatusPriorityCreated } from "../lib/taskSort";
+  import { startOfWeek, endOfWeek, startOfMonth, endOfMonth } from "../lib/weekMonth";
   import { toISO } from "../lib/calendar";
   import ProjectSidebar from "../components/Tasks/ProjectSidebar.svelte";
   import TaskItem from "../components/Tasks/TaskItem.svelte";
@@ -135,14 +136,9 @@
     const today = todayStr();
     const tomorrow = tomorrowStr();
     const now = new Date();
-    const dow = now.getDay();
-    const offsetToMonday = dow === 0 ? 6 : dow - 1;
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(startOfWeek.getDate() - offsetToMonday);
-    startOfWeek.setHours(0, 0, 0, 0);
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(endOfWeek.getDate() + 6);
-    endOfWeek.setHours(23, 59, 59, 999);
+    // 本周窗口(周一 00:00 - 周日 23:59:59.999,单一来源 lib/weekMonth)
+    const weekStart = startOfWeek(now);
+    const weekEnd = endOfWeek(now);
 
     if (selectedProject !== null) {
       result = result.filter((t) => t.project_id === selectedProject);
@@ -154,7 +150,7 @@
       result = result.filter((t) => {
         if (!t.due_date) return false;
         const d = new Date(t.due_date);
-        return d >= startOfWeek && d <= endOfWeek;
+        return d >= weekStart && d <= weekEnd;
       });
     } else if (filter === "planned") {
       result = applyExtraFilters(result, {
@@ -219,16 +215,10 @@
     }
     if (f.preset === "week") {
       const now = new Date();
-      const dow = now.getDay();
-      const off = dow === 0 ? 6 : dow - 1;
-      const mon = new Date(now);
-      mon.setDate(now.getDate() - off);
-      const sun = new Date(mon);
-      sun.setDate(mon.getDate() + 6);
-      // v1 TasksPage:47-65 用本地日期组件拼窗口串;不能用 toISOString(UTC),
-      // 东八区 0-8 点会把"本周"窗口左移成周日开始
-      const s = toISO(mon);
-      const e = toISO(sun);
+      // 本周窗口(单一来源 lib/weekMonth);本地日期串比较,不能用
+      // toISOString(UTC) —— 东八区 0-8 点会把"本周"窗口左移成周日开始
+      const s = toISO(startOfWeek(now));
+      const e = toISO(endOfWeek(now));
       r = r.filter((t) => {
         const d = datePart(t.due_date);
         return !!d && d >= s && d <= e;
@@ -236,9 +226,8 @@
     }
     if (f.preset === "month") {
       const now = new Date();
-      const s = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-      const eom = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      const e = toISO(eom);
+      const s = toISO(startOfMonth(now));
+      const e = toISO(endOfMonth(now));
       r = r.filter((t) => {
         const d = datePart(t.due_date);
         return !!d && d >= s && d <= e;

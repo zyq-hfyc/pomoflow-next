@@ -44,6 +44,7 @@
     Task,
   } from "../lib/api";
   import { getDict } from "../lib/i18n.svelte";
+  import { todayStr } from "../lib/dueDate";
   import ReviewTextarea from "../components/Timer/ReviewTextarea.svelte";
   import MottoCard from "../components/Timer/MottoCard.svelte";
   import TaskSelector from "../components/Timer/TaskSelector.svelte";
@@ -135,11 +136,7 @@
     return { monthStartMs: start.getTime(), monthEndMs: endMs };
   }
 
-  // === 今日日期字符串(本地时区) ===
-  function todayISO(): string {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  }
+  // 今日日期字符串:lib/dueDate 的 todayStr(2026-09-14 去重,删本地 todayISO)
 
   // === 数据刷新(挂载 + todayCount 变化 + 同步落库) ===
   // 完成链(通知/弹窗/接续)在 lib/timer.svelte 引擎层处理(v1 AppContext 语义,
@@ -221,7 +218,7 @@
 
   async function refreshTodayReview() {
     try {
-      const r: DailyReview | null = await api.getDailyReview(todayISO());
+      const r: DailyReview | null = await api.getDailyReview(todayStr());
       // 空内容行(ADR-010 删除语义)等同未写
       todayReview = r?.content || null;
     } catch (e) {
@@ -321,7 +318,7 @@
   // 今日复盘 save / delete
   async function handleSaveReview(text: string) {
     try {
-      const today = todayISO();
+      const today = todayStr();
       const existing = await api.getDailyReview(today);
       const r: DailyReview = existing
         ? { ...existing, content: text }
@@ -341,7 +338,7 @@
     try {
       // v1 语义:硬删(deleteDailyReview),不写 content="" 墓碑行 ——
       // 与手账视图的删除口径一致,避免残留行让"清空"永远不再触发
-      await api.deleteDailyReview(todayISO());
+      await api.deleteDailyReview(todayStr());
       todayReview = null;
     } catch (e) {
       console.warn("delete review", e);

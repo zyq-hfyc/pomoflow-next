@@ -23,6 +23,8 @@
 import { getSettings } from "./settings.svelte";
 import { getLang } from "./i18n.svelte";
 import { compareByPriorityThenCreated } from "./taskSort";
+import { toISO } from "./calendar";
+import { startOfWeek, startOfMonth } from "./weekMonth";
 import { resolveTemplate, type NotificationText } from "./notificationStyles";
 import * as api from "./api";
 import type { Task } from "./api";
@@ -277,17 +279,12 @@ export function resetTodayStats(count: number, minutes: number): void {
 export async function syncTodayStatsFromOverview(): Promise<void> {
   try {
     const now = new Date();
-    const dow = now.getDay();
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - (dow === 0 ? 6 : dow - 1));
-    monday.setHours(0, 0, 0, 0);
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const iso = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const monday = startOfWeek(now);
+    const monthStart = startOfMonth(now);
     const s = await api.statsOverview(
-      iso(now),
-      iso(monday),
-      iso(monthStart),
+      toISO(now),
+      toISO(monday),
+      toISO(monthStart),
       -now.getTimezoneOffset(),
     );
     resetTodayStats(s.today_sessions, s.today_minutes);
