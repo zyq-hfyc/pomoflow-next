@@ -22,6 +22,7 @@
 
 import { getSettings } from "./settings.svelte";
 import { getLang } from "./i18n.svelte";
+import { compareByPriorityThenCreated } from "./taskSort";
 import { resolveTemplate, type NotificationText } from "./notificationStyles";
 import * as api from "./api";
 import type { Task } from "./api";
@@ -323,7 +324,6 @@ function pickNextAutoTask(list: Task[]): Task | null {
   now.setHours(0, 0, 0, 0);
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-  const order: Record<string, number> = { high: 0, medium: 1, low: 2, none: 3 };
   const pool = list.filter((t) => {
     if (t.status !== "active" || !t.due_date) return false;
     const d = new Date(t.due_date);
@@ -332,14 +332,7 @@ function pickNextAutoTask(list: Task[]): Task | null {
     dueDay.setHours(0, 0, 0, 0);
     return dueDay.getTime() <= now.getTime();
   });
-  pool.sort((a, b) => {
-    const pa = order[a.priority ?? "none"] ?? 3;
-    const pb = order[b.priority ?? "none"] ?? 3;
-    if (pa !== pb) return pa - pb;
-    return (
-      new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime()
-    );
-  });
+  pool.sort(compareByPriorityThenCreated);
   return pool[0] ?? null;
 }
 
