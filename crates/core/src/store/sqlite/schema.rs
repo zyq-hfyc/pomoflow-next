@@ -1,7 +1,6 @@
 //! 建库 SCHEMA(新库一次建成最新结构;旧库走版本化迁移)。
 //! (2026-09-15 巨石拆分:自 store/sqlite.rs 按域切出,内容零改动)
 
-
 pub(crate) const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY NOT NULL,
