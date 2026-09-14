@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use chrono::{DateTime, Datelike, TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::error::{CoreError, CoreResult};
@@ -39,7 +39,7 @@ use crate::model::{
     Priority, Project, Reminder, Repeat, SubTask, Tag, Task, TaskStatus, TaskTagLink, Timestamp,
     WeeklyReview, YearlyReview,
 };
-use crate::store::{ConflictRecord, Store, TaskDateFilter, TaskQuery};
+use crate::store::{date_filter_range, ConflictRecord, Store, TaskQuery};
 use crate::sync::{change_of, Change, ChangeLogStore, EntityKind};
 
 /// IN 查询分块大小(2026-09-14):占位符数量有界 —— SQLite 变量上限随
@@ -720,43 +720,6 @@ fn repeat_parse(s: &str) -> CoreResult<Repeat> {
         "yearly" => Ok(Repeat::Yearly),
         "custom" => Ok(Repeat::Custom),
         other => Err(CoreError::storage(format!("unknown Repeat: {other}"))),
-    }
-}
-
-/// 把 `TaskDateFilter` 展开为 `[start_ms, end_ms)` 区间,SQL 直接拿两个参数。
-///
-/// `tz_offset_min`(东正西负,东八区 +480)决定"今天/明天/本周"的日界:
-/// 按请求方**本地**日历取今日 0 点再换算回 UTC —— due_date 存 UTC,纯日期
-/// 任务(本地午夜)在东八区落在 UTC 前一天,若按 UTC 日界过滤会错一天。
-fn date_filter_range(f: TaskDateFilter, tz_offset_min: i32) -> (i64, i64) {
-    let offset = chrono::FixedOffset::east_opt(tz_offset_min * 60)
-        .unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap());
-    let now_local = Utc::now().with_timezone(&offset);
-    let today_start = now_local
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_local_timezone(offset)
-        .single()
-        .unwrap_or(now_local)
-        .with_timezone(&Utc);
-    match f {
-        TaskDateFilter::Today => {
-            let end = today_start + chrono::Duration::days(1);
-            (dt_to_ms(today_start), dt_to_ms(end))
-        }
-        TaskDateFilter::Tomorrow => {
-            let start = today_start + chrono::Duration::days(1);
-            let end = today_start + chrono::Duration::days(2);
-            (dt_to_ms(start), dt_to_ms(end))
-        }
-        TaskDateFilter::ThisWeek => {
-            // 周一为一周开始(本地日历)
-            let weekday = now_local.date_naive().weekday().num_days_from_monday() as i64;
-            let week_start = today_start - chrono::Duration::days(weekday);
-            let week_end = week_start + chrono::Duration::days(7);
-            (dt_to_ms(week_start), dt_to_ms(week_end))
-        }
     }
 }
 

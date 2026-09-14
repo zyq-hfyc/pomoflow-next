@@ -78,6 +78,45 @@ pub enum TaskDateFilter {
     ThisWeek,
 }
 
+/// 把 `TaskDateFilter` 展开为 `[start_ms, end_ms)` UTC 毫秒区间,两个实现
+/// (Sqlite / InMemory)共用 —— 2026-09-14 前只有 Sqlite 走本地日界,InMemory
+/// 按 UTC 算(注释自认),同一查询两实现结果不同,会掩盖前端 tz bug。
+///
+/// `tz_offset_min`(东正西负,东八区 +480)决定"今天/明天/本周"的日界:
+/// 按请求方**本地**日历取今日 0 点再换算回 UTC —— due_date 存 UTC,纯日期
+/// 任务(本地午夜)在东八区落在 UTC 前一天,若按 UTC 日界过滤会错一天。
+pub(crate) fn date_filter_range(f: TaskDateFilter, tz_offset_min: i32) -> (i64, i64) {
+    let offset = chrono::FixedOffset::east_opt(tz_offset_min * 60)
+        .unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap());
+    let now_local = chrono::Utc::now().with_timezone(&offset);
+    let today_start = now_local
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_local_timezone(offset)
+        .single()
+        .unwrap_or(now_local)
+        .with_timezone(&chrono::Utc);
+    match f {
+        TaskDateFilter::Today => {
+            let end = today_start + chrono::Duration::days(1);
+            (today_start.timestamp_millis(), end.timestamp_millis())
+        }
+        TaskDateFilter::Tomorrow => {
+            let start = today_start + chrono::Duration::days(1);
+            let end = today_start + chrono::Duration::days(2);
+            (start.timestamp_millis(), end.timestamp_millis())
+        }
+        TaskDateFilter::ThisWeek => {
+            // 周一为一周开始(本地日历)
+            let weekday = now_local.date_naive().weekday().num_days_from_monday() as i64;
+            let week_start = today_start - chrono::Duration::days(weekday);
+            let week_end = week_start + chrono::Duration::days(7);
+            (week_start.timestamp_millis(), week_end.timestamp_millis())
+        }
+    }
+}
+
 /// 存储抽象 —— 任何具体实现(SQLite / 内存 / Postgres)都满足这套接口。
 ///
 /// 注释中的 `Send + Sync` 是给后续 P1 多线程场景做准备的:P0 单线程测试用不上,
@@ -366,30 +405,14 @@ impl Store for InMemoryStore {
             })
             .filter(|t| match q.date {
                 None => true,
-                Some(TaskDateFilter::Today) => {
-                    let now = chrono::Utc::now();
-                    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
-                    let today_end = today_start + chrono::Duration::days(1);
-                    t.due_date
-                        .is_some_and(|d| d >= today_start && d < today_end)
-                }
-                Some(TaskDateFilter::Tomorrow) => {
-                    let now = chrono::Utc::now();
-                    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
-                    let tomorrow_start = today_start + chrono::Duration::days(1);
-                    let tomorrow_end = tomorrow_start + chrono::Duration::days(1);
-                    t.due_date
-                        .is_some_and(|d| d >= tomorrow_start && d < tomorrow_end)
-                }
-                Some(TaskDateFilter::ThisWeek) => {
-                    // 周一到周日(本地化,这里按 UTC 周一算)
-                    let now = chrono::Utc::now();
-                    let weekday = now.date_naive().weekday().num_days_from_monday();
-                    let week_start = now.date_naive() - chrono::Duration::days(weekday as i64);
-                    let week_start_dt = week_start.and_hms_opt(0, 0, 0).unwrap().and_utc();
-                    let week_end_dt = week_start_dt + chrono::Duration::days(7);
-                    t.due_date
-                        .is_some_and(|d| d >= week_start_dt && d < week_end_dt)
+                // 2026-09-14 起与 SqliteStore 同源:走 date_filter_range 本地日界
+                // (此前按 UTC 算,同一查询两实现结果不同)
+                Some(f) => {
+                    let (start_ms, end_ms) = date_filter_range(f, q.tz_offset_min.unwrap_or(0));
+                    t.due_date.is_some_and(|d| {
+                        let ms = d.timestamp_millis();
+                        ms >= start_ms && ms < end_ms
+                    })
                 }
             })
             .cloned()
@@ -1737,6 +1760,57 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// date 过滤双实现 parity(2026-09-14):同一批 due 边界相对量,两个 store
+    /// 在三个时区下的 Today/Tomorrow/ThisWeek 结果必须一致 —— 此前 InMemory
+    /// 按 UTC 日界,Sqlite 按本地日界,东八区会差一天(掩盖前端 tz bug)。
+    /// (相对 now ± 构造 due,两端同调 date_filter_range,无需冻结时钟。)
+    #[test]
+    fn date_filter_parity_between_stores() {
+        use crate::model::TaskStatus;
+        use chrono::{DateTime, Utc};
+        use std::collections::HashSet;
+
+        let now = chrono::Utc::now();
+        let dues: Vec<Option<DateTime<Utc>>> = vec![
+            Some(now - chrono::Duration::hours(48)), // 前天
+            Some(now - chrono::Duration::hours(12)), // 可能昨天/今天(随时刻)
+            Some(now + chrono::Duration::hours(6)),  // 今天内
+            Some(now + chrono::Duration::hours(30)), // 明天内
+            Some(now + chrono::Duration::days(8)),   // 下周
+            None,                                    // 无到期日
+        ];
+        for tz in [0i32, 480, -300] {
+            let mem = InMemoryStore::new();
+            let sql = SqliteStore::open_in_memory().unwrap();
+            for (i, due) in dues.iter().enumerate() {
+                let mut t = Task::new(format!("t{i}"));
+                t.due_date = *due;
+                t.status = TaskStatus::Active;
+                mem.upsert_task(t.clone()).unwrap();
+                sql.upsert_task(t).unwrap();
+            }
+            for f in [
+                TaskDateFilter::Today,
+                TaskDateFilter::Tomorrow,
+                TaskDateFilter::ThisWeek,
+            ] {
+                let q = TaskQuery {
+                    date: Some(f),
+                    tz_offset_min: Some(tz),
+                    ..TaskQuery::default()
+                };
+                let ids = |v: Vec<Task>| -> HashSet<String> {
+                    v.into_iter().map(|t| t.id.as_str().to_string()).collect()
+                };
+                assert_eq!(
+                    ids(mem.list_tasks(&q).unwrap()),
+                    ids(sql.list_tasks(&q).unwrap()),
+                    "date filter {f:?} tz={tz} 两实现结果不一致"
+                );
+            }
+        }
     }
 }
 
