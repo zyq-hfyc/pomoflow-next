@@ -36,6 +36,7 @@ const MIGRATIONS: &[MigrationFn] = &[
     migration_005_journal,
     migration_006_yearly_review,
     migration_007_journal_status,
+    migration_008_query_indexes,
 ];
 
 /// 当前代码支持的最新 schema 版号(= 已应用迁移数)。
@@ -407,6 +408,49 @@ fn migration_006_yearly_review(conn: &Connection) -> CoreResult<()> {
 /// 此处幂等兜底(journals 表不存在时 add_column 自行 no-op)。
 fn migration_007_journal_status(conn: &Connection) -> CoreResult<()> {
     add_column(conn, "journals", "status", "TEXT NOT NULL DEFAULT 'active'")
+}
+
+// === 迁移 8:查询索引补齐 + pending 索引列序修正(2026-09-14 性能批)=========
+
+/// v7 → v8:
+/// - 补查询热路径索引:pomodoros(project_id)(delete_project 级联此前全表扫)、
+///   tasks(due_date_ms)(任务页月/日过滤主路径)、journals/mottos
+///   (created_at_ms,列表排序键 —— 此前只有 updated_at_ms 索引);
+/// - pending partial index 列序修正:list_pending 是
+///   `WHERE sync_state='pending' ORDER BY updated_at_ms ASC`,迁移 002 建的
+///   `(id)` 列序索引帮不上排序;改 `(updated_at_ms)`。journals /
+///   yearly_reviews(迁移 5/6 新增表)补此前缺失的 pending 索引。
+///
+/// 幂等:DROP IF EXISTS + CREATE IF NOT EXISTS,重跑结果一致。
+fn migration_008_query_indexes(conn: &Connection) -> CoreResult<()> {
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_pomodoros_project ON pomodoros(project_id);
+         CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date_ms);
+         CREATE INDEX IF NOT EXISTS idx_journals_created ON journals(created_at_ms);
+         CREATE INDEX IF NOT EXISTS idx_mottos_created ON mottos(created_at_ms);
+         DROP INDEX IF EXISTS idx_tasks_pending;
+         CREATE INDEX IF NOT EXISTS idx_tasks_pending ON tasks(updated_at_ms) WHERE sync_state = 'pending';
+         DROP INDEX IF EXISTS idx_projects_pending;
+         CREATE INDEX IF NOT EXISTS idx_projects_pending ON projects(updated_at_ms) WHERE sync_state = 'pending';
+         DROP INDEX IF EXISTS idx_tags_pending;
+         CREATE INDEX IF NOT EXISTS idx_tags_pending ON tags(updated_at_ms) WHERE sync_state = 'pending';
+         DROP INDEX IF EXISTS idx_subtasks_pending;
+         CREATE INDEX IF NOT EXISTS idx_subtasks_pending ON subtasks(updated_at_ms) WHERE sync_state = 'pending';
+         DROP INDEX IF EXISTS idx_pomodoros_pending;
+         CREATE INDEX IF NOT EXISTS idx_pomodoros_pending ON pomodoros(updated_at_ms) WHERE sync_state = 'pending';
+         DROP INDEX IF EXISTS idx_mottos_pending;
+         CREATE INDEX IF NOT EXISTS idx_mottos_pending ON mottos(updated_at_ms) WHERE sync_state = 'pending';
+         DROP INDEX IF EXISTS idx_daily_reviews_pending;
+         CREATE INDEX IF NOT EXISTS idx_daily_reviews_pending ON daily_reviews(updated_at_ms) WHERE sync_state = 'pending';
+         DROP INDEX IF EXISTS idx_weekly_reviews_pending;
+         CREATE INDEX IF NOT EXISTS idx_weekly_reviews_pending ON weekly_reviews(updated_at_ms) WHERE sync_state = 'pending';
+         DROP INDEX IF EXISTS idx_monthly_reviews_pending;
+         CREATE INDEX IF NOT EXISTS idx_monthly_reviews_pending ON monthly_reviews(updated_at_ms) WHERE sync_state = 'pending';
+         CREATE INDEX IF NOT EXISTS idx_journals_pending ON journals(updated_at_ms) WHERE sync_state = 'pending';
+         CREATE INDEX IF NOT EXISTS idx_yearly_reviews_pending ON yearly_reviews(updated_at_ms) WHERE sync_state = 'pending';",
+    )
+    .map_err(|e| CoreError::storage(format!("query indexes: {e}")))?;
+    Ok(())
 }
 
 #[cfg(test)]

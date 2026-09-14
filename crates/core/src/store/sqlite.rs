@@ -1253,8 +1253,13 @@ impl Store for SqliteStore {
 
     fn delete_task(&self, id: &Id) -> CoreResult<()> {
         let conn = self.lock()?;
+        // 三条语句同事务(2026-09-14):中途失败不留「tombstone 已打、关联
+        // 未清」的半更新状态
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| CoreError::storage(format!("begin delete_task tx: {e}")))?;
         // 软删即 tombstone:revision+1 + pending,让"删除"作为变更被推送(ADR-006)
-        conn.execute(
+        tx.execute(
             "UPDATE tasks SET deleted_at_ms = ?, updated_at_ms = ?,
                 revision = revision + 1, sync_state = 'pending', origin_device = ?
              WHERE id = ?",
@@ -1263,18 +1268,20 @@ impl Store for SqliteStore {
         .map_err(|e| CoreError::storage(format!("delete_task: {e}")))?;
         // 关联标签一并清掉,并把关联同步行写成空集 tombstone(revision+1 + pending,
         // 载荷=空集合,ADR-010 同语义);没打过标签的任务无行,UPDATE 自动 no-op
-        conn.execute(
+        tx.execute(
             "DELETE FROM task_tags WHERE task_id = ?",
             params![id.as_str()],
         )
         .map_err(|e| CoreError::storage(format!("delete_task task_tags: {e}")))?;
-        conn.execute(
+        tx.execute(
             "UPDATE task_tag_sync SET revision = revision + 1, updated_at_ms = ?,
                 sync_state = 'pending', origin_device = ?
              WHERE task_id = ?",
             params![now_ms(), self.device_id, id.as_str()],
         )
         .map_err(|e| CoreError::storage(format!("delete_task task_tag_sync: {e}")))?;
+        tx.commit()
+            .map_err(|e| CoreError::storage(format!("commit delete_task: {e}")))?;
         Ok(())
     }
 
@@ -1320,17 +1327,21 @@ impl Store for SqliteStore {
         // 物理删除:同时清掉 task_tags + task_tag_sync 两张关联表;revisions 同步行
         // 通过外键 / 显式 SQL 清(无外键定义)。重复实例(重复任务)的 subtasks / sessions
         // 由上游 repeat_service.delete_all_instances 调用方保证先清。
-        conn.execute(
+        // 三条语句同事务(2026-09-14):中途失败不留孤儿关联。
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| CoreError::storage(format!("begin purge_task tx: {e}")))?;
+        tx.execute(
             "DELETE FROM task_tags WHERE task_id = ?",
             params![id.as_str()],
         )
         .map_err(|e| CoreError::storage(format!("purge_task task_tags: {e}")))?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM task_tag_sync WHERE task_id = ?",
             params![id.as_str()],
         )
         .map_err(|e| CoreError::storage(format!("purge_task task_tag_sync: {e}")))?;
-        let changed = conn
+        let changed = tx
             .execute("DELETE FROM tasks WHERE id = ?", params![id.as_str()])
             .map_err(|e| CoreError::storage(format!("purge_task: {e}")))?;
         if changed == 0 {
@@ -1339,6 +1350,8 @@ impl Store for SqliteStore {
                 id: id.to_string(),
             });
         }
+        tx.commit()
+            .map_err(|e| CoreError::storage(format!("commit purge_task: {e}")))?;
         Ok(())
     }
 
@@ -1544,7 +1557,11 @@ impl Store for SqliteStore {
 
     fn delete_tag(&self, id: &Id) -> CoreResult<()> {
         let conn = self.lock()?;
-        conn.execute(
+        // 软删 + 关联清理同事务(2026-09-14):中途失败不留半更新
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| CoreError::storage(format!("begin delete_tag tx: {e}")))?;
+        tx.execute(
             "UPDATE tags SET deleted_at_ms = ?, updated_at_ms = ?,
                 revision = revision + 1, sync_state = 'pending', origin_device = ?
              WHERE id = ?",
@@ -1552,11 +1569,13 @@ impl Store for SqliteStore {
         )
         .map_err(|e| CoreError::storage(format!("delete_tag: {e}")))?;
         // 顺手清掉 task_tags 关联(可选,但符合预期;task_tags 本身不参与同步,P1a 处理)
-        conn.execute(
+        tx.execute(
             "DELETE FROM task_tags WHERE tag_id = ?",
             params![id.as_str()],
         )
         .map_err(|e| CoreError::storage(format!("cleanup task_tags: {e}")))?;
+        tx.commit()
+            .map_err(|e| CoreError::storage(format!("commit delete_tag: {e}")))?;
         Ok(())
     }
 
@@ -1666,6 +1685,22 @@ impl Store for SqliteStore {
         };
         let device = self.device_id.clone();
         self.set_tags_for_task_marked(task_id, tag_ids, cur + 1, Timestamp::now(), &device, true)
+    }
+
+    fn get_pomodoro(&self, id: &Id) -> CoreResult<PomodoroSession> {
+        // 单条查找(2026-09-14):stop_pomodoro 此前 list 全表后内存 find
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT * FROM pomodoros WHERE id = ?",
+            params![id.as_str()],
+            row_to_pomodoro,
+        )
+        .optional()
+        .map_err(|e| CoreError::storage(format!("get_pomodoro: {e}")))?
+        .ok_or_else(|| CoreError::NotFound {
+            entity: "pomodoro_session",
+            id: id.to_string(),
+        })
     }
 
     fn list_pomodoros(&self) -> CoreResult<Vec<PomodoroSession>> {
@@ -2022,6 +2057,23 @@ impl Store for SqliteStore {
         )
         .map_err(|e| CoreError::storage(format!("delete_motto: {e}")))?;
         Ok(())
+    }
+
+    fn get_journal(&self, id: &Id) -> CoreResult<Journal> {
+        // 单条查找(2026-09-14):upsert_journal / toggle_journal 此前 list
+        // 全表后内存 find
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT * FROM journals WHERE id = ?",
+            params![id.as_str()],
+            row_to_journal,
+        )
+        .optional()
+        .map_err(|e| CoreError::storage(format!("get_journal: {e}")))?
+        .ok_or_else(|| CoreError::NotFound {
+            entity: "journal",
+            id: id.to_string(),
+        })
     }
 
     fn list_journals(&self) -> CoreResult<Vec<Journal>> {
@@ -2815,6 +2867,11 @@ impl ChangeLogStore for SqliteStore {
             by.entry(*k).or_default().push(id.clone());
         }
         let conn = self.lock()?;
+        // 同批 keys 一个事务:此前 N 条 = N 次自动提交(WAL 下虽不再逐次 fsync,
+        // 事务开销与中间态暴露仍在)
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| CoreError::storage(format!("begin mark_synced tx: {e}")))?;
         macro_rules! mark {
             ($table:literal, $keycol:literal, $ids:expr) => {{
                 let ids = $ids;
@@ -2826,7 +2883,7 @@ impl ChangeLogStore for SqliteStore {
                         "UPDATE {} SET sync_state = 'synced' WHERE {} IN ({})",
                         $table, $keycol, placeholders
                     );
-                    conn.execute(&sql, rusqlite::params_from_iter(ids.iter()))
+                    tx.execute(&sql, rusqlite::params_from_iter(ids.iter()))
                         .map_err(|e| CoreError::storage(format!("mark_synced {}: {e}", $table)))?;
                 }
             }};
@@ -2847,11 +2904,36 @@ impl ChangeLogStore for SqliteStore {
                 EntityKind::TaskTag => mark!("task_tag_sync", "task_id", ids),
             }
         }
+        tx.commit()
+            .map_err(|e| CoreError::storage(format!("commit mark_synced: {e}")))?;
         Ok(())
     }
 
     fn local_candidate(&self, kind: EntityKind, id: &str) -> CoreResult<Option<Change>> {
         let conn = self.lock()?;
+        self.candidate_of(&conn, kind, id)
+    }
+
+    fn local_candidates(&self, keys: &[(EntityKind, String)]) -> CoreResult<Vec<Option<Change>>> {
+        // 单锁批量:pull 一批此前逐条查(每条一次锁往返),整批只锁一次(2026-09-14)
+        let conn = self.lock()?;
+        let mut out = Vec::with_capacity(keys.len());
+        for (kind, id) in keys {
+            out.push(self.candidate_of(&conn, *kind, id)?);
+        }
+        Ok(out)
+    }
+}
+
+impl SqliteStore {
+    /// 单条 candidate 探测内核(`local_candidate` / `local_candidates` 共用;
+    /// 调用方需已持锁)。
+    fn candidate_of(
+        &self,
+        conn: &Connection,
+        kind: EntityKind,
+        id: &str,
+    ) -> CoreResult<Option<Change>> {
         macro_rules! probe {
             ($table:literal, $keycol:literal, $rowfn:ident) => {{
                 let hit = conn
@@ -3222,4 +3304,73 @@ fn file_open_enables_wal_and_checkpoint_runs() {
     drop(conn);
     SqliteStore::checkpoint_wal_file(&path).expect("checkpoint 应成功");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 批量 candidates(2026-09-14):结果与逐条语义一致,缺行 = None。
+#[test]
+fn local_candidates_bulk_matches_single() {
+    use crate::sync::ChangeLogStore;
+
+    let store = SqliteStore::open_in_memory().unwrap();
+    let a = Task::new("A");
+    let b = Task::new("B");
+    let (aid, bid) = (a.id.clone(), b.id.clone());
+    store.upsert_task(a).unwrap();
+    store.upsert_task(b).unwrap();
+    let ghost = crate::model::Id::new();
+    let keys = vec![
+        (EntityKind::Task, aid.as_str().to_string()),
+        (EntityKind::Task, bid.as_str().to_string()),
+        (EntityKind::Task, ghost.as_str().to_string()),
+    ];
+    let bulk = store.local_candidates(&keys).unwrap();
+    assert_eq!(bulk.len(), 3);
+    assert!(bulk[0].is_some() && bulk[1].is_some());
+    assert!(bulk[2].is_none(), "无行键应为 None");
+    for (k, single) in keys.iter().zip(bulk.iter()) {
+        let mut one = store.local_candidate(k.0, &k.1).unwrap();
+        // Change.id 是每次 change_of 现生成的 UUID(非稳定键):对齐后比语义字段
+        if let (Some(s), Some(o)) = (single.as_ref(), one.as_mut()) {
+            o.id = s.id;
+        }
+        assert_eq!(&one, single);
+    }
+}
+
+/// 迁移 008(2026-09-14):热路径索引存在 + pending 索引已按 updated_at_ms
+/// 列序重建(内存库即可,索引在 sqlite_master 可查)。
+#[test]
+fn migration_008_creates_query_indexes() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let conn = store.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%'")
+        .unwrap();
+    let names: std::collections::HashSet<String> = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
+    drop(stmt);
+    for expect in [
+        "idx_pomodoros_project",
+        "idx_tasks_due_date",
+        "idx_journals_created",
+        "idx_mottos_created",
+        "idx_journals_pending",
+        "idx_yearly_reviews_pending",
+    ] {
+        assert!(names.contains(expect), "缺索引 {expect}");
+    }
+    let sql: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name = 'idx_tasks_pending'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        sql.contains("updated_at_ms"),
+        "idx_tasks_pending 应为 (updated_at_ms) 列序:{sql}"
+    );
 }

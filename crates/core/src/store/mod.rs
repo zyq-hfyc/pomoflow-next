@@ -135,6 +135,8 @@ pub trait Store: std::fmt::Debug {
         end_ms: i64,
     ) -> CoreResult<Vec<PomodoroSession>>;
     fn upsert_pomodoro(&self, session: PomodoroSession) -> CoreResult<PomodoroSession>;
+    /// 单条取会话(2026-09-14;命令层此前 list 全表后内存 find,会话只增不减)
+    fn get_pomodoro(&self, id: &Id) -> CoreResult<PomodoroSession>;
     fn delete_pomodoro(&self, id: &Id) -> CoreResult<()>;
 
     // --- Reviews ---
@@ -187,6 +189,8 @@ pub trait Store: std::fmt::Debug {
     /// 列出所有未软删的手账,按 created_at 升序(移动端列表展示序)。
     fn list_journals(&self) -> CoreResult<Vec<Journal>>;
     fn upsert_journal(&self, journal: Journal) -> CoreResult<Journal>;
+    /// 单条取随手记(2026-09-14;upsert/toggle 编辑路径此前 list 全表找 id)
+    fn get_journal(&self, id: &Id) -> CoreResult<Journal>;
     fn delete_journal(&self, id: &Id) -> CoreResult<()>;
 
     // --- NotificationTemplate(全库单行配置,id 固定 "1") ---
@@ -723,6 +727,11 @@ impl Store for InMemoryStore {
             t.revision = t.revision.saturating_add(1);
             g.touch("tag", id.as_str(), &self.device_id);
         }
+        // 与 SqliteStore 对齐:清掉 task_tags 关联(此前靠 list_tags_for_task
+        // 过滤掩盖,两实现行为不一致;2026-09-14 修)
+        for ids in g.task_tags.values_mut() {
+            ids.retain(|t| t != id);
+        }
         Ok(())
     }
 
@@ -810,6 +819,20 @@ impl Store for InMemoryStore {
             g.task_tags.insert(task_id.clone(), sorted);
         }
         Ok(())
+    }
+
+    fn get_pomodoro(&self, id: &Id) -> CoreResult<PomodoroSession> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        g.pomodoros
+            .get(id)
+            .cloned()
+            .ok_or_else(|| CoreError::NotFound {
+                entity: "pomodoro_session",
+                id: id.to_string(),
+            })
     }
 
     fn list_pomodoros(&self) -> CoreResult<Vec<PomodoroSession>> {
@@ -1246,6 +1269,20 @@ impl Store for InMemoryStore {
         Ok(())
     }
 
+    fn get_journal(&self, id: &Id) -> CoreResult<Journal> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        g.journals
+            .get(id)
+            .cloned()
+            .ok_or_else(|| CoreError::NotFound {
+                entity: "journal",
+                id: id.to_string(),
+            })
+    }
+
     fn list_journals(&self) -> CoreResult<Vec<Journal>> {
         let g = self
             .inner
@@ -1630,6 +1667,47 @@ mod tests {
         let dup = Tag::new("urgent");
         let err = s.upsert_tag(dup).unwrap_err();
         assert!(matches!(err, CoreError::Conflict(_)));
+    }
+
+    #[test]
+    fn delete_tag_removes_task_tag_links() {
+        // 与 SqliteStore 对齐(2026-09-14):此前 InMemory 不清 task_tags,
+        // 靠 list_tags_for_task 的过滤掩盖,两实现行为不一致
+        let s = InMemoryStore::new();
+        let task = Task::new("t");
+        let tag = Tag::new("g");
+        let tid = task.id.clone();
+        let gid = tag.id.clone();
+        s.upsert_task(task).unwrap();
+        s.upsert_tag(tag).unwrap();
+        s.set_tags_for_task(&tid, std::slice::from_ref(&gid))
+            .unwrap();
+        assert_eq!(s.list_tags_for_task(&tid).unwrap().len(), 1);
+        s.delete_tag(&gid).unwrap();
+        assert!(
+            s.list_tags_for_task(&tid).unwrap().is_empty(),
+            "删标签后任务的关联应被清掉"
+        );
+    }
+
+    #[test]
+    fn get_journal_and_get_pomodoro_not_found() {
+        let s = InMemoryStore::new();
+        let id = Id::new();
+        assert!(matches!(
+            s.get_journal(&id).unwrap_err(),
+            CoreError::NotFound {
+                entity: "journal",
+                ..
+            }
+        ));
+        assert!(matches!(
+            s.get_pomodoro(&id).unwrap_err(),
+            CoreError::NotFound {
+                entity: "pomodoro_session",
+                ..
+            }
+        ));
     }
 }
 

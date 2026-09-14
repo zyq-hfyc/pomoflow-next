@@ -41,6 +41,9 @@ pub fn build_push_request(
 ///
 /// `pushed` 必须是与 `PushRequest.changes` 同序的原始变更列表(与
 /// `resp.results` 按下标一一对应)。
+///
+/// 2026-09-14 批量化:winners 经 `apply_remotes` 一次应用、synced keys 一次
+/// `mark_synced`(此前逐条各调一次,一批 N 条 = 2N 次锁往返)。
 pub fn apply_push_outcomes(
     store: &dyn ChangeLogStore,
     pushed: &[Change],
@@ -53,39 +56,76 @@ pub fn apply_push_outcomes(
             resp.results.len()
         )));
     }
+    let mut synced_keys: Vec<(super::EntityKind, String)> = Vec::new();
+    let mut winners: Vec<Change> = Vec::new();
     for (change, outcome) in pushed.iter().zip(resp.results.iter()) {
         match outcome {
             super::ApplyOutcome::Accepted { .. } | super::ApplyOutcome::Dropped { .. } => {
-                store.mark_synced(&[(change.entity, change.entity_id.clone())])?;
+                synced_keys.push((change.entity, change.entity_id.clone()));
             }
             super::ApplyOutcome::Conflicted { winner, .. } => {
-                store.apply_remote(winner)?;
+                winners.push(winner.clone());
             }
         }
     }
+    store.apply_remotes(&winners)?;
+    store.mark_synced(&synced_keys)?;
     Ok(())
 }
 
 use super::Change;
 
-/// 应用拉取批次:逐条与本地行竞争(同源 `lww::resolve_conflict`,ADR-009)。
-/// 本地行不存在或本地胜 → 无事;远端胜/完全一致 → `apply_remote`(synced)。
-/// 本地胜的行保持 pending,下一轮 push 会把本地版本推上去 —— 双向收敛。
-pub fn apply_pull_response(store: &dyn ChangeLogStore, changes: &[Change]) -> CoreResult<()> {
-    for remote in changes {
-        if let Some(local) = store.local_candidate(remote.entity, &remote.entity_id)? {
-            match super::resolve_conflict(&local, remote) {
-                super::Resolution::Left => continue, // 本地胜,保持 pending
+/// pull 阶段「远端胜出 / 打平,覆盖了本地已有行」的记录(供冲突日志)。
+/// 随批量 candidates 读取一次性带回(2026-09-14)—— 此前 sync_client 为记
+/// 冲突日志对每条 pull 变更再逐条查一次 candidate,与引擎内部查询重复。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PullOverridden {
+    /// 被覆盖前的本地行快照
+    pub local: Change,
+    /// 胜出的远端变更
+    pub remote: Change,
+}
+
+/// 应用拉取批次:整批先一次取回本地竞争快照(`local_candidates`,单锁),
+/// 逐条与本地行竞争(同源 `lww::resolve_conflict`,ADR-009),胜者经
+/// `apply_remotes` 一次应用。
+///
+/// 返回「远端覆盖了本地已有行」的清单(远端胜 / 打平;本地无行不产生覆盖),
+/// 供上层写冲突日志。本地胜的行保持 pending,下一轮 push 会把本地版本推
+/// 上去 —— 双向收敛。
+pub fn apply_pull_response(
+    store: &dyn ChangeLogStore,
+    changes: &[Change],
+) -> CoreResult<Vec<PullOverridden>> {
+    if changes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let keys: Vec<(super::EntityKind, String)> = changes
+        .iter()
+        .map(|c| (c.entity, c.entity_id.clone()))
+        .collect();
+    let locals = store.local_candidates(&keys)?;
+    let mut overridden: Vec<PullOverridden> = Vec::new();
+    let mut winners: Vec<&Change> = Vec::new();
+    for (remote, local) in changes.iter().zip(locals) {
+        match local {
+            Some(local) => match super::resolve_conflict(&local, remote) {
+                super::Resolution::Left => {} // 本地胜,保持 pending
                 super::Resolution::Right | super::Resolution::Tie => {
-                    store.apply_remote(remote)?;
+                    overridden.push(PullOverridden {
+                        local,
+                        remote: remote.clone(),
+                    });
+                    winners.push(remote);
                 }
-            }
-        } else {
+            },
             // 本地无此行(从未见过或本设备删过历史…软删行仍在,会走上面的比较)
-            store.apply_remote(remote)?;
+            None => winners.push(remote),
         }
     }
-    Ok(())
+    let winner_refs: Vec<Change> = winners.into_iter().cloned().collect();
+    store.apply_remotes(&winner_refs)?;
+    Ok(overridden)
 }
 
 #[cfg(test)]

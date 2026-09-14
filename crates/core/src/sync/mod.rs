@@ -235,8 +235,27 @@ pub struct SyncCursor {
 pub trait ChangeLogStore {
     fn list_pending(&self, limit: usize) -> CoreResult<Vec<Change>>;
     fn apply_remote(&self, change: &Change) -> CoreResult<()>;
+    /// 批量应用「已裁定远端胜出」的变更 —— 语义与逐条 [`Self::apply_remote`]
+    /// 完全一致,实现可合并为单事务(首次全量同步上万行时省掉每行一次提交;
+    /// 2026-09-14 引擎 pull/push 收敛路径改走这里)。默认逐条转发。
+    fn apply_remotes(&self, changes: &[Change]) -> CoreResult<()> {
+        for change in changes {
+            self.apply_remote(change)?;
+        }
+        Ok(())
+    }
     fn mark_synced(&self, keys: &[(EntityKind, String)]) -> CoreResult<()>;
     fn local_candidate(&self, kind: EntityKind, id: &str) -> CoreResult<Option<Change>>;
+    /// 批量取本地行的竞争快照 —— 结果与 `keys` 等长对齐,无此行为 `None`。
+    /// 实现可合并为单次锁/事务(pull 批处理此前逐条查,一批 2N 次锁往返;
+    /// 2026-09-14)。默认逐条转发。
+    fn local_candidates(&self, keys: &[(EntityKind, String)]) -> CoreResult<Vec<Option<Change>>> {
+        let mut out = Vec::with_capacity(keys.len());
+        for (kind, id) in keys {
+            out.push(self.local_candidate(*kind, id)?);
+        }
+        Ok(out)
+    }
 }
 
 // === 实体同步元信息(内部;存储实现组 Change 快照用) ========================
