@@ -80,13 +80,13 @@ fn map_err(e: pomoflow_core::error::CoreError) -> String {
 
 // === Task commands ===
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_tasks(query: TaskQuery, state: State<'_, AppState>) -> Result<Vec<TaskView>, String> {
     let tasks = state.store.list_tasks(&query).map_err(map_err)?;
     embed_views(&state, tasks)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_task(id: String, state: State<'_, AppState>) -> Result<TaskView, String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     let task = state.store.get_task(&id).map_err(map_err)?;
@@ -111,7 +111,7 @@ fn embed_views(state: &AppState, tasks: Vec<Task>) -> Result<Vec<TaskView>, Stri
         .collect())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn upsert_task(
     task: Task,
     tag_ids: Option<Vec<String>>,
@@ -203,7 +203,7 @@ pub fn upsert_task(
     embed_views(&state, vec![saved]).map(|mut v| v.pop().unwrap())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_task(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     // v1 FK CASCADE:删模板级联删全部重复实例(含已完成)
@@ -214,21 +214,21 @@ pub fn delete_task(id: String, state: State<'_, AppState>) -> Result<(), String>
 // === 垃圾箱(P2+ UI 拉实)====================================================
 
 /// 列出所有已软删除的任务(按删除时间倒序)。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_deleted_tasks(state: State<'_, AppState>) -> Result<Vec<TaskView>, String> {
     let tasks = state.store.list_deleted_tasks().map_err(map_err)?;
     embed_views(&state, tasks)
 }
 
 /// 还原软删除的任务(走 push 通道让其他端同步收敛)。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn restore_task(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     state.store.restore_task(&id).map_err(map_err)
 }
 
 /// 硬删除任务(从 DB 物理删除,不可恢复)。同时清掉该任务的重复实例。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn purge_task(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     crate::repeat_service::delete_all_instances(&state.store, &id).map_err(map_err)?;
@@ -237,12 +237,12 @@ pub fn purge_task(id: String, state: State<'_, AppState>) -> Result<(), String> 
 
 // === Project commands ===
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>, String> {
     state.store.list_projects().map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn upsert_project(project: Project, state: State<'_, AppState>) -> Result<Project, String> {
     validate::validate_project(&project).map_err(map_err)?;
     let mut project = project;
@@ -259,14 +259,14 @@ pub fn upsert_project(project: Project, state: State<'_, AppState>) -> Result<Pr
     state.store.upsert_project(project).map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_project(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     state.store.delete_project(&id).map_err(map_err)
 }
 
 /// 项目树拖拽排序(v1 POST /projects/reorder):全量校验后事务更新。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reorder_projects(
     items: Vec<pomoflow_core::reorder::ReorderItem>,
     state: State<'_, AppState>,
@@ -276,12 +276,12 @@ pub fn reorder_projects(
 
 // === Tag commands ===
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_tags(state: State<'_, AppState>) -> Result<Vec<Tag>, String> {
     state.store.list_tags().map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn upsert_tag(tag: Tag, state: State<'_, AppState>) -> Result<Tag, String> {
     validate::validate_tag(&tag).map_err(map_err)?;
     let mut tag = tag;
@@ -298,14 +298,14 @@ pub fn upsert_tag(tag: Tag, state: State<'_, AppState>) -> Result<Tag, String> {
     state.store.upsert_tag(tag).map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_tag(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     state.store.delete_tag(&id).map_err(map_err)
 }
 
 /// 标签拖拽排序(只更新 display_order)。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reorder_tags(
     items: Vec<pomoflow_core::reorder::ReorderItem>,
     state: State<'_, AppState>,
@@ -315,13 +315,13 @@ pub fn reorder_tags(
 
 // === Task ↔ Tag 关联 ===
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_tags_for_task(task_id: String, state: State<'_, AppState>) -> Result<Vec<Tag>, String> {
     let id = Id::parse(&task_id).ok_or_else(|| format!("invalid id: {task_id}"))?;
     state.store.list_tags_for_task(&id).map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_tags_for_task(
     task_id: String,
     tag_ids: Vec<String>,
@@ -348,7 +348,7 @@ pub fn set_tags_for_task(
 // 不在 Store trait 上加 get_pomodoro(避免 trait surface 扩大):stop 时 list + find by id,
 // 当前 P1.7 单进程规模下 O(n) 完全够;后续统计 / 多设备场景再考虑加。
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_pomodoro(
     task_id: Option<String>,
     project_id: Option<String>,
@@ -378,7 +378,7 @@ pub fn start_pomodoro(
     state.store.upsert_pomodoro(session).map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stop_pomodoro(
     session_id: String,
     is_completed: bool,
@@ -432,7 +432,7 @@ pub fn stop_pomodoro(
     Ok(result)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_pomodoros(state: State<'_, AppState>) -> Result<Vec<PomodoroSession>, String> {
     state.store.list_pomodoros().map_err(map_err)
 }
@@ -443,7 +443,7 @@ pub fn list_pomodoros(state: State<'_, AppState>) -> Result<Vec<PomodoroSession>
 // 只能经 complete / reopen / 番茄钟逻辑变更,避免绕过业务规则。
 // 这里封装成 command —— Store trait 不感知"完成"业务语义。
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn complete_task(id: String, state: State<'_, AppState>) -> Result<TaskView, String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     let mut task = state.store.get_task(&id).map_err(map_err)?;
@@ -455,7 +455,7 @@ pub fn complete_task(id: String, state: State<'_, AppState>) -> Result<TaskView,
     embed_views(&state, vec![saved]).map(|mut v| v.pop().unwrap())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reopen_task(id: String, state: State<'_, AppState>) -> Result<TaskView, String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     let mut task = state.store.get_task(&id).map_err(map_err)?;
@@ -469,7 +469,7 @@ pub fn reopen_task(id: String, state: State<'_, AppState>) -> Result<TaskView, S
 
 // === Review commands(日 / 周 / 月复盘透传) ===
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_daily_review(
     date: String,
     state: State<'_, AppState>,
@@ -477,7 +477,7 @@ pub fn get_daily_review(
     state.store.get_daily_review(&date).map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn upsert_daily_review(
     review: DailyReview,
     state: State<'_, AppState>,
@@ -486,7 +486,7 @@ pub fn upsert_daily_review(
 }
 
 /// 日期区间列表(v1 GET /api/daily-reviews?start&end,手账模式用)。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_daily_reviews(
     start_date: String,
     end_date: String,
@@ -499,12 +499,12 @@ pub fn list_daily_reviews(
 }
 
 /// 删除某天日复盘(v1 DELETE 语义,硬删)。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_daily_review(date: String, state: State<'_, AppState>) -> Result<(), String> {
     state.store.delete_daily_review(&date).map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_weekly_review(
     week_start: String,
     state: State<'_, AppState>,
@@ -512,7 +512,7 @@ pub fn get_weekly_review(
     state.store.get_weekly_review(&week_start).map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn upsert_weekly_review(
     review: WeeklyReview,
     state: State<'_, AppState>,
@@ -522,7 +522,7 @@ pub fn upsert_weekly_review(
 
 /// 某月的周复盘列表(v1 GET /api/weekly-reviews?year&month):
 /// 返回所有**周一落在这个月内**的自然周,v1 crud.py:733-740 对齐。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_weekly_reviews(
     year: i32,
     month: u32,
@@ -546,7 +546,7 @@ pub fn list_weekly_reviews(
 }
 
 /// 删除某周复盘(硬删)。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_weekly_review(week_start: String, state: State<'_, AppState>) -> Result<(), String> {
     state
         .store
@@ -554,7 +554,7 @@ pub fn delete_weekly_review(week_start: String, state: State<'_, AppState>) -> R
         .map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_monthly_review(
     year_month: String,
     state: State<'_, AppState>,
@@ -562,7 +562,7 @@ pub fn get_monthly_review(
     state.store.get_monthly_review(&year_month).map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn upsert_monthly_review(
     review: MonthlyReview,
     state: State<'_, AppState>,
@@ -571,7 +571,7 @@ pub fn upsert_monthly_review(
 }
 
 /// 删除某月复盘(硬删)。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_monthly_review(year_month: String, state: State<'_, AppState>) -> Result<(), String> {
     state
         .store
@@ -579,7 +579,7 @@ pub fn delete_monthly_review(year_month: String, state: State<'_, AppState>) -> 
         .map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_yearly_review(
     year: String,
     state: State<'_, AppState>,
@@ -587,7 +587,7 @@ pub fn get_yearly_review(
     state.store.get_yearly_review(&year).map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn upsert_yearly_review(
     review: YearlyReview,
     state: State<'_, AppState>,
@@ -596,14 +596,14 @@ pub fn upsert_yearly_review(
 }
 
 /// 删除某年复盘(硬删)。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_yearly_review(year: String, state: State<'_, AppState>) -> Result<(), String> {
     state.store.delete_yearly_review(&year).map_err(map_err)
 }
 
 // === SubTask commands ===
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_subtasks_for_task(
     task_id: String,
     state: State<'_, AppState>,
@@ -612,7 +612,7 @@ pub fn list_subtasks_for_task(
     state.store.list_subtasks_for_task(&id).map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn upsert_subtask(subtask: SubTask, state: State<'_, AppState>) -> Result<SubTask, String> {
     validate::validate_subtask(&subtask).map_err(map_err)?;
     // 写入前 bump updated_at + revision —— 业务规则集中在 command 层,Store 不感知
@@ -622,7 +622,7 @@ pub fn upsert_subtask(subtask: SubTask, state: State<'_, AppState>) -> Result<Su
     state.store.upsert_subtask(s).map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_subtask(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     state.store.delete_subtask(&id).map_err(map_err)
@@ -630,12 +630,12 @@ pub fn delete_subtask(id: String, state: State<'_, AppState>) -> Result<(), Stri
 
 // === Motto commands(座右铭) ===
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_mottos(state: State<'_, AppState>) -> Result<Vec<Motto>, String> {
     state.store.list_mottos().map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn upsert_motto(motto: Motto, state: State<'_, AppState>) -> Result<Motto, String> {
     validate::validate_motto(&motto).map_err(map_err)?;
     // 写入前 bump updated_at + revision
@@ -645,7 +645,7 @@ pub fn upsert_motto(motto: Motto, state: State<'_, AppState>) -> Result<Motto, S
     state.store.upsert_motto(m).map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_motto(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     state.store.delete_motto(&id).map_err(map_err)
@@ -659,7 +659,7 @@ pub fn delete_motto(id: String, state: State<'_, AppState>) -> Result<(), String
 
 /// 列出全部随手记(活行,created_at 倒序 —— 与移动端 listJournals 同口径;
 /// core 的 list_journals 是 ASC,这里反转)。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_journals(state: State<'_, AppState>) -> Result<Vec<Journal>, String> {
     let mut list = state.store.list_journals().map_err(map_err)?;
     list.sort_by_key(|j| std::cmp::Reverse(j.created_at.0));
@@ -668,7 +668,7 @@ pub fn list_journals(state: State<'_, AppState>) -> Result<Vec<Journal>, String>
 
 /// 新建 / 编辑随手记。编辑按库内现值保留 created_at / user_id 并 revision+1;
 /// 新建走 `Journal::new`(revision=1)。校验口径 = 标题/内容至少一项非空。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn upsert_journal(
     id: Option<String>,
     kind: String,
@@ -712,7 +712,7 @@ pub fn upsert_journal(
 /// 完成语义只属于 kind=todo(wish/plan/note 恒为 Active,前端不渲染勾选框);
 /// 此处不校验 kind —— status 字段四类共享(core model 注释,wire 形态统一),
 /// 翻转对任何 kind 都落得住。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn toggle_journal(id: String, state: State<'_, AppState>) -> Result<Journal, String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     // 单条取(2026-09-14):此前 list 全表后内存 find
@@ -728,7 +728,7 @@ pub fn toggle_journal(id: String, state: State<'_, AppState>) -> Result<Journal,
 
 /// 软删除随手记(墓碑 + pending,随同步收敛;与移动端 deleteJournal 同语义,
 /// 不进垃圾箱 —— 手账是轻量随手记,删除由前端二次确认把守)。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_journal(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
     state.store.delete_journal(&id).map_err(map_err)
@@ -737,7 +737,7 @@ pub fn delete_journal(id: String, state: State<'_, AppState>) -> Result<(), Stri
 // === NotificationTemplate commands(通知文案模板,单行配置) ===
 
 /// 读模板;表为空返回默认行(v1 `_DEFAULTS` 语义:文案由前端预设表按语言解析)。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_notification_template(
     state: State<'_, AppState>,
 ) -> Result<NotificationTemplate, String> {
@@ -749,7 +749,7 @@ pub fn get_notification_template(
     Ok(template)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn upsert_notification_template(
     template: NotificationTemplate,
     state: State<'_, AppState>,
@@ -767,7 +767,7 @@ pub fn upsert_notification_template(
 ///
 /// 入参是今日 0 点的 UTC 毫秒和次日 0 点的 UTC 毫秒(前端按本地时区算好后传入),
 /// 后端做 SUM(duration_minutes) 聚合。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn today_completed_minutes(
     start_ms: i64,
     end_ms: i64,
@@ -805,7 +805,7 @@ fn local_day_range_to_utc_ms(
 /// - `tz_offset_min`:会话日分桶用的本地时区偏移(东正西负,如上海 +480)
 ///
 /// 语义在 core::stats(纯函数),此处只做取数编排。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stats_range(
     start_date: String,
     end_date: String,
@@ -839,7 +839,7 @@ pub fn stats_range(
 ///
 /// `today`/`week_start`/`month_start` 是前端本地时区的日期(YYYY-MM-DD);
 /// total_sessions / total_tasks_completed 无时间界。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stats_overview(
     today: String,
     week_start: String,
@@ -896,7 +896,7 @@ pub struct ConflictLogView {
     pub occurred_at_ms: i64,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_conflicts(
     limit: usize,
     state: State<'_, AppState>,
@@ -917,12 +917,12 @@ pub fn list_conflicts(
         .collect())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn count_conflicts(state: State<'_, AppState>) -> Result<usize, String> {
     state.store.count_conflicts().map_err(map_err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_conflicts(state: State<'_, AppState>) -> Result<(), String> {
     state.store.clear_conflicts().map_err(map_err)
 }

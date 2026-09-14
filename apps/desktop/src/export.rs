@@ -44,7 +44,7 @@ const COLUMN_WIDTHS: [f64; 9] = [6.0, 36.0, 16.0, 8.0, 14.0, 12.0, 20.0, 40.0, 1
 ///
 /// `headers`:9 个本地化列名;`sheet_name`:本地化工作表名(如"任务清单");
 /// `path`:前端 save 对话框选定的完整路径。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_tasks_xlsx(
     path: String,
     sheet_name: String,
