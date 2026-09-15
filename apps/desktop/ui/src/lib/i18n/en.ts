@@ -305,6 +305,8 @@ export const en: Dict = {
       entityMotto: 'Motto',
       entityPomodoro: 'Focus session',
       entityTaskTag: 'Task tags',
+      conflictLost: 'Lost',
+      conflictOverrode: 'Overridden',
       conflictHint: '{n} recent conflict(s) / override(s)',
       noConflicts: 'No recent conflicts. Conflicts only occur when the same field is edited on multiple devices.',
     },

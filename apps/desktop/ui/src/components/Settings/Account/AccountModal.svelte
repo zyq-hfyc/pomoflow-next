@@ -7,12 +7,15 @@
     open,
     title,
     desc = "",
+    error = "",
     onClose,
     children,
   }: {
     open: boolean;
     title: string;
     desc?: string;
+    /** 段内错误提示(2026-09-15 拆分批:显示在弹窗体内) */
+    error?: string;
     onClose: () => void;
     children: Snippet;
   } = $props();
@@ -33,6 +36,7 @@
     <div class="modal" role="dialog" aria-modal="true" aria-label={title}>
       <h3>{title}</h3>
       {#if desc}<p>{desc}</p>{/if}
+      {#if error}<div class="modal-error" role="alert">⚠ {error}</div>{/if}
       {@render children()}
     </div>
   </div>
@@ -67,5 +71,13 @@
     font-size: 13px;
     line-height: 1.5;
     color: var(--color-text-muted);
+  }
+  .modal-error {
+    margin: -6px 0 12px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: #fee2e2;
+    color: #991b1b;
+    font-size: 12px;
   }
 </style>

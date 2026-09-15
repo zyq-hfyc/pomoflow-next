@@ -4,14 +4,9 @@
   // 相对原型的裁剪(ADR-012):无头像/签名/手机号;无 2FA;第三方只留微信(待资质);
   // 无账号注销区(danger zone,P4)。设备元信息为设备自报名+登录时间(无 IP 地理)。
 
-  import { MonitorSmartphone, QrCode } from "lucide-svelte";
+  import { QrCode } from "lucide-svelte";
   import { getDict, fmt } from "../../../lib/i18n.svelte";
   import {
-    authChangePassword,
-    authUpdateProfile,
-    authUpdateUsername,
-    authRequestDeletion,
-    authCancelDeletion,
     authSetAvatar,
     authDeleteAvatar,
     authExportData,
@@ -20,22 +15,12 @@
     exportTasksXlsx,
     type TaskView,
     type Project,
-    authGetLoginLogs,
-    type LoginLogItem,
-    authBindEmail,
-    authSendEmailCode,
-    authListSessions,
-    authRevokeSession,
-    authRevokeOthers,
     type AccountProfile,
-    type SessionInfo,
   } from "../../../lib/api";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-  import AccountModal from "./AccountModal.svelte";
-  import StrengthBar from "./StrengthBar.svelte";
-  import { createCooldown } from "./cooldown.svelte";
+  import AccountModals from "./AccountModals.svelte";
   import { accountState, refreshAvatar } from "../../../lib/accountState.svelte";
-  import { aggregateDevices } from "../../../lib/accountDevices";
+  import AccountDevicesSection from "./AccountDevicesSection.svelte";
 
   type Section = "profile" | "security" | "thirdparty" | "devices" | "danger";
   let {
@@ -49,11 +34,7 @@
   } = $props();
 
   const t = $derived(getDict());
-  const cooldown = createCooldown(60);
-  $effect(() => () => cooldown.destroy());
 
-  let sessions = $state<SessionInfo[] | null>(null);
-  let loginLogs = $state<LoginLogItem[] | null>(null);
   let error = $state<string | null>(null);
   let notice = $state("");
   let busy = $state(false);
@@ -63,74 +44,13 @@
   // 弹窗状态:nickname / username / email(绑定换绑) / password / bio /
   // deletion(注销确认)/ cancelDeletion(撤销注销)
   let modal = $state<null | "nickname" | "username" | "email" | "password" | "bio" | "deletion" | "cancelDeletion">(null);
-  let mNick = $state("");
-  let mBio = $state("");
-  let mUser = $state("");
-  let mPass = $state(""); // 当前密码 / 旧密码(按弹窗用途)
-  let mNewPass = $state("");
-  let mNewPass2 = $state("");
-  let mEmail = $state("");
-  let mCode = $state("");
-  // 注销确认:输入「注销账号」四字 + 勾选须知
-  let mConfirmText = $state("");
-  let mAgreed = $state(false);
 
   const display = $derived(
     profile ? profile.display_name || profile.username : "",
   );
 
-  async function loadSessions() {
-    if (busy) return;
-    busy = true;
-    error = null;
-    try {
-      sessions = await authListSessions();
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
-
   function openModal(kind: typeof modal) {
-    error = null;
-    mNick = profile?.display_name ?? "";
-    mUser = profile?.username ?? "";
-    mPass = mNewPass = mNewPass2 = mEmail = mCode = "";
-    mBio = profile?.bio ?? "";
-    mConfirmText = "";
-    mAgreed = false;
-    modal = kind;
-  }
-
-  async function saveNickname() {
-    if (busy) return;
-    busy = true;
-    error = null;
-    try {
-      await authUpdateProfile(mNick, null);
-      await reloadProfile();
-      modal = null;
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function saveBio() {
-    if (busy) return;
-    busy = true;
-    error = null;
-    try {
-      await authUpdateProfile(null, mBio);
-      await reloadProfile();
-      modal = null;
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
+    modal = kind; // 表单预填与错误清理在 AccountModals 内部完成
   }
 
   const deletionEffective = $derived.by(() => {
@@ -139,184 +59,12 @@
     return d.toLocaleDateString();
   });
 
-  async function requestDeletion() {
-    if (busy) return;
-    if (mConfirmText !== t.settings.account.deleteConfirmWord || !mAgreed) {
-      error = t.settings.account.deleteNotConfirmed;
-      return;
-    }
-    busy = true;
-    error = null;
-    try {
-      await authRequestDeletion(mPass, profile?.email_verified ? mCode.trim() : null);
-      await reloadProfile();
-      modal = null;
-      notice = t.settings.account.deletionRequested;
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function cancelDeletion() {
-    if (busy) return;
-    busy = true;
-    error = null;
-    try {
-      await authCancelDeletion(mPass);
-      await reloadProfile();
-      modal = null;
-      notice = t.settings.account.deletionCancelled;
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function sendDeletionCode() {
-    if (busy || cooldown.active) return;
-    if (!profile?.email) {
-      error = t.settings.account.deleteNeedEmail;
-      return;
-    }
-    busy = true;
-    error = null;
-    try {
-      await authSendEmailCode(profile.email, "delete");
-      cooldown.start();
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function saveUsername() {
-    if (busy) return;
-    busy = true;
-    error = null;
-    try {
-      await authUpdateUsername(mUser.trim(), mPass);
-      await reloadProfile();
-      modal = null;
-      notice = t.settings.account.usernameChanged;
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function saveEmail() {
-    if (busy) return;
-    busy = true;
-    error = null;
-    try {
-      await authBindEmail(mEmail.trim(), mCode.trim(), mPass);
-      await reloadProfile();
-      modal = null;
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function savePassword() {
-    if (busy) return;
-    if (mNewPass !== mNewPass2) {
-      error = t.settings.sync.passMismatch;
-      return;
-    }
-    busy = true;
-    error = null;
-    try {
-      await authChangePassword(mPass, mNewPass);
-      modal = null;
-      notice = t.settings.sync.passChanged;
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function sendCode() {
-    if (busy || cooldown.active) return;
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mEmail.trim())) {
-      error = t.settings.account.invalidEmail;
-      return;
-    }
-    busy = true;
-    error = null;
-    try {
-      await authSendEmailCode(mEmail.trim(), "bind");
-      cooldown.start();
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function kick(id: number) {
-    if (busy) return;
-    busy = true;
-    error = null;
-    try {
-      await authRevokeSession(id);
-      sessions = await authListSessions();
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
-
-  /** 按设备下线:该设备可能有多个活跃 token(每次登录一个),逐个 revoke。 */
-  async function kickDevice(ids: number[]) {
-    if (busy) return;
-    busy = true;
-    error = null;
-    try {
-      for (const id of ids) {
-        await authRevokeSession(id);
-      }
-      sessions = await authListSessions();
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function revokeOthers() {
-    if (busy) return;
-    busy = true;
-    error = null;
-    try {
-      const n = await authRevokeOthers();
-      sessions = await authListSessions();
-      notice = fmt(t.settings.sync.revokedFmt, { n });
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
-
   const pwChangedText = $derived.by(() => {
     if (!profile?.password_changed_ms) return "";
     return fmt(t.settings.account.lastChanged, {
       time: new Date(profile.password_changed_ms).toLocaleDateString(),
     });
   });
-
-  /** 会话 → 设备聚合(单一来源 lib/accountDevices:同 device_id 只留
-   *  最新一条,current 优先;ids = 该设备全部 session id,下线用)。 */
-  const devices = $derived(aggregateDevices(sessions ?? []));
 
   // 头像随共享状态;设备区进入时拉会话(prop section 响应式)
   $effect(() => {
@@ -442,28 +190,6 @@
     }
   }
 
-  $effect(() => {
-    if (section === "devices" && sessions === null) void loadSessions();
-  });
-  $effect(() => {
-    if (section === "devices" && loginLogs === null) void loadLoginLogs();
-  });
-
-  async function loadLoginLogs() {
-    try {
-      loginLogs = await authGetLoginLogs();
-    } catch {
-      loginLogs = null; // 旧后端无此端点 → 静默不显示
-    }
-  }
-
-  const methodText = (m: string) =>
-    ({
-      username: t.settings.account.methodUser,
-      email: t.settings.account.methodEmail,
-      register_username: t.settings.account.methodRegUser,
-      register_email: t.settings.account.methodRegEmail,
-    })[m] ?? m;
 </script>
 
 <div class="ac-content">
@@ -582,70 +308,10 @@
         </div>
       </div>
     {:else if section === "devices"}
-      <div class="ac-section-title">{t.settings.account.devices}</div>
-      <div class="ac-section-desc">{t.settings.account.devicesDesc}</div>
-      <div class="ac-card">
-        {#if sessions === null}
-          <div class="ac-field">
-            <span class="ac-field-desc">{t.common.loading}</span>
-            <button type="button" class="ac-btn-sm" disabled={busy} onclick={() => void loadSessions()}>
-              {t.settings.sync.devicesReload}
-            </button>
-          </div>
-        {:else}
-          {#each devices as d (d.ss.device_id)}
-            <div class="device-row">
-              <div class="device-icon"><MonitorSmartphone size={18} /></div>
-              <div class="device-info">
-                <div class="device-name">
-                  {d.ss.device_name || (d.ss.device_id ?? "?").slice(0, 8)}
-                  {#if d.ss.current}<span class="device-current">{t.settings.sync.currentDevice}</span>{/if}
-                </div>
-                <div class="device-meta">
-                  {fmt(t.settings.account.deviceAt, {
-                    time: d.ss.created_ms ? new Date(d.ss.created_ms).toLocaleString() : "—",
-                  })}
-                </div>
-              </div>
-              {#if !d.ss.current}
-                <button type="button" class="ac-btn-sm" disabled={busy} onclick={() => void kickDevice(d.ids)}>
-                  {t.settings.sync.kick}
-                </button>
-              {/if}
-            </div>
-          {/each}
-          {#if devices.length <= 1}
-            <div class="device-row">
-              <div class="device-meta">{t.settings.sync.noOtherDevices}</div>
-            </div>
-          {/if}
-        {/if}
-      </div>
-      {#if devices.length > 0 && devices.some((d) => !d.ss.current)}
-        <div class="devices-footer">
-          <button type="button" class="ac-btn-danger-sm" disabled={busy} onclick={() => void revokeOthers()}>
-            {t.settings.sync.revokeOthers}
-          </button>
-        </div>
-      {/if}
-
-      {#if loginLogs !== null && loginLogs.length > 0}
-        <div class="logs-card">
-          <div class="logs-title">{t.settings.account.loginLogsTitle}</div>
-          {#each loginLogs as lg (lg.created_ms + lg.method)}
-            <div class="log-row">
-              <span class="log-time">{new Date(lg.created_ms).toLocaleString()}</span>
-              <span class="log-device">{lg.device_name || "—"}</span>
-              <span class="log-method">{methodText(lg.method)}</span>
-              {#if lg.ok}
-                <span class="ac-badge bound">{t.settings.account.loginOk}</span>
-              {:else}
-                <span class="ac-badge unbound" title={lg.detail}>{t.settings.account.loginFail}</span>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {/if}
+      <AccountDevicesSection
+        active={section === "devices"}
+        onNotice={(msg) => (notice = msg)}
+      />
     {:else if section === "danger"}
       <div class="ac-section-title danger-text">{t.settings.account.dangerZone}</div>
       <div class="ac-section-desc">{t.settings.account.dangerDesc}</div>
@@ -715,129 +381,13 @@
     {/if}
   </div>
 
-<!-- 编辑弹窗们 -->
-<AccountModal
-  open={modal === "nickname"}
-  title={t.settings.account.editNickname}
-  desc={t.settings.account.nicknameDesc}
+<!-- 编辑弹窗们(2026-09-15 批 4d:整体迁出到 AccountModals.svelte) -->
+<AccountModals
+  {modal}
+  {profile}
   onClose={() => (modal = null)}
->
-  <input class="modal-input" maxlength="32" bind:value={mNick} />
-  <div class="ac-modal-btns">
-    <button type="button" class="cancel" onclick={() => (modal = null)}>{t.settings.account.cancel}</button>
-    <button type="button" class="confirm" disabled={busy} onclick={() => void saveNickname()}>{t.settings.account.save}</button>
-  </div>
-</AccountModal>
-
-<AccountModal
-  open={modal === "username"}
-  title={t.settings.account.editUsername}
-  desc={t.settings.account.usernameModalDesc}
-  onClose={() => (modal = null)}
->
-  <input class="modal-input" maxlength="32" bind:value={mUser} placeholder={t.settings.account.usernamePh} />
-  <input class="modal-input" type="password" bind:value={mPass} placeholder={t.settings.account.curPass} autocomplete="current-password" />
-  <div class="ac-modal-btns">
-    <button type="button" class="cancel" onclick={() => (modal = null)}>{t.settings.account.cancel}</button>
-    <button type="button" class="confirm" disabled={busy} onclick={() => void saveUsername()}>{t.settings.account.save}</button>
-  </div>
-</AccountModal>
-
-<AccountModal
-  open={modal === "email"}
-  title={profile?.email ? t.settings.account.editEmail : t.settings.account.bindEmailTitle}
-  desc={t.settings.account.bindEmailDesc}
-  onClose={() => (modal = null)}
->
-  <input class="modal-input" type="email" bind:value={mEmail} placeholder={t.settings.account.emailPh} autocomplete="email" />
-  <div class="code-row-m">
-    <input class="modal-input code-m" inputmode="numeric" maxlength="6" bind:value={mCode} placeholder={t.settings.account.codePh} />
-    <button type="button" class="ac-btn-sm" disabled={busy || cooldown.active} onclick={() => void sendCode()}>
-      {cooldown.active
-        ? fmt(t.settings.account.resend, { n: cooldown.remaining })
-        : t.settings.account.sendCode}
-    </button>
-  </div>
-  <input class="modal-input" type="password" bind:value={mPass} placeholder={t.settings.account.curPass} autocomplete="current-password" />
-  <div class="ac-modal-btns">
-    <button type="button" class="cancel" onclick={() => (modal = null)}>{t.settings.account.cancel}</button>
-    <button type="button" class="confirm" disabled={busy} onclick={() => void saveEmail()}>{t.settings.account.confirm}</button>
-  </div>
-</AccountModal>
-
-<AccountModal
-  open={modal === "bio"}
-  title={t.settings.account.editBio}
-  desc={t.settings.account.bioDesc}
-  onClose={() => (modal = null)}
->
-  <input class="modal-input" maxlength="50" bind:value={mBio} placeholder={t.settings.account.bioPh} />
-  <div class="bio-counter">{mBio.length} / 50</div>
-  <div class="ac-modal-btns">
-    <button type="button" class="cancel" onclick={() => (modal = null)}>{t.settings.account.cancel}</button>
-    <button type="button" class="confirm" disabled={busy} onclick={() => void saveBio()}>{t.settings.account.save}</button>
-  </div>
-</AccountModal>
-
-<AccountModal
-  open={modal === "deletion"}
-  title={t.settings.account.deleteAccount}
-  desc={t.settings.account.deleteModalDesc}
-  onClose={() => (modal = null)}
->
-  {#if profile?.email_verified}
-    <div class="code-row-m">
-      <input class="modal-input code-m" inputmode="numeric" maxlength="6" bind:value={mCode} placeholder={t.settings.account.codePh} />
-      <button type="button" class="ac-btn-sm" disabled={busy || cooldown.active} onclick={() => void sendDeletionCode()}>
-        {cooldown.active
-          ? fmt(t.settings.account.resend, { n: cooldown.remaining })
-          : t.settings.account.sendCode}
-      </button>
-    </div>
-  {/if}
-  <input class="modal-input" type="password" bind:value={mPass} placeholder={t.settings.account.curPass} autocomplete="current-password" />
-  <input class="modal-input" bind:value={mConfirmText} placeholder={t.settings.account.deleteConfirmPh} />
-  <label class="delete-agree">
-    <input type="checkbox" bind:checked={mAgreed} />
-    {t.settings.account.deleteAgree}
-  </label>
-  <div class="ac-modal-btns">
-    <button type="button" class="cancel" onclick={() => (modal = null)}>{t.settings.account.cancel}</button>
-    <button type="button" class="confirm danger" disabled={busy} onclick={() => void requestDeletion()}>
-      {t.settings.account.deleteConfirmBtn}
-    </button>
-  </div>
-</AccountModal>
-
-<AccountModal
-  open={modal === "cancelDeletion"}
-  title={t.settings.account.deletionCancelBtn}
-  desc={t.settings.account.deletionCancelDesc}
-  onClose={() => (modal = null)}
->
-  <input class="modal-input" type="password" bind:value={mPass} placeholder={t.settings.account.curPass} autocomplete="current-password" />
-  <div class="ac-modal-btns">
-    <button type="button" class="cancel" onclick={() => (modal = null)}>{t.settings.account.cancel}</button>
-    <button type="button" class="confirm" disabled={busy} onclick={() => void cancelDeletion()}>{t.settings.account.confirm}</button>
-  </div>
-</AccountModal>
-
-<AccountModal
-  open={modal === "password"}
-  title={t.settings.account.changePw}
-  desc={t.settings.account.changePwDesc}
-  onClose={() => (modal = null)}
->
-  <input class="modal-input" type="password" bind:value={mPass} placeholder={t.settings.account.curPass} autocomplete="current-password" />
-  <input class="modal-input" type="password" bind:value={mNewPass} placeholder={t.settings.account.passwordPh} autocomplete="new-password" />
-  <StrengthBar value={mNewPass} />
-  <input class="modal-input" style="margin-top: 12px" type="password" bind:value={mNewPass2} placeholder={t.settings.account.confirmPh} autocomplete="new-password" />
-  <div class="ac-modal-btns">
-    <button type="button" class="cancel" onclick={() => (modal = null)}>{t.settings.account.cancel}</button>
-    <button type="button" class="confirm" disabled={busy} onclick={() => void savePassword()}>{t.settings.account.confirm}</button>
-  </div>
-</AccountModal>
-
+  onNotice={(msg) => (notice = msg)}
+/>
 <style>
   .ac-content {
     max-width: 46rem;
@@ -970,92 +520,6 @@
     color: var(--color-text-muted);
   }
 
-  .device-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 0;
-    border-bottom: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
-  }
-  .device-row:last-child {
-    border-bottom: none;
-  }
-  .device-icon {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    background: var(--color-neutral-50, #f5f5f5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    color: var(--color-accent-600);
-  }
-  .device-info {
-    flex: 1;
-    min-width: 0;
-  }
-  .device-name {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--color-text);
-  }
-  .device-current {
-    font-size: 11px;
-    color: var(--color-accent-600);
-    font-weight: 500;
-    margin-left: 6px;
-  }
-  .device-meta {
-    font-size: 11px;
-    color: var(--color-text-muted);
-    margin-top: 2px;
-  }
-  .devices-footer {
-    text-align: right;
-  }
-
-  .logs-card {
-    border: 1px solid var(--color-border);
-    border-radius: 12px;
-    padding: 14px 20px 6px;
-    margin-top: 16px;
-    background: var(--color-surface);
-  }
-  .logs-title {
-    font-size: 13px;
-    font-weight: 500;
-    margin-bottom: 8px;
-    color: var(--color-text);
-  }
-  .log-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 0;
-    border-bottom: 1px solid color-mix(in srgb, var(--color-border) 50%, transparent);
-    font-size: 12px;
-  }
-  .log-row:last-child {
-    border-bottom: none;
-  }
-  .log-time {
-    color: var(--color-text-muted);
-    white-space: nowrap;
-  }
-  .log-device {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--color-text);
-  }
-  .log-method {
-    color: var(--color-text-muted);
-    white-space: nowrap;
-  }
-
   .avatar-block {
     display: flex;
     align-items: center;
@@ -1151,21 +615,6 @@
     line-height: 1.8;
     color: var(--color-text-muted);
   }
-  :global(.bio-counter) {
-    text-align: right;
-    font-size: 11px;
-    color: var(--color-text-muted);
-    margin: -6px 0 8px;
-  }
-  :global(.delete-agree) {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--color-text-muted);
-    margin-bottom: 12px;
-  }
-
   .notice {
     margin-bottom: 14px;
     padding: 8px 12px;
