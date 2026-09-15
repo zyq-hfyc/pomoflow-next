@@ -41,6 +41,15 @@
   import { toastError } from "../lib/toast.svelte";
   import { todayStr, tomorrowStr, datePart, hasTimePart, toIsoUtc } from "../lib/dueDate";
   import { compareByStatusPriorityCreated } from "../lib/taskSort";
+  import {
+    journalsState,
+    refreshJournals,
+    selectJournal,
+    startNewNote,
+    closeNotePanel,
+    onNoteCreated,
+    toggleJournalTodo,
+  } from "../lib/journalsStore.svelte";
   import { startOfWeek, endOfWeek, startOfMonth, endOfMonth } from "../lib/weekMonth";
   import { toISO } from "../lib/calendar";
   import ProjectSidebar from "../components/Tasks/ProjectSidebar.svelte";
@@ -77,14 +86,6 @@
 
   let selectedTask = $state<TaskWithTags | null>(null);
 
-  // === 随手记状态(2026-09-13 面板化批:自 NotesView 上移,与 selectedTask 同型) ===
-  // 数据 + 选中态在页面层持有 —— 右栏 DOM 归本页,NoteDetailPanel 与 NotesView
-  // 是兄弟节点,refresh 后按 id 重找选中项只能在这一层做(照 :319-322 任务模式)。
-  let journals = $state<Journal[]>([]);
-  let journalsLoading = $state(true);
-  let notesError = $state<string | null>(null);
-  let selectedJournal = $state<Journal | null>(null);
-  let notesCreating = $state(false);
 
   // === 跳转定位(2026-09-09):智能滚动到模板任务 ===
   let pendingScrollId = $state<string | null>(null);
@@ -320,21 +321,8 @@
     void refresh();
   });
 
-  // === 随手记数据(面板化批) ===
-  async function refreshJournals() {
-    try {
-      journals = await api.listJournals();
-      notesError = null;
-      if (selectedJournal) {
-        // 与任务 refresh(:319-322)同语义:同步删掉选中的 → 面板自动回空态
-        selectedJournal = journals.find((j) => j.id === selectedJournal!.id) ?? null;
-      }
-    } catch (e) {
-      notesError = String(e);
-    } finally {
-      journalsLoading = false;
-    }
-  }
+  // === 随手记数据(2026-09-15 批 4d:store 化,见 lib/journalsStore.svelte.ts) ===
+  const js = journalsState();
 
   // 独立 effect,不并入主 refresh():主 effect 若读 filter 会把 filter 变成
   // refresh 的依赖,切视图就重拉 tasks,改变现有行为。
@@ -342,35 +330,6 @@
     void syncState().rev; // 手机端同步落库 → 重拉
     if (filter === "notes") void refreshJournals(); // 挂载/切入 notes 视图 → 拉
   });
-
-  function selectJournal(j: Journal) {
-    selectedJournal = j;
-    notesCreating = false;
-  }
-  function startNewNote() {
-    selectedJournal = null;
-    notesCreating = true;
-  }
-  function closeNotePanel() {
-    selectedJournal = null;
-    notesCreating = false;
-  }
-  function onNotePanelChanged() {
-    void refreshJournals();
-  }
-  function onNoteCreated(j: Journal) {
-    selectedJournal = j; // 先同步选中(收窄竞态窗口)
-    notesCreating = false;
-    void refreshJournals();
-  }
-  async function toggleJournalTodo(id: string) {
-    try {
-      await api.toggleJournal(id);
-      await refreshJournals();
-    } catch (e) {
-      toastError(fmt(t.notes.toggleFailed, { err: String(e) }));
-    }
-  }
 
   // 智能跳转定位:模板已在当前 filtered → 原地滚(必要时展开组);
   // 否则切到「重复」视图(全部模板扁平无折叠)再滚。pendingScrollId
@@ -654,14 +613,14 @@
       />
     {:else if filter === "notes"}
       <NotesView
-        {journals}
-        loading={journalsLoading}
-        error={notesError}
-        selectedId={notesCreating ? null : (selectedJournal?.id ?? null)}
+        journals={js.journals}
+        loading={js.loading}
+        error={js.error}
+        selectedId={js.creating ? null : (js.selected?.id ?? null)}
         onSelect={selectJournal}
         onNew={startNewNote}
         onToggleTodo={(id) => void toggleJournalTodo(id)}
-        onClearError={() => (notesError = null)}
+        onClearError={() => (js.error = null)}
       />
     {:else}
       <div class="inner">
@@ -823,11 +782,11 @@
   {#if filter === "journal"}
     <MonthReviewPanel year={journalYear} month={journalMonth} {reviewVersion} />
   {:else if filter === "notes"}
-    {#if selectedJournal || notesCreating}
+    {#if js.selected || js.creating}
       <NoteDetailPanel
-        journal={selectedJournal}
+        journal={js.selected}
         onClose={closeNotePanel}
-        onChanged={onNotePanelChanged}
+        onChanged={refreshJournals}
         onCreated={onNoteCreated}
       />
     {:else}

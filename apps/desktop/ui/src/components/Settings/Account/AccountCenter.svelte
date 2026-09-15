@@ -35,6 +35,7 @@
   import StrengthBar from "./StrengthBar.svelte";
   import { createCooldown } from "./cooldown.svelte";
   import { accountState, refreshAvatar } from "../../../lib/accountState.svelte";
+  import { aggregateDevices } from "../../../lib/accountDevices";
 
   type Section = "profile" | "security" | "thirdparty" | "devices" | "danger";
   let {
@@ -313,34 +314,9 @@
     });
   });
 
-  /** 会话(token)→ 设备聚合:同 device_id 只留最新一条(current 优先),
-   *  否则每次登录一行 token,同一设备在"在线设备"里出现多条(与 mobile
-   *  account_page 同款修复)。ids = 该设备全部 session id(下线用)。 */
-  const devices = $derived.by(() => {
-    if (!sessions) return [];
-    const byDev = new Map<
-      string,
-      { ss: (typeof sessions)[number]; ids: number[] }
-    >();
-    for (const ss of sessions) {
-      const key = ss.device_id ?? "";
-      const cur = byDev.get(key);
-      if (!cur) {
-        byDev.set(key, { ss, ids: ss.id != null ? [ss.id] : [] });
-      } else {
-        if (ss.id != null) cur.ids.push(ss.id);
-        if (
-          ss.current ||
-          (!cur.ss.current && (ss.created_ms ?? 0) > (cur.ss.created_ms ?? 0))
-        ) {
-          cur.ss = ss;
-        }
-      }
-    }
-    const list = [...byDev.values()];
-    list.sort((a, b) => (b.ss.created_ms ?? 0) - (a.ss.created_ms ?? 0));
-    return list;
-  });
+  /** 会话 → 设备聚合(单一来源 lib/accountDevices:同 device_id 只留
+   *  最新一条,current 优先;ids = 该设备全部 session id,下线用)。 */
+  const devices = $derived(aggregateDevices(sessions ?? []));
 
   // 头像随共享状态;设备区进入时拉会话(prop section 响应式)
   $effect(() => {

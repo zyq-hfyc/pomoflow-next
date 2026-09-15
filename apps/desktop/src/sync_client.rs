@@ -1276,7 +1276,13 @@ fn sniff_image_mime(bytes: &[u8]) -> Option<&'static str> {
 pub async fn auth_set_avatar(path: String, state: State<'_, AppState>) -> Result<(), String> {
     use base64::Engine as _;
     let store = state.store.clone();
-    let bytes = std::fs::read(&path).map_err(|e| format!("读取图片失败: {e}"))?;
+    // 文件 I/O 移到阻塞线程池(2026-09-15 批 4d):async fn 里直呼 std::fs
+    // 会卡住 tokio worker
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        std::fs::read(&path).map_err(|e| format!("读取图片失败: {e}"))
+    })
+    .await
+    .map_err(|e| format!("读取图片失败: {e}"))??;
     let Some(mime) = sniff_image_mime(&bytes) else {
         return Err("头像仅支持 JPG/PNG".into());
     };
@@ -1333,7 +1339,12 @@ pub async fn auth_export_data(path: String, state: State<'_, AppState>) -> Resul
             .map_err(|e| format!("响应解析失败: {e}"))?,
     )
     .map_err(|e| format!("格式化失败: {e}"))?;
-    std::fs::write(&path, pretty).map_err(|e| format!("写文件失败: {e}"))?;
+    // 写盘移到阻塞线程池(2026-09-15 批 4d,导出可能是数 MB JSON)
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::write(&path, pretty).map_err(|e| format!("写文件失败: {e}"))
+    })
+    .await
+    .map_err(|e| format!("写文件失败: {e}"))??;
     Ok(())
 }
 
