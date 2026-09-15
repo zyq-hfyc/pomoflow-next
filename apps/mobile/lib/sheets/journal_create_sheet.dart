@@ -8,21 +8,29 @@ import '../widgets/pf_controls.dart';
 import '../widgets/pf_sheet.dart';
 
 /// 随手记统一创建 Sheet(终稿 B2 `journal_create_sheet.dart`):
-/// 四类(待办/小记/愿望/年度规划)chip 切换 + 标题 + 内容 + 标签,
-/// 取代逐类分散入口;Dock 中央 FAB 的快速新建仍保留(双入口不冲突)。
+/// 四类(待办/小记/愿望/年度规划)chip 切换 + 标题 + 内容 + 标签。
 void showJournalCreateSheet(BuildContext context) {
-  pfSheet(context, title: '新建随手记', body: (ctx) => const _JournalCreateForm());
+  pfSheet(context, title: '新建随手记', body: (ctx) => const JournalCreateForm());
 }
 
-class _JournalCreateForm extends StatefulWidget {
-  const _JournalCreateForm();
+/// 随手记创建表单(公开给统一新建流内嵌;独立入口走 [showJournalCreateSheet])。
+/// [showKindChips] = false 时隐藏类型 chips(统一新建流的类型在入口选)。
+class JournalCreateForm extends StatefulWidget {
+  const JournalCreateForm({
+    this.initialKind = JournalKind.note,
+    this.showKindChips = true,
+    super.key,
+  });
+
+  final JournalKind initialKind;
+  final bool showKindChips;
 
   @override
-  State<_JournalCreateForm> createState() => _JournalCreateFormState();
+  State<JournalCreateForm> createState() => _JournalCreateFormState();
 }
 
-class _JournalCreateFormState extends State<_JournalCreateForm> {
-  JournalKind _kind = JournalKind.note;
+class _JournalCreateFormState extends State<JournalCreateForm> {
+  late JournalKind _kind = widget.initialKind;
   final _titleCtrl = TextEditingController();
   final _bodyCtrl = TextEditingController();
   final _tagsCtrl = TextEditingController();
@@ -71,43 +79,45 @@ class _JournalCreateFormState extends State<_JournalCreateForm> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 类型选择:四类 chip(待办/小记/愿望/年度规划)
-        PfFormField(
-          label: '类型',
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final k in JournalKind.values)
-                GestureDetector(
-                  onTap: () => setState(() => _kind = k),
-                  behavior: HitTestBehavior.opaque,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 160),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 13,
-                      vertical: 7,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _kind == k ? theme.pfBrand50 : theme.pfSurface2,
-                      borderRadius: BorderRadius.circular(PfRadii.pill),
-                      border: Border.all(
-                        color: _kind == k ? theme.pfBrand : theme.pfLine,
+        // 类型选择:四类 chip(待办/小记/愿望/年度规划);统一新建流
+        // 已在入口选过类型 → 隐藏(2026-09-15)
+        if (widget.showKindChips)
+          PfFormField(
+            label: '类型',
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final k in JournalKind.values)
+                  GestureDetector(
+                    onTap: () => setState(() => _kind = k),
+                    behavior: HitTestBehavior.opaque,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 13,
+                        vertical: 7,
                       ),
-                    ),
-                    child: Text(
-                      '${k.emoji} ${k.label}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: _kind == k ? theme.pfBrand700 : theme.pfMuted,
+                      decoration: BoxDecoration(
+                        color: _kind == k ? theme.pfBrand50 : theme.pfSurface2,
+                        borderRadius: BorderRadius.circular(PfRadii.pill),
+                        border: Border.all(
+                          color: _kind == k ? theme.pfBrand : theme.pfLine,
+                        ),
+                      ),
+                      child: Text(
+                        '${k.emoji} ${k.label}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: _kind == k ? theme.pfBrand700 : theme.pfMuted,
+                        ),
                       ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
-        ),
         PfFormField(
           label: '标题',
           child: PfSheetTextField(

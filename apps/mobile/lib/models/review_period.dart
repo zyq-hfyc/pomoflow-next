@@ -35,6 +35,18 @@ String _ymd(DateTime d) =>
 /// 日期归一(丢时分秒,只留年月日)。
 DateTime dayOf(DateTime d) => DateTime(d.year, d.month, d.day);
 
+/// ISO 8601 周数(周一为一周起点;含该周周四的年份为周所属年份)。
+/// 月历周复盘行「第 N 周」展示用(2026-09-15 月历改造批)。
+int isoWeekNumber(DateTime d) {
+  final date = dayOf(d);
+  // 本周周四:weekday Mon=1..Sun=7 → 周内偏移 (weekday-1),周四 = +3-偏移
+  final thursday = date.add(Duration(days: 3 - (date.weekday - 1)));
+  final jan1 = DateTime(thursday.year, 1, 1);
+  // 1 月 1 日所在周的周四(即该 ISO 年的第 1 周周四)
+  final firstThursday = jan1.add(Duration(days: 3 - (jan1.weekday - 1)));
+  return 1 + thursday.difference(firstThursday).inDays ~/ 7;
+}
+
 /// 该日期所在周的周一(ISO 周,周一为起点)。
 DateTime mondayOf(DateTime d) =>
     dayOf(d.subtract(Duration(days: d.weekday - 1)));

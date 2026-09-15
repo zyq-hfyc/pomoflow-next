@@ -19,20 +19,34 @@ import 'project_manager_sheet.dart';
 /// 新建/编辑任务 Sheet(§5.5 任务类全字段):标题/项目/优先级/到期日/提醒/
 /// 预计番茄/单番茄时长/重复(含自定义)/标签。传 [editTask] 即编辑模式
 /// (预填 + 保存修改)。到期日/提醒/自定义重复与桌面端 core::Task 语义一致。
+///
+/// [isTodo](2026-09-15 统一新建流):待办形态 —— 隐藏「预计番茄数/单番茄
+/// 时长」两个字段,提交用默认值(1 个 × 25 分钟);标题变「新建待办」。
 void showTaskCreateSheet(
   BuildContext context, {
   PfTask? editTask,
   String? sourceView,
+  bool isTodo = false,
 }) {
   pfSheet(
     context,
-    title: editTask == null ? '新建任务' : '编辑任务',
-    body: (ctx) => _TaskCreateForm(initial: editTask, sourceView: sourceView),
+    title: editTask == null ? (isTodo ? '新建待办' : '新建任务') : '编辑任务',
+    body: (ctx) => TaskCreateForm(
+      initial: editTask,
+      sourceView: sourceView,
+      isTodo: isTodo,
+    ),
   );
 }
 
-class _TaskCreateForm extends StatefulWidget {
-  const _TaskCreateForm({this.initial, this.sourceView});
+/// 任务表单(公开给统一新建流内嵌;独立入口走 [showTaskCreateSheet])。
+class TaskCreateForm extends StatefulWidget {
+  const TaskCreateForm({
+    this.initial,
+    this.sourceView,
+    this.isTodo = false,
+    super.key,
+  });
 
   /// 编辑模式的原任务(null = 新建)。
   final PfTask? initial;
@@ -40,11 +54,14 @@ class _TaskCreateForm extends StatefulWidget {
   /// 新建时所在的任务视图(今天/明天/本周/计划…),决定到期日默认值。
   final String? sourceView;
 
+  /// 待办形态:隐藏番茄两字段。
+  final bool isTodo;
+
   @override
-  State<_TaskCreateForm> createState() => _TaskCreateFormState();
+  State<TaskCreateForm> createState() => _TaskCreateFormState();
 }
 
-class _TaskCreateFormState extends State<_TaskCreateForm> {
+class _TaskCreateFormState extends State<TaskCreateForm> {
   // 7 条规则(对齐桌面 + core Repeat:none/daily/weekdays/weekly/monthly/
   // yearly/custom;custom 的具体配置在 [repeat_config] JSON)。
   static const _repeatOptions = ['不重复', '每天', '工作日', '每周', '每月', '每年', '自定义'];
@@ -151,7 +168,7 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
 
   late int _pomos = widget.initial != null && widget.initial!.estimatedPomos > 0
       ? widget.initial!.estimatedPomos
-      : 1; // 桌面快速添加默认 1(TaskForm estimated>0?estimated:1)
+      : 1; // 桌面快速添加默认 1(TaskForm estimated>0?estimated:1);待办恒 1
   late int _duration =
       widget.initial != null && widget.initial!.pomodoroDuration > 0
       ? widget.initial!.pomodoroDuration
@@ -414,9 +431,9 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
     return Theme(
       data: theme.copyWith(dividerColor: Colors.transparent),
       child: ExpansionTile(
-        title: const Text(
-          '更多设置(7)',
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+        title: Text(
+          widget.isTodo ? '更多设置(5)' : '更多设置(7)',
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
         ),
         tilePadding: EdgeInsets.zero,
         childrenPadding: const EdgeInsets.only(top: 4),
@@ -462,34 +479,37 @@ class _TaskCreateFormState extends State<_TaskCreateForm> {
               onChanged: (v) => setState(() => _reminder = _labelToReminder(v)),
             ),
           ),
-          Row(
-            children: [
-              Expanded(
-                child: PfFormField(
-                  label: '预计番茄数',
-                  child: _StepperField(
-                    value: _pomos,
-                    min: 1,
-                    max: 99, // 桌面详情面板 1..99
-                    onChanged: (v) => setState(() => _pomos = v),
+          // 待办形态隐藏番茄两字段(2026-09-15 统一新建流):提交用
+          // 默认值 1×25,桌面端字段照常显示默认
+          if (!widget.isTodo)
+            Row(
+              children: [
+                Expanded(
+                  child: PfFormField(
+                    label: '预计番茄数',
+                    child: _StepperField(
+                      value: _pomos,
+                      min: 1,
+                      max: 99, // 桌面详情面板 1..99
+                      onChanged: (v) => setState(() => _pomos = v),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: PfFormField(
-                  label: '单番茄时长(分钟)',
-                  child: _StepperField(
-                    value: _duration,
-                    min: 5,
-                    max: 60,
-                    step: 5,
-                    onChanged: (v) => setState(() => _duration = v),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: PfFormField(
+                    label: '单番茄时长(分钟)',
+                    child: _StepperField(
+                      value: _duration,
+                      min: 5,
+                      max: 60,
+                      step: 5,
+                      onChanged: (v) => setState(() => _duration = v),
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
           PfFormField(
             label: '重复',
             child: Column(

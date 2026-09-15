@@ -1189,6 +1189,18 @@ class TaskProvider extends ChangeNotifier {
     }
   }
 
+  /// 区间内有内容的日复盘日期集合(月历日点判定;2026-09-15 月历改造批)。
+  Future<Set<String>> dailyReviewDatesInRange(String start, String end) async {
+    final db = _db;
+    if (db == null) return {};
+    try {
+      return await db.dailyReviewDatesInRange(start, end);
+    } on Exception catch (e) {
+      debugPrint('dailyReviewDatesInRange failed: $e');
+      return {};
+    }
+  }
+
   /// 保存(或更新)某日复盘:按日期 upsert + pending,
   /// 跨端同步 —— 桌面端看得到;此前存 meta.today_review 不同步)。
   Future<void> saveDailyReview(String date, String text) async {

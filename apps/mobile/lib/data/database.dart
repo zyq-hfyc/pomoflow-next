@@ -2172,6 +2172,18 @@ class AppDatabase {
 
   // === daily_reviews + mottos(P1 复盘与座右铭跨端)============================
 
+  /// 区间内有内容的日复盘日期集合(yyyy-mm-dd;含端点;''=删除墓碑不计)。
+  /// 月历日点「当日有复盘」判定用(2026-09-15 月历改造批)。
+  Future<Set<String>> dailyReviewDatesInRange(String start, String end) async {
+    final rows = await _db.query(
+      'daily_reviews',
+      columns: ['date'],
+      where: 'date >= ? AND date <= ? AND deleted_at_ms = 0 AND content != ""',
+      whereArgs: [start, end],
+    );
+    return rows.map((r) => r['date'] as String).toSet();
+  }
+
   /// 某日期的复盘内容(null = 未写)。
   Future<String?> dailyReviewContent(String date) async {
     final rows = await _db.query(

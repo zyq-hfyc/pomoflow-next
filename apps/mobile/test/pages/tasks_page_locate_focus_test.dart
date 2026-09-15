@@ -26,10 +26,7 @@ void main() {
     return ((container.decoration! as BoxDecoration).border! as Border).top;
   }
 
-  Future<NavProvider> pumpTasks(
-    WidgetTester tester,
-    List<PfTask> tasks,
-  ) async {
+  Future<NavProvider> pumpTasks(WidgetTester tester, List<PfTask> tasks) async {
     final provider = TaskProvider.demo();
     final nav = NavProvider();
     for (final t in tasks) {

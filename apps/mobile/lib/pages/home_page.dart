@@ -6,7 +6,7 @@ import 'package:provider/provider.dart';
 import '../providers/nav_provider.dart';
 import '../providers/task_provider.dart';
 import '../services/task_reminder_engine.dart';
-import '../sheets/quick_create_sheet.dart';
+import '../sheets/unified_create_sheet.dart';
 import '../theme/tokens.dart';
 import '../widgets/dock_nav.dart';
 import 'focus_page.dart';
@@ -77,7 +77,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             child: FloatingDock(
               selectedIndex: index,
               onSelect: (i) => context.read<NavProvider>().select(i),
-              onCreate: () => showQuickCreateSheet(context),
+              onCreate: () => showUnifiedCreateSheet(context),
             ),
           ),
         ],

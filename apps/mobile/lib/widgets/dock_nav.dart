@@ -23,11 +23,13 @@ class FloatingDock extends StatelessWidget {
 
   /// 标签键(I6 批:i18n 键,桌面 nav.* 同构);emoji 不可本地化保持原样。
   /// 终稿 D3:第 3 槽「统计」→「手账」(统计并入任务页第二 segment)。
+  /// 「我的」图标(2026-09-15):👤 emoji 在部分设备渲染为蓝色、形似选中,
+  /// 改用主题色 Icon 与其余图标观感统一。
   static const _tabs = [
-    (emoji: '⏱', key: 'nav.timer'),
-    (emoji: '✓', key: 'nav.tasks'),
-    (emoji: '📓', key: 'nav.journal'),
-    (emoji: '👤', key: 'nav.me'),
+    (emoji: '⏱', key: 'nav.timer', icon: null),
+    (emoji: '✓', key: 'nav.tasks', icon: null),
+    (emoji: '📓', key: 'nav.journal', icon: null),
+    (emoji: '', key: 'nav.me', icon: Icons.person_outline),
   ];
 
   @override
@@ -107,13 +109,14 @@ class _DockTab extends StatelessWidget {
     required this.onTap,
   });
 
-  final ({String emoji, String key}) tab;
+  final ({String emoji, String key, IconData? icon}) tab;
   final bool active;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final inactiveColor = theme.pfMuted;
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
@@ -137,7 +140,19 @@ class _DockTab extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(tab.emoji, style: const TextStyle(fontSize: 17, height: 1)),
+              // 图标:emoji 优先;带 icon 的 Tab 用主题色 Icon
+              //(2026-09-15:「我的」👤 emoji 蓝色形似选中,改主题色)。
+              if (tab.icon != null)
+                Icon(
+                  tab.icon,
+                  size: 19,
+                  color: active ? Colors.white : inactiveColor,
+                )
+              else
+                Text(
+                  tab.emoji,
+                  style: const TextStyle(fontSize: 17, height: 1),
+                ),
               const SizedBox(height: 3),
               Text(
                 I18n.t(tab.key),
