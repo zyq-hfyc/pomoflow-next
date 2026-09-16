@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -710,14 +711,15 @@ class _MainMenuCard extends StatelessWidget {
           label: '关于 PomoFlow',
           onTap: () => _pushSlide(context, const _AboutPage()),
         ),
-        // 测试用入口(2026-09-07):清理任务/手账/复盘/累计番茄;
-        // 上线前删除此项 + TaskProvider.clearBusinessData() + AppDatabase.clearBusinessData()。
-        _MenuItem(
-          emoji: '🧪',
-          label: '清理业务数据(测试用)',
-          danger: true,
-          onTap: () => _confirmClearBusinessData(context),
-        ),
+        // 测试用入口(2026-09-07):清理任务/手账/复盘/累计番茄。
+        // 2026-09-16 审计修复:一键清库入口不再随发布包,仅 debug 构建可见。
+        if (kDebugMode)
+          _MenuItem(
+            emoji: '🧪',
+            label: '清理业务数据(测试用)',
+            danger: true,
+            onTap: () => _confirmClearBusinessData(context),
+          ),
       ],
     );
   }

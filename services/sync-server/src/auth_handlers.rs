@@ -29,6 +29,24 @@ fn internal(e: sqlx::Error) -> ApiError {
     (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {e}"))
 }
 
+/// 登录失败限流(2026-09-15 批 6:按 IP 计近 15 分钟失败次数,≥5 次锁出)。
+/// 复用 login_logs 表(已有 ok=false 的失败行),无需新表。
+pub(crate) async fn check_login_rate_limit(app: &AppState, ip: &str) -> Result<(), ApiError> {
+    let cutoff = chrono::Utc::now().timestamp_millis() - 15 * 60 * 1000;
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM login_logs WHERE ip = $1 AND ok = false AND created_ms > $2",
+    )
+    .bind(ip)
+    .bind(cutoff)
+    .fetch_one(&app.pool)
+    .await
+    .unwrap_or(0);
+    if n >= 5 {
+        return Err((StatusCode::TOO_MANY_REQUESTS, "尝试次数过多,请 15 分钟后再试".into()));
+    }
+    Ok(())
+}
+
 /// 登录记录(login_logs):登录/注册的成败各一行。写失败只告警不影响主流程。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn log_login(
@@ -255,6 +273,7 @@ pub async fn login(
     Json(req): Json<Credentials>,
 ) -> Result<Json<AuthTokens>, ApiError> {
     require_jwt(&app)?;
+    check_login_rate_limit(&app, &addr.ip().to_string()).await?;
     let username = req.username.trim().to_string();
     let row: Option<(String, String, String)> =
         sqlx::query_as("SELECT id, username, password_hash FROM users WHERE username = $1")

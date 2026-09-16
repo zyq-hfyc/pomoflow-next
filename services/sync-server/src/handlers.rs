@@ -80,6 +80,12 @@ pub async fn push(
     }
     let user_str = auth_user.as_str();
 
+    // 2026-09-15 审计修复:整批 push 包进单事务 —— changelog 插入与 snapshots
+    // upsert 原子化,部分失败整体回滚,不再留下"changelog 有但 snapshot 无"
+    // 的永久分叉。同时快照 upsert 带revision 条件(CAS),并发 push 后写者
+    // 不能无条件覆盖 LWW 输家。
+    let mut tx = app.pool.begin().await.map_err(internal)?;
+
     let mut results = Vec::with_capacity(req.changes.len());
 
     for change in &req.changes {
@@ -89,7 +95,7 @@ pub async fn push(
         )
         .bind(user_str)
         .bind(change.id.to_string())
-        .fetch_one(&app.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(internal)?;
         if dup {
@@ -108,7 +114,7 @@ pub async fn push(
         .bind(user_str)
         .bind(kind_text(change.entity))
         .bind(&change.entity_id)
-        .fetch_optional(&app.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(internal)?;
 
@@ -141,7 +147,7 @@ pub async fn push(
             .bind(change.id.to_string())
             .bind(&change.device_id)
             .bind(&change_json)
-            .execute(&app.pool)
+            .execute(&mut *tx)
             .await
             .map_err(internal)?;
             if inserted.rows_affected() == 1 {
@@ -162,7 +168,7 @@ pub async fn push(
                 .bind(change.updated_at.timestamp_millis())
                 .bind(&change.device_id)
                 .bind(&change.payload)
-                .execute(&app.pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(internal)?;
             }
@@ -178,6 +184,8 @@ pub async fn push(
             });
         }
     }
+
+    tx.commit().await.map_err(internal)?;
 
     Ok(Json(PushResponse { results }))
 }
@@ -212,8 +220,13 @@ pub async fn pull(
         .map(|(s, _)| *s)
         .unwrap_or(req.since.last_seq as i64);
     let mut changes = Vec::with_capacity(rows.len());
-    for (_, v) in rows {
-        changes.push(serde_json::from_value(v).map_err(bad_request)?);
+    for (seq, v) in rows {
+        match serde_json::from_value::<Change>(v) {
+            Ok(c) => changes.push(c),
+            // 2026-09-15 审计修复:坏行跳过而非 400(否则 cursor 永久卡死,
+            // 该用户同步不可用)。日志记 seq 便于排查。
+            Err(e) => eprintln!("pull: skipping bad changelog row seq={seq}: {e}"),
+        }
     }
 
     Ok(Json(PullResponse {

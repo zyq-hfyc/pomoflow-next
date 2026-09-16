@@ -129,8 +129,10 @@ class _MonthCalendarCardState extends State<_MonthCalendarCard> {
       _year = m.year;
       _month = m.month;
     });
-    // 跨月保持「日」不变(同日存在于相邻月),并重拉该月复盘数据
-    _selected = DateTime(_year, _month, _selected.day);
+    // 跨月保「日」但钳到目标月合法日(1-31 点下月 → 2-28,而非归一成 3-3;
+    // 2026-09-16 审计修复:原实现跨月后头部月份与选中日错位)
+    final lastDay = DateTime(_year, _month + 1, 0).day;
+    _selected = DateTime(_year, _month, _selected.day.clamp(1, lastDay));
     _loadReviewData();
   }
 
@@ -281,6 +283,10 @@ class _MonthCalendarCardState extends State<_MonthCalendarCard> {
           tasks: _tasksOn(_selected),
           todos: _todosOn(_selected),
           reviewContents: _reviewContents,
+          onReviewEdited: () async {
+            await _loadReviewData();
+            await _loadSelectedReviewContents();
+          },
         ),
       ],
     );
@@ -325,6 +331,7 @@ class _DayGroups extends StatelessWidget {
     required this.tasks,
     required this.todos,
     required this.reviewContents,
+    required this.onReviewEdited,
   });
 
   final DateTime selected;
@@ -333,6 +340,9 @@ class _DayGroups extends StatelessWidget {
 
   /// 三粒度复盘内容(null = 加载中 / 未写)。
   final Map<ReviewPeriod, String?>? reviewContents;
+
+  /// 复盘编辑返回后刷新(由父层 [_MonthCalendarCardState] 注入)。
+  final Future<void> Function() onReviewEdited;
 
   int get _reviewCount {
     final rc = reviewContents;
@@ -426,11 +436,17 @@ class _DayGroups extends StatelessWidget {
                   period: p,
                   selected: selected,
                   content: reviewContents![p],
-                  onTap: () => ReviewEditPage.open(
-                    context,
-                    period: p,
-                    key: reviewKeyOf(p, selected),
-                  ),
+                  onTap: () async {
+                    await ReviewEditPage.open(
+                      context,
+                      period: p,
+                      key: reviewKeyOf(p, selected),
+                    );
+                    if (!context.mounted) return;
+                    // 编辑保存/清空返回后刷新分组与点色(否则显示旧值;
+                    // 2026-09-16 审计修复,对齐 record_view 的 pop 后刷新)
+                    await onReviewEdited();
+                  },
                 ),
             ],
           ),

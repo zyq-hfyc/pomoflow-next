@@ -579,7 +579,8 @@ class SyncClient {
         case 'tag':
           return (json['name'] as String?) ?? '';
         case 'motto':
-          return (json['content'] as String?) ?? '';
+          // motto wire 字段是 text(sync_wire.dart),content 恒 null → 标题恒空
+          return (json['text'] as String?) ?? '';
         case 'journal':
           {
             final title = (json['title'] as String?) ?? '';
