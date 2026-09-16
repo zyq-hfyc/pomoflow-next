@@ -60,32 +60,41 @@ class AuthProvider extends ChangeNotifier {
   String? get userId => _userId;
 
   /// 应用启动时恢复登录态 + 设备/用户标识。
+  ///
+  /// 2026-09-16 修:本地存储读完即标记 initialized,profile 网络验证移入
+  /// 后台 —— 此前 `GET /v1/auth/profile` 在服务器不可达时等满 HTTP 超时
+  /// (~30s),UI 停留白屏 spinner。
   Future<void> initialize() async {
-    // 先恢复 device 与 userId(独立于 ApiClient,4 个 auth endpoint 都能拿)
     _deviceId = await _ensureDeviceId();
     _deviceName = await _resolveDeviceName(_deviceId!);
     _userId = await _ensureUserId();
 
     await ApiClient.instance.initialize();
-    if (ApiClient.instance.isConfigured) {
-      // 尝试拉 profile 验证登录态 + 兜底 userId
-      try {
-        final profile = await ApiClient.instance.get('/v1/auth/profile');
-        username = profile['username'] as String?;
-        email = profile['email'] as String?;
-        displayName = profile['display_name'] as String?;
-        // 如果 profile 里有 user_id 字段,覆盖回 secure storage 兜底的真值
-        final pid = profile['user_id'] as String?;
-        if (pid != null && pid.isNotEmpty && pid != _userId) {
-          _userId = pid;
-          await _storage.write(key: storageKeyUserId, value: pid);
-        }
-      } catch (_) {
-        // token 过期且 refresh 失败 → 已在 ApiClient 内清空
-      }
-    }
+
+    // 先标记完成让 UI 立即加载;profile 后台验证不阻塞启动
     initialized = true;
     notifyListeners();
+
+    _fetchProfileInBackground();
+  }
+
+  /// 后台拉 profile:填充用户名/邮箱/头像显示数据,失败静默(不影响功能)。
+  Future<void> _fetchProfileInBackground() async {
+    if (!ApiClient.instance.isConfigured) return;
+    try {
+      final profile = await ApiClient.instance.get('/v1/auth/profile');
+      username = profile['username'] as String?;
+      email = profile['email'] as String?;
+      displayName = profile['display_name'] as String?;
+      final pid = profile['user_id'] as String?;
+      if (pid != null && pid.isNotEmpty && pid != _userId) {
+        _userId = pid;
+        await _storage.write(key: storageKeyUserId, value: pid);
+      }
+      notifyListeners();
+    } catch (_) {
+      // token 过期且 refresh 失败 → 已在 ApiClient 内清空
+    }
   }
 
   /// 首次启动生成 UUID-like 写 secure storage,后续读出复用。与 device_id 同形态。

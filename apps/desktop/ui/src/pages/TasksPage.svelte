@@ -611,6 +611,26 @@
         onReviewChange={() => (reviewVersion += 1)}
         onTasksChange={() => void refresh()}
       />
+      <!-- 手账模式:待办分组(来自 journalsStore;2026-09-16 三.2) -->
+      {#if js.journals.filter((j) => j.kind === "todo").length > 0}
+        <div class="journal-todos" style="padding: 0 30px;">
+          <div class="journal-todos-title">{t.notes.kindTodo}({js.journals.filter((j) => j.kind === "todo").length})</div>
+          {#each js.journals.filter((j) => j.kind === "todo") as j (j.id)}
+            <div class="journal-todo-row" class:done={j.status === "completed"}>
+              <button
+                type="button"
+                class="journal-todo-check"
+                class:checked={j.status === "completed"}
+                onclick={() => void toggleJournalTodo(j.id)}
+                aria-label={j.status === "completed" ? '取消完成' : '标记完成'}
+              >
+                {#if j.status === "completed"}✓{/if}
+              </button>
+              <span class="journal-todo-title" class:strike={j.status === "completed"}>{j.title || j.content}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
     {:else if filter === "notes"}
       <NotesView
         journals={js.journals}
@@ -903,5 +923,49 @@
     color: inherit;
     font-size: 1.1rem;
     cursor: pointer;
+  }
+
+  /* 手账模式待办分组(2026-09-16 三.2) */
+  .journal-todos {
+    margin-top: 1rem;
+  }
+  .journal-todos-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--color-text, #1f1d1b);
+    margin-bottom: 0.5rem;
+  }
+  .journal-todo-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0;
+  }
+  .journal-todo-check {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    border: 1.5px solid var(--color-border, #e5e2dd);
+    border-radius: 2px;
+    background: transparent;
+    color: #fff;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .journal-todo-check.checked {
+    background: var(--color-accent, #e74c3c);
+    border-color: var(--color-accent, #e74c3c);
+  }
+  .journal-todo-title {
+    font-size: 0.85rem;
+    color: var(--color-text, #1f1d1b);
+  }
+  .journal-todo-title.strike {
+    text-decoration: line-through;
+    color: var(--color-text-muted, #6b6864);
   }
 </style>
