@@ -40,7 +40,7 @@ Future<SettingsProvider> _safeSettings() async {
   } on Exception catch (e) {
     // ignore: avoid_print
     print('SettingsProvider.load failed, using defaults: $e');
-    return SettingsProvider(); // 二次失败用默认构造(全默认值,不抛)
+    return SettingsProvider.defaults(); // 二次失败用全默认值实例
   }
 }
 

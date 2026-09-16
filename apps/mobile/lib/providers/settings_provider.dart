@@ -84,6 +84,21 @@ class SettingsProvider extends ChangeNotifier {
   String focusEndSound; // 任务结束铃音,默认 ding_clear
   String breakEndSound; // 休息结束铃音,默认 ding_soft
 
+  /// 全默认值实例(2026-09-16:启动兜底用,SharedPreferences 不可用时降级)。
+  factory SettingsProvider.defaults() {
+    return SettingsProvider._(
+      focusMinutes: 25,
+      shortBreakMinutes: 5,
+      longBreakMinutes: 15,
+      longBreakInterval: 4,
+      autoStartNextPomodoro: false,
+      autoStartBreak: false,
+      disableBreak: false,
+      focusEndSound: 'ding_clear',
+      breakEndSound: 'ding_soft',
+    );
+  }
+
   static Future<SettingsProvider> load() async {
     final prefs = await SharedPreferences.getInstance();
     return SettingsProvider._(
