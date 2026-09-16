@@ -314,6 +314,7 @@ export const zh = {
       entityTaskTag: '任务标签',
       conflictLost: '我方输',
       conflictOverrode: '被覆盖',
+      conflictUntitled: '(无标题)',
       conflictHint: '最近有 {n} 条冲突/覆盖记录',
       noConflicts: '近期没有冲突。多设备同步时,同一字段被两端同时修改才会触发覆盖。',
     },

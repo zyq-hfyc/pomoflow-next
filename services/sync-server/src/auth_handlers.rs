@@ -42,7 +42,10 @@ pub(crate) async fn check_login_rate_limit(app: &AppState, ip: &str) -> Result<(
     .await
     .unwrap_or(0);
     if n >= 5 {
-        return Err((StatusCode::TOO_MANY_REQUESTS, "尝试次数过多,请 15 分钟后再试".into()));
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "尝试次数过多,请 15 分钟后再试".into(),
+        ));
     }
     Ok(())
 }

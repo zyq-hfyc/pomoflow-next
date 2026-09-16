@@ -124,7 +124,7 @@
               {c.direction === "lost" ? t.settings.sync.conflictLost : t.settings.sync.conflictOverrode}
             </span>
             <span class="conflict-entity">{entityLabel(c.entity)}</span>
-            <span class="conflict-title">{c.entity_title || "(无标题)"}</span>
+            <span class="conflict-title">{c.entity_title || t.settings.sync.conflictUntitled}</span>
             <span class="conflict-device">{shortDevice(c.remote_device)}</span>
             <span class="conflict-time">{fmtTime(c.occurred_at_ms)}</span>
           </li>

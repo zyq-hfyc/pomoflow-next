@@ -21,6 +21,15 @@ export function journalsState() {
   return state;
 }
 
+/** 登出/换账号时清空(2026-09-15 M4:否则先渲染上一账号的随手记)。 */
+export function resetJournals(): void {
+  state.journals = [];
+  state.loading = true;
+  state.error = null;
+  state.selected = null;
+  state.creating = false;
+}
+
 export async function refreshJournals(): Promise<void> {
   try {
     state.journals = await api.listJournals();

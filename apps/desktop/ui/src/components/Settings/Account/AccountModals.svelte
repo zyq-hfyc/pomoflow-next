@@ -17,6 +17,7 @@
     type AccountProfile,
   } from "../../../lib/api";
   import { getDict, fmt } from "../../../lib/i18n.svelte";
+  import { untrack } from "svelte";
   import { createCooldown } from "./cooldown.svelte";
   import AccountModal from "./AccountModal.svelte";
   import StrengthBar from "./StrengthBar.svelte";
@@ -28,11 +29,14 @@
     profile,
     onClose,
     onNotice,
+    onSaved,
   }: {
     modal: null | "nickname" | "username" | "email" | "password" | "bio" | "deletion" | "cancelDeletion";
     profile: AccountProfile | null;
     /** 成功提示(父层页面横幅显示) */
     onNotice: (msg: string) => void;
+    /** 保存成功后刷新父层资料(2026-09-16 修复:拆分时遗漏导致页面显示旧值) */
+    onSaved: () => void | Promise<void>;
     onClose: () => void;
   } = $props();
 
@@ -53,16 +57,26 @@
   let mConfirmText = $state("");
   let mAgreed = $state(false);
 
-  // 打开时按用途预填(原 openModal 逻辑;error 一并清空)
+  // 打开时按用途预填(原 openModal 逻辑;error 一并清空)。
+  // 依赖只取 modal;profile 用 untrack 读 —— 保存后父层 reloadProfile
+  // 刷新资料时,打开中的表单不被清空(2026-09-16 M3)。
+  let prefilledFor: typeof modal = null;
   $effect(() => {
-    if (!modal) return;
-    mNick = profile?.display_name ?? "";
-    mUser = profile?.username ?? "";
-    mPass = mNewPass = mNewPass2 = mEmail = mCode = "";
-    mBio = profile?.bio ?? "";
-    mConfirmText = "";
-    mAgreed = false;
-    error = null;
+    if (modal === null) {
+      prefilledFor = null;
+      return;
+    }
+    if (prefilledFor === modal) return;
+    prefilledFor = modal;
+    untrack(() => {
+      mNick = profile?.display_name ?? "";
+      mUser = profile?.username ?? "";
+      mPass = mNewPass = mNewPass2 = mEmail = mCode = "";
+      mBio = profile?.bio ?? "";
+      mConfirmText = "";
+      mAgreed = false;
+      error = null;
+    });
   });
 
   async function saveNickname() {
@@ -72,6 +86,7 @@
     try {
       await authUpdateProfile(mNick, null);
       onClose();
+      void onSaved();
     } catch (e) {
       error = String(e);
     } finally {
@@ -86,6 +101,7 @@
     try {
       await authUpdateProfile(null, mBio);
       onClose();
+      void onSaved();
     } catch (e) {
       error = String(e);
     } finally {
@@ -152,6 +168,7 @@
     try {
       await authUpdateUsername(mUser.trim(), mPass);
       onClose();
+      void onSaved();
       onNotice(t.settings.account.usernameChanged);
     } catch (e) {
       error = String(e);
@@ -167,6 +184,7 @@
     try {
       await authBindEmail(mEmail.trim(), mCode.trim(), mPass);
       onClose();
+      void onSaved();
     } catch (e) {
       error = String(e);
     } finally {

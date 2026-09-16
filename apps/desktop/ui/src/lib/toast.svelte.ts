@@ -29,7 +29,3 @@ export function toast(): ToastItem[] {
 export function toastError(message: string): void {
   push(message, "error");
 }
-
-export function toastInfo(message: string): void {
-  push(message, "info");
-}

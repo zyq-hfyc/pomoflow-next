@@ -25,6 +25,7 @@
     setAccountUser,
     refreshAvatar,
   } from "../lib/accountState.svelte";
+  import { resetJournals } from "../lib/journalsStore.svelte";
   import AuthCard from "../components/Settings/Account/AuthCard.svelte";
   import AccountCenter from "../components/Settings/Account/AccountCenter.svelte";
 
@@ -92,6 +93,7 @@
       await authLogout();
       setAccountUser(null);
       profile = null;
+      resetJournals(); // M4:清随手记缓存,防换账号先渲染上一账号数据
     } finally {
       loggingOut = false;
     }

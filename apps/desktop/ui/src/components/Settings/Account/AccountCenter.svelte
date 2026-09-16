@@ -18,6 +18,7 @@
     type AccountProfile,
   } from "../../../lib/api";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { onMount } from "svelte";
   import AccountModals from "./AccountModals.svelte";
   import { accountState, refreshAvatar } from "../../../lib/accountState.svelte";
   import AccountDevicesSection from "./AccountDevicesSection.svelte";
@@ -53,6 +54,13 @@
     modal = kind; // 表单预填与错误清理在 AccountModals 内部完成
   }
 
+  // 切段即清横幅(L4:成功/错误提示不再跨段驻留)
+  $effect(() => {
+    void section;
+    notice = "";
+    error = null;
+  });
+
   const deletionEffective = $derived.by(() => {
     if (!profile?.deletion_requested_ms) return "";
     const d = new Date(profile.deletion_requested_ms + 15 * 86_400_000);
@@ -66,8 +74,7 @@
     });
   });
 
-  // 头像随共享状态;设备区进入时拉会话(prop section 响应式)
-  $effect(() => {
+  onMount(() => {
     void loadAvatar();
   });
 
@@ -386,6 +393,7 @@
   {modal}
   {profile}
   onClose={() => (modal = null)}
+  onSaved={reloadProfile}
   onNotice={(msg) => (notice = msg)}
 />
 <style>
@@ -542,11 +550,6 @@
     flex-shrink: 0;
   }
   .avatar-img,
-  :global(.av-img) {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
   .avatar-side {
     display: flex;
     flex-direction: column;
@@ -633,59 +636,5 @@
   }
 
   /* 弹窗内表单(AccountModal slot 内容) */
-  :global(.modal-input) {
-    width: 100%;
-    padding: 10px 12px;
-    font-size: 13px;
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    outline: none;
-    margin-bottom: 12px;
-    background: var(--color-surface);
-    color: var(--color-text);
-    font-family: inherit;
-  }
-  :global(.modal-input:focus) {
-    border-color: var(--color-accent-400);
-  }
-  :global(.code-row-m) {
-    display: flex;
-    gap: 8px;
-  }
-  :global(.code-row-m .modal-input) {
-    flex: 1;
-  }
-  :global(.code-m) {
-    text-align: center;
-    letter-spacing: 0.15em;
-  }
-  :global(.ac-modal-btns) {
-    display: flex;
-    gap: 8px;
-    margin-top: 8px;
-  }
-  :global(.ac-modal-btns button) {
-    flex: 1;
-    padding: 10px;
-    font-size: 13px;
-    font-weight: 500;
-    border-radius: 8px;
-    cursor: pointer;
-    font-family: inherit;
-  }
-  :global(.ac-modal-btns .cancel) {
-    background: transparent;
-    border: 1px solid var(--color-border);
-    color: var(--color-text);
-  }
-  :global(.ac-modal-btns .confirm) {
-    background: var(--color-accent-500);
-    border: none;
-    color: #fff;
-  }
-  :global(.ac-modal-btns .confirm:disabled) {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
 
 </style>

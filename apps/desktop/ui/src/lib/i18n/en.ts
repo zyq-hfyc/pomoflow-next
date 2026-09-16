@@ -307,6 +307,7 @@ export const en: Dict = {
       entityTaskTag: 'Task tags',
       conflictLost: 'Lost',
       conflictOverrode: 'Overridden',
+      conflictUntitled: '(untitled)',
       conflictHint: '{n} recent conflict(s) / override(s)',
       noConflicts: 'No recent conflicts. Conflicts only occur when the same field is edited on multiple devices.',
     },

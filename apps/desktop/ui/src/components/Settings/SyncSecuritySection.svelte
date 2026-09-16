@@ -94,16 +94,16 @@
   <div class="group-body">
     <div class="form-row">
       <span class="row-label">{t.settings.sync.oldPass}</span>
-      <input class="input" type="password" bind:value={oldPass} autocomplete="current-password" />
+      <input class="input" type="password" bind:value={oldPass} autocomplete="current-password" aria-label={t.settings.sync.oldPass} />
     </div>
     <div class="form-row">
       <span class="row-label">{t.settings.sync.newPass}</span>
-      <input class="input" type="password" bind:value={newPass} autocomplete="new-password" />
+      <input class="input" type="password" bind:value={newPass} autocomplete="new-password" aria-label={t.settings.sync.newPass} />
     </div>
     <div class="form-row">
       <span class="row-label">{t.settings.sync.newPass2}</span>
       <div class="actions">
-        <input class="input" type="password" bind:value={newPass2} autocomplete="new-password" />
+        <input class="input" type="password" bind:value={newPass2} autocomplete="new-password" aria-label={t.settings.sync.newPass2} />
         <button
           type="button"
           class="action"

@@ -18,7 +18,7 @@
     position: fixed;
     right: 1rem;
     bottom: 1rem;
-    z-index: 1000;
+    z-index: 1200;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -36,6 +36,6 @@
     word-break: break-word;
   }
   .toast.error {
-    background: var(--color-accent, #e74c3c);
+    background: var(--color-error, #dc2626);
   }
 </style>

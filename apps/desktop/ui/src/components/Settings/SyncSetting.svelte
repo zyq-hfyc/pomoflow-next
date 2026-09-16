@@ -213,7 +213,7 @@
       <div class="form-row">
         <span class="row-label">{t.settings.sync.autoEnable}</span>
         <label class="switch">
-          <input type="checkbox" bind:checked={autoSync} />
+          <input type="checkbox" bind:checked={autoSync} aria-label={t.settings.sync.autoEnable} />
           <span class="track" aria-hidden="true"></span>
         </label>
       </div>
