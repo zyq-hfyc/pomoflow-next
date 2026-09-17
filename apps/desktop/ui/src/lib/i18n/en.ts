@@ -314,7 +314,7 @@ export const en: Dict = {
     trash: {
       title: 'Trash',
       section: 'Deleted Tasks',
-      count: 'Total N',
+      count: 'Deleted tasks',
       countFmt: '{n} deleted task(s) currently',
       refresh: 'Refresh',
       empty: 'Trash is empty. Deleted tasks will appear here.',

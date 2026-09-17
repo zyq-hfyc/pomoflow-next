@@ -104,7 +104,7 @@
     <h3 class="group-title">{t.settings.trash.section}</h3>
     <div class="group-body">
       <div class="form-row">
-        <span class="row-label">{t.settings.trash.count}</span>
+        <span class="row-label">{fmt(t.settings.trash.countFmt, { n: rows.length })}</span>
         <div class="actions">
           <button
             type="button"

@@ -251,28 +251,39 @@ class _MonthCalendarCardState extends State<_MonthCalendarCard> {
                 ],
               ),
               const SizedBox(height: 4),
-              // 42 日格(跨月灰显;今日橙底;选中日品牌描边;点色灰/绿/红)
-              GridView.count(
-                crossAxisCount: 7,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                mainAxisSpacing: 3,
-                crossAxisSpacing: 3,
-                childAspectRatio: 1.38,
-                children: [
-                  for (var i = 0; i < 42; i++)
-                    _DayCell(
-                      day: gridStart.add(Duration(days: i)),
-                      inMonth: gridStart.add(Duration(days: i)).month == _month,
-                      isToday: _sameDay(gridStart.add(Duration(days: i)), now),
-                      isSelected: _sameDay(
-                        gridStart.add(Duration(days: i)),
-                        _selected,
-                      ),
-                      status: _dotFor(gridStart.add(Duration(days: i))),
-                      onTap: () => _selectDay(gridStart.add(Duration(days: i))),
-                    ),
-                ],
+              // 42 日格(LayoutBuilder 自适应宽高比,防小屏纵向溢出)
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final cellW = (constraints.maxWidth - 6 * 3) / 7;
+                  final cellH = (cellW / 1.38).clamp(28.0, 56.0);
+                  return GridView.count(
+                    crossAxisCount: 7,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    mainAxisSpacing: 3,
+                    crossAxisSpacing: 3,
+                    childAspectRatio: cellW / cellH,
+                    children: [
+                      for (var i = 0; i < 42; i++)
+                        _DayCell(
+                          day: gridStart.add(Duration(days: i)),
+                          inMonth:
+                              gridStart.add(Duration(days: i)).month == _month,
+                          isToday: _sameDay(
+                            gridStart.add(Duration(days: i)),
+                            now,
+                          ),
+                          isSelected: _sameDay(
+                            gridStart.add(Duration(days: i)),
+                            _selected,
+                          ),
+                          status: _dotFor(gridStart.add(Duration(days: i))),
+                          onTap: () =>
+                              _selectDay(gridStart.add(Duration(days: i))),
+                        ),
+                    ],
+                  );
+                },
               ),
             ],
           ),

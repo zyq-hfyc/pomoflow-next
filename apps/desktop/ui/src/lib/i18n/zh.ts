@@ -321,7 +321,7 @@ export const zh = {
     trash: {
       title: '垃圾箱',
       section: '已删除任务',
-      count: '共 N 条',
+      count: '已删除任务',
       countFmt: '当前共 {n} 条已删除任务',
       refresh: '刷新',
       empty: '垃圾箱是空的。删除任务后会自动进入此处。',

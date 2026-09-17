@@ -25,6 +25,7 @@
   import { initSyncListener } from "./lib/syncState.svelte";
   import SyncIndicator from "./components/ui/SyncIndicator.svelte";
   import ToastHost from "./components/ToastHost.svelte";
+  import { initZoom } from "./lib/zoom";
   import { getDict } from "./lib/i18n.svelte";
   import {
     getTimerState,
@@ -62,6 +63,7 @@
     // 顶部导航登录态(登录后品牌位换头像)+ 同步状态指示器
     void loadAccountState();
     initSyncListener();
+    initZoom();
     // 回前台立即校准剩余时间(v1 visibilitychange;后台/睡眠不漂移)
     void refreshNotificationTemplate();
     document.addEventListener("visibilitychange", () => {

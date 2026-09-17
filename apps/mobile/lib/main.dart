@@ -126,6 +126,11 @@ class PomoFlowApp extends StatelessWidget {
               return MaterialApp(
                 title: 'PomoFlow',
                 debugShowCheckedModeBanner: false,
+                // 系统大字体钳制(2026-09-16 审计:maxScaleFactor 1.3 防爆版)
+                builder: (context, child) => MediaQuery.withClampedTextScaling(
+                  maxScaleFactor: 1.3,
+                  child: child!,
+                ),
                 // 语言切换(I6 批):跟随 LanguageProvider,内建控件本地化
                 // 已随 supportedLocales 备好;App 自身文案由 I18n.t() 消费。
                 locale: Locale(lang),

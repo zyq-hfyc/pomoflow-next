@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mv src/lib/zoom.svelte.ts src/lib/zoom.ts)",
+      "Bash(sed -i 's|import { initZoom } from \"./lib/zoom.svelte\";|import { initZoom } from \"./lib/zoom\";|' src/App.svelte)",
+      "Bash(npx vitest *)",
+      "Bash(flutter analyze *)",
+      "Bash(flutter test *)",
+      "Bash(dart format *)"
+    ]
+  }
+}
