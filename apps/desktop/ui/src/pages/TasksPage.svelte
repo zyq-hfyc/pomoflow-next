@@ -112,6 +112,9 @@
   let plannedFilterPriority = $state<Priority | null>(null);
   let plannedFilterPreset = $state<"week" | "month" | null>(null);
   let plannedFilterRepeat = $state(false);
+  // 未完成开关(2026-09-30):true = 已计划视图隐藏已完成。completed 视图
+  // 全是已完成,开关必然筛空,不设此 state(FilterBar 不传 setter 即不渲染)
+  let plannedFilterIncomplete = $state(false);
   let plannedFilterStartDate = $state("");
   let plannedFilterEndDate = $state("");
 
@@ -161,6 +164,7 @@
         priority: plannedFilterPriority,
         preset: plannedFilterPreset,
         repeatOnly: plannedFilterRepeat,
+        incompleteOnly: plannedFilterIncomplete,
         startDate: plannedFilterStartDate,
         endDate: plannedFilterEndDate,
       });
@@ -202,6 +206,8 @@
       preset: "week" | "month" | null;
       // 重复任务开关(2026-09-11):true = 只看重复模板,口径与「重复」视图一致
       repeatOnly: boolean;
+      // 未完成开关(2026-09-30):true = 隐藏已完成、只看 active;仅 planned 传入
+      incompleteOnly?: boolean;
       startDate: string;
       endDate: string;
     },
@@ -215,6 +221,7 @@
         (t) => !!t.repeat && t.repeat !== "none" && !t.repeat_parent_id,
       );
     }
+    if (f.incompleteOnly) r = r.filter((t) => t.status !== "completed");
     if (f.preset === "week") {
       const now = new Date();
       // 本周窗口(单一来源 lib/weekMonth);本地日期串比较,不能用
@@ -741,6 +748,8 @@
             setFilterPreset={(v) => (plannedFilterPreset = v)}
             filterRepeat={plannedFilterRepeat}
             setFilterRepeat={(v) => (plannedFilterRepeat = v)}
+            filterIncomplete={plannedFilterIncomplete}
+            setFilterIncomplete={(v) => (plannedFilterIncomplete = v)}
             filterStartDate={plannedFilterStartDate}
             setFilterStartDate={(v) => (plannedFilterStartDate = v)}
             filterEndDate={plannedFilterEndDate}

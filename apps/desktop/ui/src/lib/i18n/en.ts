@@ -63,6 +63,7 @@ export const en: Dict = {
     priority: 'Priority',
     repeat: 'Repeating Items',
     repeatTasks: 'Repeating tasks',
+    incomplete: 'Incomplete',
     date: 'Date',
     all: 'All',
     allProject: 'All projects',

@@ -1,11 +1,13 @@
 <script lang="ts">
   // 多维筛选条 —— v1 同款 7 个筛选维度：项目 / 标签 / 优先级 / 本周 / 本月 /
-  // 重复任务 / 日期范围。
+  // 重复任务 / 日期范围;另有 v2 新增「未完成」开关(仅「已计划」视图)。
   //
   // 设计要点：
   //   - 已完成 / 已计划 视图各传入独立 state（切视图互不影响）。
   //   - 「重复任务」开关：只看重复模板（带规则且非实例），口径与「重复」
   //     视图一致；与其余筛选独立 AND（可与本周/本月/日期范围叠加）。
+  //   - 「未完成」开关：只看 active、隐藏已完成;仅「已计划」视图传入
+  //     (「已完成」视图必然筛空),不传 setter 就不渲染,条件模式同 onExport。
   //   - 任何筛选有值 → 显示"清除"按钮。
   //   - 仅在 onExport 传入时显示"导出"按钮（用于"已计划"视图）。
   //   - 受控组件：父组件持有全部 state；本组件只暴露 setter。
@@ -33,6 +35,11 @@
     // 重复任务开关（2026-09-11）：true = 只看重复模板
     filterRepeat: boolean;
     setFilterRepeat: (v: boolean) => void;
+    // 未完成开关（2026-09-30,v2 新增,v1 无此维度）：true = 隐藏已完成、
+    // 只看 active。仅「已计划」视图传入 —— 「已完成」视图全是 completed,
+    // 开关必然筛空,无意义;不传就不渲染(与 onExport 同款条件模式)。
+    filterIncomplete?: boolean;
+    setFilterIncomplete?: (v: boolean) => void;
     filterStartDate: string;
     setFilterStartDate: (v: string) => void;
     filterEndDate: string;
@@ -53,6 +60,8 @@
     setFilterPreset,
     filterRepeat,
     setFilterRepeat,
+    filterIncomplete,
+    setFilterIncomplete,
     filterStartDate,
     setFilterStartDate,
     filterEndDate,
@@ -66,6 +75,7 @@
       filterPriority !== null ||
       filterPreset !== null ||
       filterRepeat ||
+      filterIncomplete ||
       filterStartDate !== "" ||
       filterEndDate !== "",
   );
@@ -76,6 +86,7 @@
     setFilterPriority(null);
     setFilterPreset(null);
     setFilterRepeat(false);
+    setFilterIncomplete?.(false);
     setFilterStartDate("");
     setFilterEndDate("");
   }
@@ -189,6 +200,18 @@
       class="date"
       aria-label={t.filter.endDate}
     />
+
+    {#if setFilterIncomplete}
+      <button
+        type="button"
+        class="preset-btn"
+        class:on={filterIncomplete}
+        onclick={() => setFilterIncomplete?.(!filterIncomplete)}
+        title={t.filter.incomplete}
+      >
+        {t.filter.incomplete}
+      </button>
+    {/if}
 
     {#if onExport}
       <button
