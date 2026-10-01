@@ -132,4 +132,90 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('工作日复盘'), findsOneWidget);
   });
+
+  /// 「重复任务」「未完成」筛选开关回归锁(2026-10-01,桌面 FilterBar
+  /// 同口径补齐):
+  /// - 重复任务 chip:计划/已完成两视图渲染,只看模板(isRepeatTemplate);
+  /// - 未完成 chip:仅「计划」视图渲染(已完成视图必然筛空,不渲染),
+  ///   开启后已完成任务被滤;
+  /// - 与其余筛选独立 AND;「✕ 清除」一并复位。
+  testWidgets('重复任务/未完成筛选开关:口径 + 视图门控 + 清除', (tester) async {
+    final provider = TaskProvider.demo();
+    final nav = NavProvider();
+    // 清空 demo 种子,精准播种 4 条(全部可见,免滚动断言):
+    // 活跃普通 / 已完成普通 / 活跃模板 / 活跃实例。
+    for (final t in List.of(provider.tasks)) {
+      await provider.deleteTask(t.id);
+    }
+    await provider.addTask(PfTask(id: 'a1', title: '活跃普通任务'));
+    await provider.addTask(PfTask(id: 'd1', title: '已完成普通任务'));
+    await provider.toggleDone('d1');
+    await provider.addTask(
+      PfTask(id: 'tpl-1', title: '每周复盘模板', repeat: 'weekly'),
+    );
+    await provider.addTask(
+      PfTask(id: 'inst-1', title: '每周复盘实例', repeatParentId: 'tpl-1'),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<TaskProvider>.value(value: provider),
+          ChangeNotifierProvider<NavProvider>.value(value: nav),
+        ],
+        child: MaterialApp(theme: buildAppTheme(), home: const TasksPage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 切「计划」→ 4 条全在;两个开关 chip 都渲染。
+    await tester.tap(find.text('计划'));
+    await tester.pumpAndSettle();
+    for (final title in ['活跃普通任务', '已完成普通任务', '每周复盘模板', '每周复盘实例']) {
+      expect(find.text(title), findsOneWidget, reason: '$title 应在计划视图');
+    }
+    expect(find.text('🔁 重复任务'), findsOneWidget);
+    expect(find.text('☐ 未完成'), findsOneWidget);
+
+    // ① 未完成:已完成被滤,其余 3 条保留;清除 chip 出现。
+    await tester.tap(find.text('☐ 未完成'));
+    await tester.pumpAndSettle();
+    expect(find.text('已完成普通任务'), findsNothing);
+    expect(find.text('活跃普通任务'), findsOneWidget);
+    expect(find.text('✕ 清除'), findsOneWidget);
+
+    // ② 叠加 重复任务(AND):只剩活跃模板。
+    await tester.tap(find.text('🔁 重复任务'));
+    await tester.pumpAndSettle();
+    expect(find.text('每周复盘模板'), findsOneWidget);
+    expect(find.text('活跃普通任务'), findsNothing);
+    expect(find.text('每周复盘实例'), findsNothing);
+
+    // ③ 清除:两个开关一并复位,4 条全回来。
+    await tester.tap(find.text('✕ 清除'));
+    await tester.pumpAndSettle();
+    for (final title in ['活跃普通任务', '已完成普通任务', '每周复盘模板', '每周复盘实例']) {
+      expect(find.text(title), findsOneWidget, reason: '$title 清除后应恢复');
+    }
+
+    // ④ 重复任务 state 在切视图后保留(计划重开仍生效)。
+    await tester.tap(find.text('🔁 重复任务'));
+    await tester.pumpAndSettle();
+
+    // ⑤「已完成」视图:重复任务 chip 仍渲染(桌面两视图都有),
+    // 未完成 chip 不渲染;重复任务过滤在已完成视图同样生效
+    // (种子无已完成模板 → 空列表)。
+    await tester.tap(find.text('已完成').first);
+    await tester.pumpAndSettle();
+    expect(find.text('🔁 重复任务'), findsOneWidget);
+    expect(find.text('☐ 未完成'), findsNothing);
+    expect(find.text('已完成普通任务'), findsNothing);
+
+    // 切回「计划」→ 重复任务开关仍在,只剩模板(未完成未开,实例被滤
+    // 是重复任务口径;已完成普通任务被重复任务口径滤掉)。
+    await tester.tap(find.text('计划'));
+    await tester.pumpAndSettle();
+    expect(find.text('每周复盘模板'), findsOneWidget);
+    expect(find.text('活跃普通任务'), findsNothing);
+  });
 }

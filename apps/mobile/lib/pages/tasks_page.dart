@@ -86,6 +86,15 @@ class _TasksPageState extends State<TasksPage> {
   DateTime? _dateFrom; // 自定义起(null = 不限)
   DateTime? _dateTo; // 自定义止(null = 不限)
 
+  // 重复任务/未完成开关(2026-10-01,桌面 FilterBar 同口径补齐):
+  // - 重复任务 = 只看重复模板(isRepeatTemplate,与「重复」视图一致),
+  //   计划/已完成视图都渲染(桌面两视图都有此按钮);
+  // - 未完成 = 隐藏已完成、只看 active,仅「计划」视图渲染 —— 「已完成」
+  //   视图开启必然筛空,无意义(桌面同款:不传 setter 即不渲染)。
+  // 与其余筛选独立 AND;切视图 state 保留,但只在对应视图生效。
+  bool _filterRepeat = false;
+  bool _filterIncomplete = false;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -250,7 +259,8 @@ class _TasksPageState extends State<TasksPage> {
           ),
         ),
         // 项目/优先级/标签三筛选;日期筛选(桌面 FilterBar 同款,
-        // 仅 计划/已完成):本周/本月预设切换 + 自定义起止 + 清除。
+        // 仅 计划/已完成):本周/本月预设切换 + 自定义起止 + 重复任务 +
+        // 未完成(仅计划)+ 清除。
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -297,9 +307,24 @@ class _TasksPageState extends State<TasksPage> {
                     active: _dateFrom != null || _dateTo != null,
                     onTap: _pickDateRange,
                   ),
+                  _FilterChip(
+                    label: '🔁 重复任务',
+                    active: _filterRepeat,
+                    onTap: () => setState(() => _filterRepeat = !_filterRepeat),
+                  ),
+                  if (_view == '计划')
+                    _FilterChip(
+                      label: '☐ 未完成',
+                      active: _filterIncomplete,
+                      onTap: () => setState(
+                        () => _filterIncomplete = !_filterIncomplete,
+                      ),
+                    ),
                   if (_presetFilter != null ||
                       _dateFrom != null ||
-                      _dateTo != null)
+                      _dateTo != null ||
+                      _filterRepeat ||
+                      (_view == '计划' && _filterIncomplete))
                     _FilterChip(
                       label: '✕ 清除',
                       active: true,
@@ -307,6 +332,8 @@ class _TasksPageState extends State<TasksPage> {
                         _presetFilter = null;
                         _dateFrom = null;
                         _dateTo = null;
+                        _filterRepeat = false;
+                        _filterIncomplete = false;
                       }),
                     ),
                 ],
@@ -342,18 +369,25 @@ class _TasksPageState extends State<TasksPage> {
     );
   }
 
-  /// 视图任务 → 搜索(标题/项目/标签模糊)+ 三筛选叠加。
+  /// 视图任务 → 搜索(标题/项目/标签模糊)+ 五筛选叠加(项目/优先级/
+  /// 标签/日期/重复任务/未完成,桌面 applyExtraFilters 同款独立 AND)。
   List<PfTask> _applyFilters(List<PfTask> src) {
     final q = _query.trim().toLowerCase();
     final dateFilterOn = _view == '计划' || _view == '已完成';
     final presetActive = dateFilterOn && _presetFilter != null;
     final rangeActive = dateFilterOn && (_dateFrom != null || _dateTo != null);
+    // 重复任务:计划/已完成两视图生效;未完成:仅计划视图生效(state
+    // 切视图保留但不渲染不生效,与桌面「已完成不传 setter」同语义)。
+    final repeatActive = dateFilterOn && _filterRepeat;
+    final incompleteActive = _view == '计划' && _filterIncomplete;
     return src.where((t) {
       if (_filterProject != null && t.project != _filterProject) return false;
       if (_filterPriority != null && t.priority != _filterPriority) {
         return false;
       }
       if (_filterTag != null && !t.tags.contains(_filterTag)) return false;
+      if (repeatActive && !t.isRepeatTemplate) return false;
+      if (incompleteActive && t.completed) return false;
       // 预设窗口 + 自定义起止(桌面 applyExtraFilters 同款:各条件独立 AND;
       // 任一日期条件激活时,无到期日任务被排除)。
       if (presetActive || rangeActive) {
