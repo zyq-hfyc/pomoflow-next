@@ -665,6 +665,8 @@ export const en: Dict = {
           { text: 'Lists (projects) support nesting (up to 3 levels) and custom colors. Tags support many-to-many with 12 preset colors.' },
           { text: 'Subtasks (checklist): each task can have multiple subtasks, each toggleable independently.' },
           { text: 'Click a task to open the right detail panel and edit title, due date, priority, reminder, repeat, tags, subtasks, and notes.' },
+          { text: 'Each task card has a square checkbox on the left — click it to toggle completion (the ✓ appears or disappears).' },
+          { text: 'The “Repeat” view lists all repeat templates; Journal mode shows both due tasks and journal todos.' },
         ],
       },
       reminder: {
@@ -695,6 +697,7 @@ export const en: Dict = {
           { text: 'Each week has a weekly-review box at the bottom. The right panel shows the month’s weekly reviews (read-only) + a monthly review (editable) + a yearly review (editable).' },
           { text: 'Supports previous/next month and year/month dropdowns.' },
           { text: 'The “daily review” on the timer page syncs with the same day’s daily review in Journal mode.' },
+          { text: 'Journal mode shows the day’s due tasks and journal todos (with checkboxes); the dot color marks the day’s status: green = all done, red = has incomplete items, gray = empty.' },
         ],
       },
       stats: {
