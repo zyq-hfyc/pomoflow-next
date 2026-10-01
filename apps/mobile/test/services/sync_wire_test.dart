@@ -168,6 +168,52 @@ void main() {
       expect(f['color'], '#4D8EE0');
     });
 
+    /// 层级/排序上云回归锁(2026-10-01,二次排查 E3):
+    /// push 取本地列真值(不再恒 null/0,改名 push 不再踩平桌面层级);
+    /// pull null ↔ '' 互转,缺键不动列(「移出顶级」能清掉本地 parent)。
+    test('project hierarchy/order wire mapping', () {
+      // push:本地列真值上 wire,'' → null。
+      final nested = coreProjectPayload(<String, Object?>{
+        'id': 'dddddddd-dddd-4ddd-8ddd-dddddddddd03',
+        'name': '子项目',
+        'parent_id': 'dddddddd-dddd-4ddd-8ddd-dddddddddd02',
+        'display_order': 3,
+        'revision': 1,
+        'updated_at_ms': 1746149400123,
+      }, 'u-7');
+      expect(nested['parent_id'], 'dddddddd-dddd-4ddd-8ddd-dddddddddd02');
+      expect(nested['display_order'], 3);
+      final top = coreProjectPayload(<String, Object?>{
+        'id': 'dddddddd-dddd-4ddd-8ddd-dddddddddd04',
+        'name': '顶级',
+        'parent_id': '',
+        'display_order': 1,
+        'revision': 1,
+        'updated_at_ms': 1746149400123,
+      }, 'u-7');
+      expect(top['parent_id'], isNull);
+      expect(top['display_order'], 1);
+
+      // pull:有值覆写(null → ''),缺键不动列。
+      final fNested = projectFieldsFromCore(<String, dynamic>{
+        'name': '运营',
+        'parent_id': 'p-parent',
+        'display_order': 5,
+      });
+      expect(fNested['parent_id'], 'p-parent');
+      expect(fNested['display_order'], 5);
+      final fTop = projectFieldsFromCore(<String, dynamic>{
+        'name': '运营',
+        'parent_id': null,
+        'display_order': 2,
+      });
+      expect(fTop['parent_id'], '');
+      expect(fTop['display_order'], 2);
+      final fLegacy = projectFieldsFromCore(<String, dynamic>{'name': '运营'});
+      expect(fLegacy.containsKey('parent_id'), isFalse);
+      expect(fLegacy.containsKey('display_order'), isFalse);
+    });
+
     test('tag payload round-trip', () {
       final p = coreTagPayload(<String, Object?>{
         'id': 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01',

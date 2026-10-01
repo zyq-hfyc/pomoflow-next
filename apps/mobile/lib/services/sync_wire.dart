@@ -177,19 +177,23 @@ Map<String, Object?> coreSessionPayload(
 }
 
 /// projects pending 行 → core::Project JSON(push 方向)。
-/// mobile 平铺子集:parent_id 恒 null(层级是桌面 UI 概念)。
+/// 层级/排序上云(2026-10-01):parent_id/display_order 取本地列真值
+/// —— 此前恒 null/0,移动端一次改名 push 就把桌面层级与拖序踩平
+/// (2026-09-16 二次排查 E3)。本地 ''(顶级)↔ wire null 互转;
+/// 本地 upsertProject 已维护两列真值,缺列(老行)回落 null/0 同旧行为。
 Map<String, Object?> coreProjectPayload(
   Map<String, Object?> row,
   String userId,
 ) {
   final updatedAtMs = (row['updated_at_ms'] as int?) ?? 0;
+  final parentId = (row['parent_id'] as String?) ?? '';
   return {
     'id': row['id'],
     'user_id': userId,
     'name': row['name'] ?? '',
     'color': (row['color'] as String?) ?? '',
-    'parent_id': null,
-    'display_order': 0,
+    'parent_id': parentId.isEmpty ? null : parentId,
+    'display_order': (row['display_order'] as int?) ?? 0,
     'created_at': msToIso(updatedAtMs),
     'revision': (row['revision'] as int?) ?? 1,
     'deleted_at': null,
@@ -198,11 +202,21 @@ Map<String, Object?> coreProjectPayload(
 }
 
 /// core::Project JSON → projects 行业务列(pull 方向)。
+/// 层级/排序上云(2026-10-01):desktop wire null(顶级)↔ 本地 '' 互转;
+/// 键缺失(理论上的老对端)不动本地列,有值(含 null)才覆写 —— 桌面
+/// 「移出到顶级」才能正确清掉本地 parent。UI 仍平铺展示(列存不展开)。
 Map<String, Object?> projectFieldsFromCore(Map? p) {
   if (p == null) return const {};
   final out = <String, Object?>{};
   if (p['name'] is String) out['name'] = p['name'] as String;
   if (p['color'] is String) out['color'] = p['color'] as String;
+  if (p.containsKey('parent_id')) {
+    final pid = p['parent_id'];
+    out['parent_id'] = pid is String && pid.isNotEmpty ? pid : '';
+  }
+  if (p['display_order'] is int) {
+    out['display_order'] = p['display_order'] as int;
+  }
   return out;
 }
 
