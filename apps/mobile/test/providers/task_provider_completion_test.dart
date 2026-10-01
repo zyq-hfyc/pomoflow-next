@@ -110,12 +110,17 @@ void main() {
         DateTime(today.year, today.month, today.day + offset, 12);
 
     test('过滤口径:已完成/无到期日/未来到期/本月外 均不入池', () {
+      // 日期锚点用「本月 1 号 / 上月最后一天」,而非 day(-1)/day(-40) 相对
+      // 偏移 —— 相对偏移在每月 1 号会跨界(day(-1) 落进上月),测试变月界
+      //  flaky(2026-10-01 实炸);语义锚点恒成立。
+      final firstOfMonth = DateTime(today.year, today.month, 1, 12);
+      final lastOfPrevMonth = DateTime(today.year, today.month, 0, 12);
       final out = TaskProvider.pickNextAutoTask([
         t('done', dueAt: day(0), completed: true),
         t('nodue'),
         t('future', dueAt: day(3)), // 到期日在未来 → 不自动接续
-        t('lastmonth', dueAt: day(-40)), // 出本月 → 不接(桌面同口径)
-        t('overdue', dueAt: day(-1)), // 逾期在本月 → 入池
+        t('lastmonth', dueAt: lastOfPrevMonth), // 出本月 → 不接(桌面同口径)
+        t('overdue', dueAt: firstOfMonth), // 本月 1 号(恒 ≤ 今天且在本月)→ 入池
       ]);
       expect(out?.id, 'overdue');
     });
