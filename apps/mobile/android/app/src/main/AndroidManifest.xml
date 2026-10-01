@@ -4,6 +4,10 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Android 13+ 通知权限(P3c 本地通知)。 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- 开机重排兜底通知(2026-10-01):插件的 ScheduledNotificationBootReceiver
+         随 manifest 合并自动注册,只差本权限;此前重启手机后 zonedSchedule
+         排程的「结束时刻兜底通知」全部丢失。inexact 模式无需精确闹钟权限。 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <application
         android:label="PomoFlow"
         android:name="${applicationName}"
