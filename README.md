@@ -1,38 +1,42 @@
 # PomoFlow Next
 
-> 新一代 PomoFlow 桌面端 —— Tauri 2 + Rust,local-first,准备多端同步。
+> 新一代 PomoFlow 多端体系 —— 桌面 Tauri 2 + Rust、移动 Flutter、云端 sync-server,local-first,多端同步已落地。
 
 ## 这是什么
 
-`pomoflow-next` 是 PomoFlow 的下一代桌面端,与上一代 [`pomoflow`](https://github.com/zyq-hfyc/pomoflow)
-**并行共存**:
+`pomoflow-next` 是 PomoFlow 的下一代多端仓库(桌面 + 移动 + 云端),与上一代
+[`pomoflow`](https://github.com/zyq-hfyc/pomoflow) **并行共存**:
 
 | 仓库 | 技术栈 | 目标用户 |
 |------|--------|---------|
 | [`pomoflow`](https://github.com/zyq-hfyc/pomoflow) | TypeScript + Python + PyInstaller | 「不需要同步」的用户,继续维护 v1.x |
-| **`pomoflow-next`**(本仓库) | Tauri 2 + Rust + 薄 Web UI | 「准备多端同步」的用户,v2 渐进 |
+| **`pomoflow-next`**(本仓库) | Tauri 2 + Rust(桌面)+ Flutter(移动)+ axum(云端) | 「需要多端同步」的用户,v2 线 |
 
-## 当前进度(v1 功能复刻完成,同步线 P0.5/P1a 进行中)
+## 当前进度(P0~P3 功能主线完成,余部署/上架尾巴)
 
-- ✅ Cargo workspace(`crates/core` + `apps/desktop` + `tools/migrate-v1` + `services/sync-server`)
+> 阶段编号见 [docs/architecture.md § 13](https://github.com/zyq-hfyc/pomoflow/blob/main/docs/architecture.md);
+> 任务全景见 [docs/协作任务清单.md](./docs/协作任务清单.md)(跨会话进度真相源)。
+
+- ✅ Cargo workspace 4 crate:`crates/core` + `apps/desktop` + `tools/migrate-v1` + `services/sync-server`
 - ✅ `crates/core`:域模型 + LWW 同步 + 存储(含版本化 SQLite 迁移) + 业务校验 +
   统计聚合 + 重复任务日期引擎 + 拖拽排序校验
 - ✅ 同步地基(P0.5):实体 `user_id` 归属、`sync_state` 待推送队列、Push/Pull 协议
   (seq 游标)、同步引擎、双端 mock 七场景闭环 —— 契约见
   [docs/同步协议详细设计.md](https://github.com/zyq-hfyc/pomoflow/blob/main/docs/同步协议详细设计.md)
   (ADR-009/010/011)
-- ✅ `services/sync-server` 云端同步服务(P1a 服务端):axum + PostgreSQL,
-  Push/Pull + LWW 裁决(与桌面共享 core 代码)—— **部署见
+- ✅ `services/sync-server` 云端同步服务(P1):axum + PostgreSQL,Push/Pull + LWW
+  裁决;账号体系(注册/登录/JWT/邮箱验证码/头像/注销冷静期/设备会话管理)——
+  已自部署(内网),**部署见
   [services/sync-server/README.md](./services/sync-server/README.md)**
-- ✅ `apps/desktop` Tauri 2 桌面端:v1 全功能 —— 计时器(挂钟制/自动链/任务接续/
-  提醒)、任务页(6 视图 + 重复任务引擎 + 手账月历复盘)、统计页(6 维度 + SVG 图表)、
-  设置页(7 标签:计时/清单树拖拽/标签/8 主题背景/名言/通知文案/中英双语)、xlsx 导出、
-  帮助页、托盘/通知/开机自启
-- ✅ `tools/migrate-v1`:v1 SQLite → v2 store 一键迁移(全表,含重复实例/子任务/名言)
+- ✅ `apps/desktop` Tauri 2 桌面端(P2,0.2.0 已发布):v1 全功能 + 云同步(12 类
+  业务实体 LWW + 冲突可视化)+ 自动同步 + 垃圾箱 + 子任务 + 年度复盘 + 随手记
+- ✅ `apps/mobile` Flutter 移动端(P3 Android,0.2.0 首发):本地优先 + 云端同步,
+  与桌面数据互通;真机四轮 E2E 通过
+- ✅ `tools/migrate-v1`:v1 SQLite → v2 store 一键迁移(范围见
+  [docs/migration.md](./docs/migration.md))
 - ✅ CI + 三平台 Release(tag 触发)
-- ⏳ 进行中:同步闭环实测 —— 桌面端接线已完成(设置 → 数据同步:服务器地址/Token、
-  本机标识、立即同步),待服务端实机部署后双端验证;
-  任务全景见 [docs/协作任务清单.md](./docs/协作任务清单.md)
+- ⏳ 尾巴:公网正式部署(域名 + HTTPS,规划中)、iOS(需 macOS 构建链)/ 鸿蒙 /
+  商店上架;P4 微服务群(Analytics/Membership/Notification/Admin)未开工
 
 完整路线与 ADR 见 [docs/architecture.md § 13](https://github.com/zyq-hfyc/pomoflow/blob/main/docs/architecture.md)
 (权威文档在原仓库,本仓库只做执行)。
@@ -42,9 +46,10 @@
 ```
 pomoflow-next/
 ├── crates/core/                # 域模型 + 同步 + 存储抽象(纯 Rust lib)
-├── apps/desktop/               # Tauri 2 桌面端(P1)
+├── apps/desktop/               # Tauri 2 桌面端(P2)
+├── apps/mobile/                # Flutter 移动端(P3 Android)
 ├── tools/migrate-v1/           # v1 → v2 数据迁移 CLI
-├── services/sync-server/       # 云端同步服务(P1a,部署说明在其 README)
+├── services/sync-server/       # 云端同步服务(P1,部署说明在其 README)
 ├── docs/                       # 仓库内文档(含协作任务清单)
 ├── Cargo.toml                  # workspace root
 ├── rust-toolchain.toml         # Rust 版本锁
@@ -97,7 +102,7 @@ cargo clippy --all-targets -- -D warnings   # clippy 零警告
 ## 快速开始
 
 ```bash
-# 1. 克隆(本仓库当前是本地仓库,后续 push 到 zyq-hfyc/pomoflow-next 后改为 git clone)
+# 1. 克隆
 git clone https://github.com/zyq-hfyc/pomoflow-next.git
 cd pomoflow-next
 
@@ -117,6 +122,7 @@ cargo test --all-targets
 | Rust 工具链 | stable | 见上文「开发环境要求」,与 `rust-toolchain.toml` 一致 |
 | C/C++ 链接工具链 | — | 见上文「开发环境要求」(Windows 必装,否则编译阶段报链接错误) |
 | Node.js(含 npm) | ≥ 20 | UI 侧构建用;本仓库统一用 npm,不需要 pnpm/yarn |
+| Flutter SDK | Dart ^3.13(本机 3.47 验证) | 仅开发移动端时需要,详见 [apps/mobile/README.md](./apps/mobile/README.md) |
 
 ### 安装依赖(每台开发机一次)
 
@@ -179,7 +185,7 @@ cargo run -p migrate-v1 -- --from path/to/pomoflow.db --to "%APPDATA%\pomoflow\s
 
 - 提交风格:Conventional Commits(`feat:` / `fix:` / `refactor:` / `docs:` / `test:` / `chore:` / `perf:`)
 - 不要直接 push 到 main,先开 PR
-- CI 必须通过(cargo check + cargo test + cargo clippy)
+- CI 必须通过(cargo fmt/clippy/test + UI svelte-check/vitest/tsc/vite build + flutter analyze/test)
 
 ## License
 
