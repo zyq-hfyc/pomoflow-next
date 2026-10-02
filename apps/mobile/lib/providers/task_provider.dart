@@ -200,27 +200,32 @@ class TaskProvider extends ChangeNotifier {
       }
     }
 
-    // 老库种子 pomodoroDuration 兜底:Bug2 反馈,seed 任务未显式设
-    // pomodoroDuration(0)→ 回退全局 focusMinutes(用户可能改 5 min)
-    // → 点「开始」显 5min。种子任务存在且 pomodoroDuration==0 → 一
-    // 次性补成 25(幂等:已设即跳过),并刷新内存 + 触发通知。
-    bool bumped = false;
-    for (final t in seedDemo._tasks) {
-      final live = p._tasks.firstWhere((x) => x.id == t.id, orElse: () => t);
-      if (live.id == t.id &&
-          live.pomodoroDuration == 0 &&
-          t.pomodoroDuration > 0) {
-        await db.updateTask(
-          live.copyWith(pomodoroDuration: t.pomodoroDuration),
-        );
-        bumped = true;
+    // 老库种子 pomodoroDuration 兜底(**一次性**,meta.seed_duration_bumped
+    // 记忆):Bug2 反馈,seed 任务未显式设 pomodoroDuration(0)→ 回退全局
+    // focusMinutes(用户可能改 5 min)→ 点「开始」显 5min。补成 25 后落
+    // 标记,此后不再跑 —— 否则用户把种子任务改回 0(= 跟随全局,合法语义)
+    // 每次启动都被强制回写 25(2026-09-16 二次排查 E4 项)。
+    final durationBumped = await db.getMeta('seed_duration_bumped');
+    if (durationBumped == null) {
+      bool bumped = false;
+      for (final t in seedDemo._tasks) {
+        final live = p._tasks.firstWhere((x) => x.id == t.id, orElse: () => t);
+        if (live.id == t.id &&
+            live.pomodoroDuration == 0 &&
+            t.pomodoroDuration > 0) {
+          await db.updateTask(
+            live.copyWith(pomodoroDuration: t.pomodoroDuration),
+          );
+          bumped = true;
+        }
       }
-    }
-    if (bumped) {
-      final all = await db.listTasks();
-      p._tasks
-        ..clear()
-        ..addAll(all);
+      await db.setMeta('seed_duration_bumped', '1');
+      if (bumped) {
+        final all = await db.listTasks();
+        p._tasks
+          ..clear()
+          ..addAll(all);
+      }
     }
 
     if (seeded == null) {
@@ -253,6 +258,10 @@ class TaskProvider extends ChangeNotifier {
 
   /// 私有构造函数:仅在工厂内用。
   TaskProvider._mem();
+
+  /// 测试入口:带库装配(种子/老库兜底路径);生产走 [open]。
+  @visibleForTesting
+  static Future<TaskProvider> hydrateForTest(AppDatabase db) => _hydrate(db);
 
   AppDatabase? _db; // null = pure memory (web / test)
 
