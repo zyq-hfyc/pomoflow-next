@@ -10,7 +10,10 @@ use crate::mailer::MailSender;
 /// 运行配置:全部来自环境变量(容器友好)。
 ///
 /// - `DATABASE_URL`:PostgreSQL 连接串
-/// - `SYNC_TOKEN`:静态 Bearer Token(运维通道 + 首账号采纳凭证 + 旧客户端回落)
+/// - `SYNC_TOKEN`:静态 Bearer Token(运维通道 + 首账号采纳凭证;
+///   **仅未配 JWT_SECRET 的纯静态模式**才在 sync 端点上被接受为身份凭证,
+///   JWT 启用后受保护端点一律拒收 —— 它永久有效不可吊销,见
+///   auth_handlers::authenticate)
 /// - `SYNC_USER_ID`:该 token 对应的用户 UUID(与桌面端 meta.user_id 对齐)
 /// - `JWT_SECRET`:HS256 签名密钥;**设置了才启用账号体系**(register/login/
 ///   refresh),不设则只认静态 Token(与 P1a 行为完全一致)

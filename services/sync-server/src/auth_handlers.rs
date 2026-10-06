@@ -559,9 +559,76 @@ pub fn authenticate(app: &AppState, headers: &HeaderMap) -> Result<Id, ApiError>
                 .ok_or((StatusCode::UNAUTHORIZED, "jwt sub 不是合法 UUID".into()));
         }
     }
-    // 2) 静态 Token 回落(MVP 兼容;SYNC_TOKEN → SYNC_USER_ID)
-    if token == app.token {
+    // 2) 静态 Token 回落:**仅账号体系未启用(未配 JWT_SECRET)的纯静态模式**。
+    //    JWT 启用后静态 token 不再被受保护端点接受 —— 它永久有效、不可吊销,
+    //    此前持有者可冒充 SYNC_USER_ID 读写全量数据 / 触发导出与注销
+    //    (2026-09-16 二次排查 C1)。运维/首账号采纳的静态 token 用途走各自
+    //    端点的显式校验(register 的 operator_ok、email_handlers 的
+    //    bearer_static),不经此处。
+    if app.jwt_secret.is_none() && token == app.token {
         return Ok(app.user_id.clone());
     }
     Err((StatusCode::UNAUTHORIZED, "invalid token".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    //! authenticate() 的 C1 回归锁(2026-10-02):JWT 启用后静态 SYNC_TOKEN
+    //! 不得再被受保护端点接受;纯静态模式(未配 JWT_SECRET)回落保持可用。
+    //! lazy PgPool 不建连(authenticate 不触库)。
+    use super::*;
+    use crate::mailer::LogSender;
+    use axum::http::header::AUTHORIZATION;
+    use std::sync::Arc;
+
+    const STATIC_UID: &str = "11111111-1111-4111-8111-111111111111";
+
+    fn test_app(jwt_secret: Option<&str>) -> AppState {
+        AppState {
+            pool: sqlx::PgPool::connect_lazy("postgres://u:u@127.0.0.1:1/u")
+                .expect("lazy pool 不建连"),
+            token: "static-token".to_string(),
+            user_id: Id::parse(STATIC_UID).expect("合法 UUID"),
+            jwt_secret: jwt_secret.map(str::to_string),
+            code_pepper: "pepper".to_string(),
+            mailer: Arc::new(LogSender),
+        }
+    }
+
+    fn headers_with(token: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+        h
+    }
+
+    #[tokio::test]
+    async fn static_token_rejected_when_jwt_enabled() {
+        let app = test_app(Some("secret"));
+        let err = authenticate(&app, &headers_with("static-token")).unwrap_err();
+        assert_eq!(err.0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn static_token_accepted_in_pure_static_mode() {
+        let app = test_app(None);
+        let user = authenticate(&app, &headers_with("static-token")).unwrap();
+        assert_eq!(user.as_str(), STATIC_UID);
+    }
+
+    #[tokio::test]
+    async fn jwt_accepted_when_enabled() {
+        let app = test_app(Some("secret"));
+        let jwt = auth::issue_access("secret", "22222222-2222-4222-8222-222222222222")
+            .expect("签发 access token");
+        let user = authenticate(&app, &headers_with(&jwt)).unwrap();
+        assert_eq!(user.as_str(), "22222222-2222-4222-8222-222222222222");
+    }
+
+    #[tokio::test]
+    async fn wrong_or_missing_token_rejected_in_both_modes() {
+        for app in [test_app(None), test_app(Some("secret"))] {
+            assert!(authenticate(&app, &headers_with("wrong-token")).is_err());
+            assert!(authenticate(&app, &HeaderMap::new()).is_err());
+        }
+    }
 }
