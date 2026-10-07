@@ -40,6 +40,7 @@
   import { getDict, fmt } from "../lib/i18n.svelte";
   import { toastError } from "../lib/toast.svelte";
   import { todayStr, tomorrowStr, datePart, hasTimePart, toIsoUtc } from "../lib/dueDate";
+  import { journalPreview } from "../lib/richText";
   import { compareByStatusPriorityCreated } from "../lib/taskSort";
   import {
     journalsState,
@@ -633,7 +634,7 @@
               >
                 {#if j.status === "completed"}✓{/if}
               </button>
-              <span class="journal-todo-title" class:strike={j.status === "completed"}>{j.title || j.content}</span>
+              <span class="journal-todo-title" class:strike={j.status === "completed"}>{j.title || journalPreview(j.content, 60)}</span>
             </div>
           {/each}
         </div>

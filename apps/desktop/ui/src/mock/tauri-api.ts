@@ -11,6 +11,8 @@
 // 场景三:筛选条「未完成」开关(2026-09-30)—— 「已计划」视图混排
 //   active + completed(已完成任务D),点「未完成」→ D 消失、计数 5→4;
 //   「已完成」视图只列 D 且不渲染该按钮。
+// 场景四:富文本随手记(2026-10-06)—— j-seed-rich(Tiptap JSON)/j-seed-plain
+//   (旧纯文本);随手记页卡片摘要须提取纯文本,点开分别按格式载入编辑器。
 //
 // 没实现的命令走下面 default 兜底(返回 null / 空数组 → UI 走空态)。
 
@@ -70,7 +72,80 @@ const mockTasks: Record<string, unknown>[] = [
 
 /// 随手记(journal)fixture 存储:与后端命令同语义(新建 id 自分配,
 /// 列表 created_at 倒序)。
-const mockJournals: Record<string, unknown>[] = [];
+/// 场景四(2026-10-06 富文本批):j-seed-rich = Tiptap JSON 存储格式
+/// (标题/加粗/任务清单勾选/链接),j-seed-plain = 旧纯文本 —— 验证
+/// 列表卡片摘要提取(不露 JSON 原文)与两种格式的编辑器载入。
+const richDoc = JSON.stringify({
+  type: "doc",
+  content: [
+    {
+      type: "heading",
+      attrs: { level: 2 },
+      content: [{ type: "text", text: "购物清单" }],
+    },
+    {
+      type: "paragraph",
+      content: [
+        { type: "text", text: "本周要买的" },
+        { type: "text", text: "重点", marks: [{ type: "bold" }] },
+      ],
+    },
+    {
+      type: "taskList",
+      content: [
+        {
+          type: "taskItem",
+          attrs: { checked: true },
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "牛奶" }] },
+          ],
+        },
+        {
+          type: "taskItem",
+          attrs: { checked: false },
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "鸡蛋" }] },
+          ],
+        },
+      ],
+    },
+    {
+      type: "paragraph",
+      content: [
+        {
+          type: "text",
+          text: "参考链接",
+          marks: [{ type: "link", attrs: { href: "https://example.com" } }],
+        },
+      ],
+    },
+  ],
+});
+
+const mockJournals: Record<string, unknown>[] = [
+  {
+    id: "j-seed-rich",
+    kind: "note",
+    title: "富文本样例",
+    content: richDoc,
+    tags: ["样例"],
+    status: "active",
+    revision: 1,
+    created_at: "2026-10-06T08:00:00.000Z",
+    updated_at: "2026-10-06T08:00:00.000Z",
+  },
+  {
+    id: "j-seed-plain",
+    kind: "todo",
+    title: "纯文本老笔记",
+    content: "旧格式纯文本内容\n第二行",
+    tags: [],
+    status: "active",
+    revision: 1,
+    created_at: "2026-10-05T08:00:00.000Z",
+    updated_at: "2026-10-05T08:00:00.000Z",
+  },
+];
 
 let journalSeq = 0;
 function newJournalId(): string {

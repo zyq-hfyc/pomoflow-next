@@ -20,6 +20,13 @@ vi.mock("../../lib/api", () => ({
   toggleJournal: vi.fn(),
 }));
 
+// 富文本批(2026-10-06):面板逻辑与 Tiptap 实现解耦 —— RichTextEditor
+// 换成同 props 契约的 textarea 替身(面板测试维持原 textarea 交互语义;
+// 编辑器行为由 richTextEditor.behavior/RichTextEditor 两套测试覆盖)。
+vi.mock("./RichTextEditor.svelte", async () => ({
+  default: (await import("./RichTextEditor.stub.svelte")).default,
+}));
+
 import * as api from "../../lib/api";
 import type { Journal } from "../../lib/api";
 import NoteDetailPanel from "./NoteDetailPanel.svelte";
@@ -300,5 +307,72 @@ describe("NoteDetailPanel · refresh 回灌不冲草稿(2026-09-14 优化批)", 
     expect(input.value).toBe("编辑中标题");
     expect(api.upsertJournal).not.toHaveBeenCalled();
     unmount(mounted);
+  });
+});
+
+describe("NoteDetailPanel · 富文本批新增(2026-10-06)", () => {
+  test("新建落库回声:创建后继续输入不被 reset 清掉", async () => {
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    const mounted = mount(RefreshHarness, { target }) as Record<string, unknown>;
+    type SetJ = (j: Journal | null, hooks?: { onCreated?: (j: Journal) => void }) => void;
+    const setJournal = mounted!.setJournal as SetJ;
+    // 模拟父层:onCreated → 选中刚创建的记录(回声时刻)
+    setJournal(null, { onCreated: (created) => setJournal(created) });
+    (api.upsertJournal as ReturnType<typeof vi.fn>).mockResolvedValue(
+      journal({ id: "c9", title: "标题甲", content: "" }),
+    );
+    flushSync();
+    await settle();
+    await typeAndBlur(titleInput(target), "标题甲");
+    expect(api.upsertJournal).toHaveBeenCalledTimes(1);
+    // 回声后编辑器已是编辑态;继续在内容里打字
+    const area = contentArea(target);
+    area.value = "继续写正文";
+    area.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    await settle();
+    // 关键断言:回声没有触发 reset(否则内容被重置成创建时的 "")
+    expect(contentArea(target).value).toBe("继续写正文");
+    unmount(mounted);
+  });
+
+  test("切到另一条记录(非回声)→ 编辑器内容重置为目标的", async () => {
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    const mounted = mount(RefreshHarness, { target }) as Record<string, unknown>;
+    const setJournal = mounted!.setJournal as (j: Journal | null) => void;
+    setJournal(journal({ id: "j1", title: "甲", content: "甲内容" }));
+    flushSync();
+    expect(contentArea(target).value).toBe("甲内容");
+    setJournal(journal({ id: "j2", title: "乙", content: "乙内容" }));
+    flushSync();
+    await settle();
+    expect(contentArea(target).value).toBe("乙内容");
+    unmount(mounted);
+  });
+
+  test("JSON 内容未改动时失焦 → 零调用(getJSON 与库内串相等即无变化)", async () => {
+    const json = JSON.stringify({
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "富文本内容" }] }],
+    });
+    const { target } = await render({ journal: journal({ id: "j1", title: "t", content: json }) });
+    // stub 不输入直接 blur(= 用户点开看了看就关)
+    contentArea(target).dispatchEvent(new Event("blur", { bubbles: true }));
+    flushSync();
+    await settle();
+    expect(api.upsertJournal).not.toHaveBeenCalled();
+  });
+
+  test("保存失败(如超 20000 上限)→ toast 报错,不静默吞", async () => {
+    const { toast } = await import("../../lib/toast.svelte");
+    toast().splice(0);
+    (api.upsertJournal as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("journal.content 不能超过 20000 字符"),
+    );
+    const { target } = await render({ journal: journal({ id: "j1", title: "t", content: "旧" }) });
+    await typeAndBlur(contentArea(target), "超长长长长的新内容");
+    expect(toast().map((x) => x.message).join()).toContain("保存失败");
   });
 });

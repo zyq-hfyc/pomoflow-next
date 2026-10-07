@@ -14,6 +14,7 @@
   import type { Journal, JournalKind } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
   import { JOURNAL_KINDS, KIND_EMOJI, sortJournals, fmtJournalDate } from "../../lib/journalKinds";
+  import { journalPreview } from "../../lib/richText";
   import TaskCheckbox from "./TaskCheckbox.svelte";
 
   const t = $derived(getDict());
@@ -146,7 +147,7 @@
               {j.title}
             </h3>
           {/if}
-          {#if j.content}<p class="card-content">{j.content}</p>{/if}
+          {#if journalPreview(j.content)}<p class="card-content">{journalPreview(j.content)}</p>{/if}
           {#if j.tags.length > 0}
             <div class="tags">
               {#each j.tags as tag (tag)}

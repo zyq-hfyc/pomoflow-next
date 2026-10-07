@@ -5,7 +5,9 @@
   // 自上而下:
   //   1. 头部:kind 色点(todo 为勾选框)+ 标题输入(失焦保存) + 关闭 ×
   //   2. 类型:kind 四档 chips(2×2 网格;新建只改草稿、编辑即时存)
-  //   3. 内容 textarea(失焦保存,flex:1 撑开)
+  //   3. 内容:RichTextEditor 富文本(2026-10-06 批,原纯文本 textarea;
+  //      停笔 2s/失焦/Ctrl+S 保存,content 存 Tiptap JSON,旧纯文本读时
+  //      判别、首存自动升级)
   //   4. 标签输入(逗号分隔,失焦保存)
   //   5. 创建日期(编辑态)+ 删除两步确认文字链(右下角,armed 红 pill)
   //
@@ -26,7 +28,9 @@
   import { getDict, fmt } from "../../lib/i18n.svelte";
   import { toastError } from "../../lib/toast.svelte";
   import { JOURNAL_KINDS, KIND_EMOJI, fmtJournalDate } from "../../lib/journalKinds";
+  import { contentPlainText } from "../../lib/richText";
   import TaskCheckbox from "./TaskCheckbox.svelte";
+  import RichTextEditor from "./RichTextEditor.svelte";
 
   const t = $derived(getDict());
 
@@ -43,16 +47,22 @@
 
   // === 草稿(输入只改本地,失焦才提交) ===
   let titleDraft = $state(untrack(() => journal?.title ?? ""));
+  // contentDraft:富文本批后 = Tiptap JSON 串(或旧纯文本,首存自动升级);
+  // contentPlain:提取的纯文本(校验「至少填一项」/回滚判定用,不吃 JSON 噪音)。
   let contentDraft = $state(untrack(() => journal?.content ?? ""));
+  let contentPlain = $state(untrack(() => contentPlainText(journal?.content ?? "")));
   let tagsDraft = $state(untrack(() => (journal?.tags ?? []).join(", ")));
   // 新建默认 todo(2026-09-13 面板化批用户拍板);编辑取现值
   let kindDraft = $state<JournalKind>(untrack(() => journal?.kind ?? "todo"));
   let deleteArmed = $state(false);
   let creating = $state(false); // 新建 in-flight 守卫(双 blur 竞态)
   let titleEl = $state<HTMLInputElement | null>(null);
+  // 编辑器实例(bind:this):切目标/回滚时显式 reset;**新建落库回声不 reset**
+  // (草稿即库内值,reset 会打断输入焦点并清掉 undo 历史)
+  let editorComp: RichTextEditor | null = null;
 
   const isNew = $derived(journal === null);
-  const draftValid = $derived(!!titleDraft.trim() || !!contentDraft.trim());
+  const draftValid = $derived(!!titleDraft.trim() || !!contentPlain.trim());
 
   const kindLabels = $derived<Record<JournalKind, string>>({
     todo: t.notes.kindTodo,
@@ -68,14 +78,25 @@
   let draftsJournalId: string | null = null;
 
   $effect(() => {
-    // 切换目标(id 变化) → 重置草稿 + 解除删除武装
-    if (draftsJournalId === (journal?.id ?? null)) return;
-    draftsJournalId = journal?.id ?? null;
+    // 切换目标(id 变化) → 重置草稿 + 编辑器 + 解除删除武装。
+    // 例外「新建落库回声」:journal 从 null 变为刚创建的记录,其内容正是
+    // 当前草稿 —— 不是切换目标,编辑器保持焦点/undo 历史不动。
+    const jid = journal?.id ?? null;
+    if (draftsJournalId === jid) return;
+    const isCreateEcho =
+      draftsJournalId === null &&
+      journal !== null &&
+      journal.content === contentDraft &&
+      journal.title === titleDraft.trim();
+    draftsJournalId = jid;
+    if (isCreateEcho) return;
     titleDraft = journal?.title ?? "";
     contentDraft = journal?.content ?? "";
+    contentPlain = contentPlainText(journal?.content ?? "");
     tagsDraft = (journal?.tags ?? []).join(", ");
     kindDraft = journal?.kind ?? "todo";
     deleteArmed = false;
+    editorComp?.reset(journal?.content ?? "");
   });
 
   // 新建态自动聚焦标题(不用 autofocus 属性,避开 a11y 编译警告)。
@@ -121,7 +142,8 @@
         id: null,
         kind: kindDraft,
         title: titleDraft.trim(),
-        content: contentDraft.trim(),
+        // content 原样(JSON 串或纯文本;编辑器变更时已是 doc JSON)
+        content: contentDraft,
         tags: parseTags(),
       });
       onCreated(created);
@@ -140,7 +162,7 @@
     }
     if (next === journal!.title) return;
     // 清空标题须有内容兜底,否则拒存并回滚草稿(守「至少一项」)
-    if (!next && !contentDraft.trim()) {
+    if (!next && !contentPlain.trim()) {
       titleDraft = journal!.title;
       return;
     }
@@ -148,17 +170,27 @@
   }
 
   async function commitContent() {
-    const next = contentDraft.trim();
     if (isNew) {
       await createFromDraft();
       return;
     }
-    if (next === journal!.content) return;
-    if (!next && !titleDraft.trim()) {
+    // getJSON 对同一 doc 输出稳定;纯文本旧数据在用户未改动时 editor 不会
+    // 发 onUpdate,contentDraft 仍等于原串 —— 两种情况都不会误存。
+    if (contentDraft === journal!.content) return;
+    // 清空内容须有标题兜底,否则拒存并回滚(编辑器显式 reset 回原文)
+    if (!contentPlain.trim() && !titleDraft.trim()) {
       contentDraft = journal!.content;
+      contentPlain = contentPlainText(journal!.content);
+      editorComp?.reset(journal!.content);
       return;
     }
-    await patch({ content: next });
+    await patch({ content: contentDraft });
+  }
+
+  /** 编辑器每次变更:JSON 进草稿,纯文本进校验轨。 */
+  function handleEditorUpdate(json: string, plainText: string) {
+    contentDraft = json;
+    contentPlain = plainText;
   }
 
   async function commitTags() {
@@ -251,15 +283,14 @@
     {/each}
   </div>
 
-  <!-- 3. 内容 -->
-  <textarea
-    class="content"
-    bind:value={contentDraft}
-    onblur={() => void commitContent()}
+  <!-- 3. 内容(富文本;同 id refresh 回灌不动草稿,切目标经 reset 换内容) -->
+  <RichTextEditor
+    bind:this={editorComp}
+    content={journal?.content ?? ""}
     placeholder={t.notes.contentPlaceholder}
-    aria-label={t.notes.fieldContent}
-    maxlength="5000"
-  ></textarea>
+    onUpdate={handleEditorUpdate}
+    onCommit={() => void commitContent()}
+  />
 
   <!-- 4. 标签 -->
   <div class="tags-row">
@@ -397,27 +428,7 @@
     color: #fff;
   }
 
-  /* 内容:flex:1 撑开,删除链自然沉底 */
-  .content {
-    flex: 1;
-    min-height: 8rem;
-    resize: none;
-    border: 1px solid var(--color-border, #e5e2dd);
-    border-radius: var(--radius-lg, 12px);
-    padding: 0.5rem;
-    background: color-mix(in srgb, var(--color-bg, #fafaf7) 50%, transparent);
-    color: var(--color-text, #1f1d1b);
-    font-size: 0.875rem;
-    font-family: inherit;
-    line-height: 1.5;
-    box-sizing: border-box;
-    margin-bottom: 1rem;
-  }
-  .content:focus {
-    outline: none;
-    border-color: var(--color-accent, #e74c3c);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent, #e74c3c) 12%, transparent);
-  }
+  /* 内容区:RichTextEditor 组件自带样式(rt-root flex:1 撑开,删除链沉底) */
 
   /* 标签 —— 照弹窗 .field/.input 子集 */
   .tags-row {
