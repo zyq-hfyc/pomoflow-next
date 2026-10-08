@@ -13,6 +13,8 @@
 //   「已完成」视图只列 D 且不渲染该按钮。
 // 场景四:富文本随手记(2026-10-06)—— j-seed-rich(Tiptap JSON)/j-seed-plain
 //   (旧纯文本);随手记页卡片摘要须提取纯文本,点开分别按格式载入编辑器。
+// 场景五:数据同步段(2026-10-08 搬家批)—— #/account 未登录菜单两项;
+//   「数据同步」段内存态配置(服务器地址已填、auth:null 未登录),保存可改;
 //
 // 没实现的命令走下面 default 兜底(返回 null / 空数组 → UI 走空态)。
 
@@ -153,6 +155,15 @@ function newJournalId(): string {
   return `j-mock-${String(journalSeq).padStart(4, "0")}`;
 }
 
+// 数据同步段(账号页):内存态配置,未登录形态(auth:null)。
+let mockSyncConfig = {
+  server_url: "http://192.168.1.10:8321" as string | null,
+  token: null as string | null,
+  auto_sync: true,
+  interval_min: 5,
+  auth: null as { username: string; user_id: string } | null,
+};
+
 const dailyReviews: { id: string; date: string; content: string }[] = [
   {
     id: "a0a6d0ad-15b6-49bd-b2be-0f9f4e186211",
@@ -259,6 +270,30 @@ const invoke: Invoke = async (cmd, args) => {
       if (i >= 0) mockJournals.splice(i, 1);
       return null;
     }
+    // 数据同步段 fixture(2026-10-08 搬家批:不落库,内存态;
+    // 未登录形态 auth:null,同步段四段 + hint 可验)。
+    case "get_sync_config":
+      return mockSyncConfig;
+    case "set_sync_config": {
+      mockSyncConfig = {
+        ...mockSyncConfig,
+        server_url: (args?.serverUrl as string | null) ?? null,
+        token: (args?.token as string | null) ?? null,
+        auto_sync: Boolean(args?.autoSync),
+        interval_min: Number(args?.intervalMin ?? 5),
+      };
+      return null;
+    }
+    case "get_sync_identity":
+      return { user_id: "mock-user-local", device_id: "mock-device-browser" };
+    case "sync_now":
+      return { pushed: 0, pulled: 0, conflicts: 0, dropped: 0 };
+    case "list_conflicts":
+      return [];
+    case "count_conflicts":
+      return 0;
+    case "clear_conflicts":
+      return null;
     // 其余命令通用兜底(空数据让 UI 走空态;手账链路够用)。
     case "list_weekly_reviews":
     case "list_monthly_reviews":

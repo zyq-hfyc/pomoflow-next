@@ -242,7 +242,7 @@ export const en: Dict = {
       manageAccount: 'Manage account',
       notLoggedIn: 'Not signed in',
       accountHint:
-        'Register / sign in / password recovery / devices moved to the Account tab. After signing in, sync uses account tokens automatically; this page keeps the server URL and static token config (the static token is the operator credential for first registration).',
+        'After signing in, sync uses the account token automatically (recommended, multi-device). Without an account, use the static token below (self-hosted). Password and devices are in the left menu.',
       securitySection: 'Change password',
       oldPass: 'Current password',
       newPass: 'New password',
@@ -770,6 +770,7 @@ export const en: Dict = {
         { text: 'Account deletion: 15-day cooling-off period, cancellable; cloud data cascade-deleted after expiry' },
         { text: 'Data export: export all cloud data as JSON backup (recommended before deletion)' },
         { text: 'The top-bar avatar is the account entrance; click to open' },
+        { text: 'Data sync (server URL / token / auto-sync / conflict log) lives in this left menu; clicking the top-bar sync icon jumps straight here' },
       ],
     },
     settings: {

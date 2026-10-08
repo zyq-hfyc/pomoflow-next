@@ -3,10 +3,14 @@
   //
   // 布局与设置页同款(页面级左菜单 + 右内容区,视觉语言统一):
   // - 已登录:菜单头部 = 头像+昵称+邮箱;菜单项 = 个人资料/安全设置/第三方账号/
-  //   登录设备/账号注销;底部 = 退出登录;右侧 = AccountCenter 对应分区。
-  // - 未登录:菜单头部 = 「登录 | 注册」;菜单项只有「账号」;右侧 = 认证卡片
-  //   (登录 / 注册 / 找回密码)居中,留白充足。
+  //   登录设备/数据同步/账号注销;底部 = 退出登录;右侧 = AccountCenter 对应分区
+  //   (「数据同步」段例外:状态自持,直挂 SyncSetting,不走 AccountCenter)。
+  // - 未登录:菜单头部 = 「登录 | 注册」;菜单项 = 「账号」+「数据同步」
+  //   (自部署静态 Token 用户不登录也要能配同步,故 sync 段未登录可见);
+  //   右侧 = 认证卡片(登录 / 注册 / 找回密码)居中,或 SyncSetting。
   // 登录成功 / 退出登录 → 就地切换形态,不跳路由;顶栏头像同步(accountState)。
+  // 深链:页外组件(顶栏 SyncIndicator)经 accountNav 一次性信号落指定段,
+  //   $effect 消费(不能 onMount —— 已在 /account 时 navigate 不 remount)。
 
   import { onMount, type Component } from "svelte";
   import {
@@ -14,6 +18,7 @@
     ShieldCheck,
     Link2,
     MonitorSmartphone,
+    RefreshCw,
     TriangleAlert,
     LogOut,
   } from "lucide-svelte";
@@ -25,20 +30,40 @@
     setAccountUser,
     refreshAvatar,
   } from "../lib/accountState.svelte";
+  import {
+    pendingAccountSection,
+    clearAccountSectionRequest,
+  } from "../lib/accountNav.svelte";
   import { resetJournals } from "../lib/journalsStore.svelte";
   import AuthCard from "../components/Settings/Account/AuthCard.svelte";
   import AccountCenter from "../components/Settings/Account/AccountCenter.svelte";
+  import SyncSetting from "../components/Settings/SyncSetting.svelte";
 
   const t = $derived(getDict());
   const acct = $derived(accountState());
 
-  type Section = "profile" | "security" | "thirdparty" | "devices" | "danger";
+  type Section = "profile" | "security" | "thirdparty" | "devices" | "sync" | "danger";
   let section = $state<Section>("profile");
   let profile = $state<AccountProfile | null>(null);
   let loggingOut = $state(false);
   let staleNotice = $state("");
 
   const display = $derived(profile?.display_name || profile?.username || "…");
+
+  // AccountCenter 的 section 是不含 "sync" 的窄 union(同步段直挂,不经它),
+  // 这里派生收窄过类型检查;运行时 sync 分支在模板里已短路,它收不到 "sync"。
+  const centerSection = $derived<"profile" | "security" | "thirdparty" | "devices" | "danger">(
+    section === "sync" ? "profile" : section,
+  );
+
+  // 深链消费:响应式一次性信号(发起方先 requestAccountSection 再 navigate;
+  // 已在 /account 时页面不 remount,onMount 消费会丢,故必须 $effect)。
+  $effect(() => {
+    const p = pendingAccountSection();
+    if (!p) return;
+    section = p;
+    clearAccountSectionRequest(); // 二次触发读到 null → no-op,无循环
+  });
 
   async function loadProfile() {
     try {
@@ -55,6 +80,9 @@
     { key: "security", icon: ShieldCheck as any, label: t.settings.account.security },
     { key: "thirdparty", icon: Link2 as any, label: t.settings.account.thirdparty },
     { key: "devices", icon: MonitorSmartphone as any, label: t.settings.account.devices },
+    // 数据同步(2026-10-08 从设置页迁入;文案复用 settings.tab.sync):插危险区前,
+    // 视觉动线 = 账号域 → 同步 → 危险区垫底
+    { key: "sync", icon: RefreshCw as any, label: t.settings.tab.sync },
     { key: "danger", icon: TriangleAlert as any, label: t.settings.account.dangerZone, danger: true },
   ]);
 
@@ -146,10 +174,29 @@
           </button>
         {/each}
       {:else}
-        <button type="button" class="menu-item active" aria-current="true">
-          <span class="indicator" aria-hidden="true"></span>
+        <!-- 未登录:账号(认证卡片)+ 数据同步(静态 Token 自部署也要能配) -->
+        {@const syncActive = section === "sync"}
+        <button
+          type="button"
+          class="menu-item"
+          class:active={!syncActive}
+          aria-current={!syncActive ? "true" : undefined}
+          onclick={() => (section = "profile")}
+        >
+          {#if !syncActive}<span class="indicator" aria-hidden="true"></span>{/if}
           <UserRound size={16} />
           {t.settings.account.title}
+        </button>
+        <button
+          type="button"
+          class="menu-item"
+          class:active={syncActive}
+          aria-current={syncActive ? "true" : undefined}
+          onclick={() => (section = "sync")}
+        >
+          {#if syncActive}<span class="indicator" aria-hidden="true"></span>{/if}
+          <RefreshCw size={16} />
+          {t.settings.tab.sync}
         </button>
       {/if}
     </nav>
@@ -171,8 +218,13 @@
 
   <!-- 右侧内容区 -->
   <main class="content">
-    {#if acct.loaded && acct.user}
-      <AccountCenter {profile} {section} reloadProfile={loadProfile} />
+    {#if section === "sync"}
+      <!-- 数据同步段:状态/错误自持,已/未登录均可用,不走 AccountCenter -->
+      <div class="sync-holder">
+        <SyncSetting onGoAuth={() => (section = "profile")} />
+      </div>
+    {:else if acct.loaded && acct.user}
+      <AccountCenter {profile} section={centerSection} reloadProfile={loadProfile} />
     {:else if acct.loaded}
       <div class="auth-holder">
         <AuthCard onLoggedIn={onLoggedIn} />
@@ -355,6 +407,13 @@
 
   /* 未登录:认证卡片与资料内容同宽同起点(水平居中、顶部对齐) */
   .auth-holder {
+    max-width: 46rem;
+    margin: 0 auto;
+    padding: 0 0 3rem;
+  }
+
+  /* 数据同步段:与 AccountCenter 的 .ac-content 同宽居中(视觉对齐账号域) */
+  .sync-holder {
     max-width: 46rem;
     margin: 0 auto;
     padding: 0 0 3rem;

@@ -1,12 +1,14 @@
 <script lang="ts">
   // 顶栏同步状态指示器:小图标 + 悬停详情。
   // 状态: syncing(旋转)/ ok(绿✓)/ error(红⚠)/ idle(灰·从未同步)
-  // 点击 → 跳转设置→数据同步。
+  // 点击 → 跳转账号页「数据同步」段(2026-10-08 搬家:原落设置页默认 tab,
+  //   定位不准;现经 accountNav 一次性深链信号精准落段)。
 
   import { RefreshCw, Check, AlertTriangle } from "lucide-svelte";
   import { getDict } from "../../lib/i18n.svelte";
   import { syncState } from "../../lib/syncState.svelte";
   import { navigate } from "../../lib/router.svelte";
+  import { requestAccountSection } from "../../lib/accountNav.svelte";
 
   const t = $derived(getDict());
   const s = $derived(syncState());
@@ -31,7 +33,10 @@
   class="sync-indicator {status}"
   title={tooltip}
   aria-label={t.settings.sync.title}
-  onclick={() => navigate("/settings")}
+  onclick={() => {
+    requestAccountSection("sync");
+    navigate("/account");
+  }}
 >
   {#if status === "syncing"}
     <RefreshCw size={14} class="spin" />

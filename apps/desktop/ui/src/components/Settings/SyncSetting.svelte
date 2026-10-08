@@ -1,7 +1,10 @@
 <script lang="ts">
-  // 设置页「数据同步」标签(2026-09-15 拆分:本文件 = 标签壳 + 账号/连接/
-  // 自动同步/本机标识;改密码+设备管理 → SyncSecuritySection;冲突日志 →
-  // SyncConflictsSection —— 三段各自持有状态与错误,互不牵连)。
+  // 账号页「数据同步」段(2026-10-08 从设置页迁入;已/未登录均可见 ——
+  // 自部署静态 Token 用户不登录也要能配服务器地址/令牌)。
+  //
+  // 段构成:未登录 hint(仅未登录)+ 服务器连接 + 自动同步 + 本机标识 +
+  // 冲突日志(SyncConflictsSection)。改密码/设备管理本就与账号页「安全设置/
+  // 登录设备」重复,搬家时删除(原 SyncSecuritySection 一并删文件)。
   //
   // 配置存 SQLite meta(与 Rust 侧同步引擎同侧);「立即同步」走 sync_now:
   // push 推到清空 → pull 拉到空批 → 游标推进。自动同步(P1b):Rust 侧常驻
@@ -24,9 +27,10 @@
     markSyncing,
     markSyncDone,
   } from "../../lib/syncState.svelte";
-  import { navigate } from "../../lib/router.svelte";
-  import SyncSecuritySection from "./SyncSecuritySection.svelte";
   import SyncConflictsSection from "./SyncConflictsSection.svelte";
+
+  // onGoAuth:账号页传入「切回认证卡片」的回调(未登录 hint 的登录/注册按钮)。
+  let { onGoAuth }: { onGoAuth?: () => void } = $props();
 
   const t = $derived(getDict());
 
@@ -129,36 +133,21 @@
 <div>
   <h2 class="tab-title">{t.settings.sync.title}</h2>
 
-  <!-- 账号登录(P1b;优先于静态 Token) -->
-  <section class="group">
-    <h3 class="group-title">{t.settings.sync.accountSection}</h3>
-    <div class="group-body">
-      {#if authUser}
-        <div class="form-row">
-          <span class="row-label">{t.settings.sync.loggedIn}</span>
-          <div class="id-cell">
-            <code class="id-text">{authUser}</code>
-            <button type="button" class="copy" onclick={() => navigate("/account")}>
-              {t.settings.sync.manageAccount} →
-            </button>
-          </div>
-        </div>
-      {:else}
+  <!-- 未登录 hint(仅未登录显示;登录/注册回账号页认证卡片) -->
+  {#if !authUser}
+    <section class="group">
+      <div class="group-body">
         <div class="form-row">
           <span class="row-label">{t.settings.sync.notLoggedIn}</span>
           <div class="actions">
-            <button type="button" class="action" onclick={() => navigate("/account")}>
+            <button type="button" class="action" onclick={() => onGoAuth?.()}>
               {t.settings.account.tabLogin} / {t.settings.account.tabRegister} →
             </button>
           </div>
         </div>
-      {/if}
-      <p class="hint">{t.settings.sync.accountHint}</p>
-    </div>
-  </section>
-
-  {#if authUser}
-    <SyncSecuritySection />
+        <p class="hint">{t.settings.sync.accountHint}</p>
+      </div>
+    </section>
   {/if}
 
   <!-- 服务器连接 -->
