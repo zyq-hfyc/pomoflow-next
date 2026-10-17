@@ -36,6 +36,8 @@ argon2 = "0.5"
 jsonwebtoken = "9"
 sha2 = "0.10"
 rand = "0.8"
+# P4 后管内部通道:服务 token 常量时间比较(与 admin-bff 的 crypto/subtle 对应)
+subtle = "2"
 # CORS(P3a):Flutter Web(Chrome 预览)跨域;桌面端和 Android 原生不走 CORS,
 # 但开发期需要;P5 正式部署时收敛到 nginx/gateway 层
 tower-http = { version = "0.6", features = ["cors"] }

@@ -17,6 +17,7 @@ mod email_codes;
 mod email_handlers;
 mod errors;
 mod handlers;
+mod internal_handlers;
 mod mailer;
 mod state;
 
@@ -55,6 +56,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             jwt_secret.clone().unwrap_or_default()
         });
     let mailer = mailer::build_from_env().expect("邮件通道构建失败(检查 SMTP_* 配置)");
+    // P4 后管内部通道(Admin BFF 服务间调用,ADR-008);可选,未配 = 全组 403。
+    let internal_token = std::env::var("INTERNAL_SERVICE_TOKEN")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
 
     let pool = PgPoolOptions::new()
         .max_connections(8)
@@ -72,15 +77,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("应用 schema.sql 失败: {e}"))?;
 
     log::info!(
-        "sync-server listening on 0.0.0.0:{port}, user={}, auth={}, mail={}",
+        "sync-server listening on 0.0.0.0:{port}, user={}, auth={}, mail={}, internal={}",
         user_id.as_str(),
         if jwt_secret.is_some() {
             "jwt+static"
         } else {
             "static"
         },
-        mailer.mode()
+        mailer.mode(),
+        if internal_token.is_some() { "on" } else { "off" }
     );
+
+    // P4 后管内部端点:鉴权中间件只作用于这组路由(route_layer 先于 merge)。
+    let state = AppState {
+        pool: pool.clone(),
+        token: token.clone(),
+        user_id,
+        jwt_secret: jwt_secret.clone(),
+        code_pepper,
+        mailer: mailer.clone(),
+        internal_token,
+    };
+    let internal = internal_handlers::router().route_layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        internal_handlers::require_service_token,
+    ));
 
     let app = Router::new()
         .route("/v1/sync/push", post(handlers::push))
@@ -135,6 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/auth/export", get(email_handlers::export_data))
         .route("/v1/auth/login-logs", get(email_handlers::login_logs))
         .route("/healthz", get(handlers::healthz))
+        .merge(internal)
         // CORS:Flutter Web(Chrome 预览)跨域;桌面端/Android 原生不走 CORS。
         // 开发期 Any;P5 正式部署收敛到 nginx/gateway 层指定 origin。
         .layer(
@@ -146,14 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // 头像上传(PATCH /v1/auth/avatar):base64 + JSON envelope 后约 2.7 MB,
         // 超过 axum 默认 2 MB body limit 会 413。其它路由不需要这么大,综合放宽 8 MB。
         .layer(DefaultBodyLimit::max(8 * 1024 * 1024))
-        .with_state(AppState {
-            pool: pool.clone(),
-            token,
-            user_id,
-            jwt_secret,
-            code_pepper,
-            mailer,
-        });
+        .with_state(state);
 
     // 周期维护:启动一次 + 每 24h —— 过期验证码清理 + 到期注销账号级联删除
     tokio::spawn(cleanup_task(pool));

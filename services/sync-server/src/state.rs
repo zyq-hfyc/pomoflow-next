@@ -19,6 +19,8 @@ use crate::mailer::MailSender;
 ///   refresh),不设则只认静态 Token(与 P1a 行为完全一致)
 /// - `CODE_PEPPER`:验证码 HMAC pepper(P1d);未设回落 JWT_SECRET 并告警
 /// - `SMTP_HOST/PORT/USER/PASS/FROM`:发信通道;未配置 = 日志模式(开发)
+/// - `INTERNAL_SERVICE_TOKEN`:P4 后管内部通道(Admin BFF 服务间调用)Bearer;
+///   未配置 = /internal/* 全组 403(与用户 token 体系完全独立)
 /// - `PORT`:监听端口(默认 8080)
 #[derive(Clone)]
 pub struct AppState {
@@ -31,6 +33,8 @@ pub struct AppState {
     pub code_pepper: String,
     /// 邮件发送(SMTP 或日志模式)
     pub mailer: Arc<dyn MailSender>,
+    /// None = 后管内部通道未启用(/internal/* 一律 403)
+    pub internal_token: Option<String>,
 }
 
 impl AppState {
