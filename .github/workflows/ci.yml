@@ -17,10 +17,12 @@ on:
 # tag 触发保留(与 release.yml 三平台打包互锁),另加 workflow_dispatch
 # 供手动重跑。
 #
-# 覆盖(5 job):
+# 覆盖(7 job):
 #   rust fmt / clippy / test —— workspace 全 4 crate,test 是本 CI 的核心增量
 #   ui —— svelte-check(错误级)+ tsc --noEmit + vite build
 #   mobile —— flutter analyze(零 issue)+ flutter test(单测,sqflite ffi)
+#   admin-bff —— Go 服务:build + vet + test(P4 管理后台;本机无 Go,靠此门禁)
+#   admin-ui —— React 管理台:oxlint + tsc -b + vite build + vitest
 
 concurrency:
   # 同分支连续 push 时旧的自动取消(省 CI 额度)
@@ -198,3 +200,56 @@ jobs:
       - name: flutter test
         working-directory: apps/mobile
         run: flutter test
+
+  admin-bff:
+    name: admin-bff (go build + vet + test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/admin-bff/go.mod
+          cache-dependency-path: services/admin-bff/go.sum
+
+      - name: go build
+        working-directory: services/admin-bff
+        run: go build ./...
+
+      - name: go vet
+        working-directory: services/admin-bff
+        run: go vet ./...
+
+      - name: go test
+        working-directory: services/admin-bff
+        run: go test -race ./...
+
+  admin-ui:
+    name: admin UI (oxlint + tsc + vitest + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/admin/package-lock.json
+
+      - name: npm ci
+        working-directory: apps/admin
+        run: npm ci
+
+      - name: oxlint
+        working-directory: apps/admin
+        run: npm run lint
+
+      - name: tsc + vite build
+        working-directory: apps/admin
+        run: npm run build
+
+      - name: vitest
+        working-directory: apps/admin
+        run: npm test
