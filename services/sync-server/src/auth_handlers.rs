@@ -21,12 +21,25 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth;
+use crate::errors::{ACCOUNT_BANNED_CODE, ACCOUNT_BANNED_MESSAGE, INTERNAL_ERROR_MESSAGE};
 use crate::state::AppState;
 
 type ApiError = (StatusCode, String);
 
 fn internal(e: sqlx::Error) -> ApiError {
-    (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {e}"))
+    log::error!("database error: {e}");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        INTERNAL_ERROR_MESSAGE.into(),
+    )
+}
+
+/// 旧文本端点也保留稳定机器码,P1d 包装时可直接识别。
+pub(crate) fn account_banned_error() -> ApiError {
+    (
+        StatusCode::FORBIDDEN,
+        format!("{ACCOUNT_BANNED_CODE}: {ACCOUNT_BANNED_MESSAGE}"),
+    )
 }
 
 /// 登录失败限流(2026-09-15 批 6:按 IP 计近 15 分钟失败次数,≥5 次锁出)。
@@ -154,24 +167,39 @@ pub(crate) fn require_jwt(app: &AppState) -> Result<&str, ApiError> {
     ))
 }
 
-/// 签发一对新 token 并把 refresh 落库。
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn issue_tokens(
+/// 在调用方事务内签发 token。用户行锁同时覆盖 cutoff 读取与 refresh 插入,
+/// 使发牌与改密/强制下线共享同一串行边界。
+pub(crate) async fn issue_tokens_on(
     app: &AppState,
+    conn: &mut sqlx::PgConnection,
     user_id: &str,
     username: &str,
     device_id: &str,
     device_name: &str,
 ) -> Result<AuthTokens, ApiError> {
     let secret = require_jwt(app)?;
-    let access =
-        auth::issue_access(secret, user_id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let account: Option<(Option<i64>, Option<i64>)> = sqlx::query_as(
+        "SELECT banned_ms, access_revoked_before_ms FROM users WHERE id = $1 FOR UPDATE",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(internal)?;
+    let Some((banned_ms, cutoff)) = account else {
+        return Err((StatusCode::UNAUTHORIZED, "账号不存在或已删除".into()));
+    };
+    if banned_ms.is_some() {
+        return Err(account_banned_error());
+    }
+
     let refresh = auth::new_refresh_token();
     let now = chrono::Utc::now().timestamp_millis();
-    sqlx::query(
+    // 先取得 refresh 行 id,再签 access:sid 将二者绑定,单会话吊销可立即失效 access。
+    let session_id: i64 = sqlx::query_scalar(
         "INSERT INTO refresh_tokens
             (user_id, token_hash, device_id, device_name, created_ms, expires_ms)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id",
     )
     .bind(user_id)
     .bind(auth::sha256_hex(&refresh))
@@ -179,9 +207,11 @@ pub(crate) async fn issue_tokens(
     .bind(device_name)
     .bind(now)
     .bind(now + auth::REFRESH_TTL_SECS * 1000)
-    .execute(&app.pool)
+    .fetch_one(&mut *conn)
     .await
     .map_err(internal)?;
+    let access = auth::issue_access(secret, user_id, Some(session_id), cutoff)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(AuthTokens {
         user_id: user_id.to_string(),
         username: username.to_string(),
@@ -189,6 +219,20 @@ pub(crate) async fn issue_tokens(
         refresh_token: refresh,
         expires_in: auth::ACCESS_TTL_SECS,
     })
+}
+
+/// 签发一对新 token 并把 refresh 落库(独立事务包装)。
+pub(crate) async fn issue_tokens(
+    app: &AppState,
+    user_id: &str,
+    username: &str,
+    device_id: &str,
+    device_name: &str,
+) -> Result<AuthTokens, ApiError> {
+    let mut tx = app.pool.begin().await.map_err(internal)?;
+    let tokens = issue_tokens_on(app, &mut tx, user_id, username, device_id, device_name).await?;
+    tx.commit().await.map_err(internal)?;
+    Ok(tokens)
 }
 
 /// POST /v1/auth/register —— 注册;首账号 + 运维静态 Token = 采纳 SYNC_USER_ID。
@@ -278,18 +322,20 @@ pub async fn login(
     require_jwt(&app)?;
     check_login_rate_limit(&app, &addr.ip().to_string()).await?;
     let username = req.username.trim().to_string();
-    let row: Option<(String, String, String)> =
-        sqlx::query_as("SELECT id, username, password_hash FROM users WHERE username = $1")
-            .bind(&username)
-            .fetch_optional(&app.pool)
-            .await
-            .map_err(internal)?;
+    let mut tx = app.pool.begin().await.map_err(internal)?;
+    let row: Option<(String, String, String, Option<i64>)> = sqlx::query_as(
+        "SELECT id, username, password_hash, banned_ms FROM users WHERE username = $1 FOR UPDATE",
+    )
+    .bind(&username)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(internal)?;
 
     let ip = addr.ip().to_string();
     let dev_id = req.device_id.as_deref().unwrap_or("");
     let dev_name = req.device_name.as_deref().unwrap_or("");
     // 统一返回"用户名或密码错误",不给探测口子
-    let Some((user_id, username, password_hash)) = row else {
+    let Some((user_id, username, password_hash, banned_ms)) = row else {
         log_login(
             &app,
             "",
@@ -317,55 +363,93 @@ pub async fn login(
         .await;
         return Err((StatusCode::UNAUTHORIZED, "用户名或密码错误".into()));
     }
+    // 密码通过后再显式报封禁,避免用错误密码探测账号状态;失败不得写成成功日志。
+    if banned_ms.is_some() {
+        log_login(
+            &app,
+            &user_id,
+            dev_id,
+            dev_name,
+            &ip,
+            "username",
+            false,
+            ACCOUNT_BANNED_CODE,
+        )
+        .await;
+        return Err(account_banned_error());
+    }
+    let tokens = issue_tokens_on(&app, &mut tx, &user_id, &username, dev_id, dev_name).await?;
+    tx.commit().await.map_err(internal)?;
     log_login(&app, &user_id, dev_id, dev_name, &ip, "username", true, "").await;
-    let tokens = issue_tokens(
-        &app,
-        &user_id,
-        &username,
-        req.device_id.as_deref().unwrap_or(""),
-        req.device_name.as_deref().unwrap_or(""),
-    )
-    .await?;
     Ok(Json(tokens))
 }
 
-/// POST /v1/auth/refresh —— 轮换:旧 refresh 吊销 + 新对签发。
+/// POST /v1/auth/refresh —— 事务内原子消费旧 refresh,并签发新对。
 pub async fn refresh(
     State(app): State<AppState>,
     Json(req): Json<RefreshRequest>,
 ) -> Result<Json<AuthTokens>, ApiError> {
     require_jwt(&app)?;
-    let now = chrono::Utc::now().timestamp_millis();
-    let row: Option<(String, String, String, String)> = sqlx::query_as(
-        "SELECT u.id, u.username, rt.device_id, rt.device_name FROM refresh_tokens rt
-         JOIN users u ON u.id = rt.user_id
-         WHERE rt.token_hash = $1 AND rt.revoked_ms IS NULL AND rt.expires_ms > $2",
-    )
-    .bind(auth::sha256_hex(&req.refresh_token))
-    .bind(now)
-    .fetch_optional(&app.pool)
-    .await
-    .map_err(internal)?;
+    let token_hash = auth::sha256_hex(&req.refresh_token);
+    let mut tx = app.pool.begin().await.map_err(internal)?;
 
-    let Some((user_id, username, device_id, device_name)) = row else {
+    // 先定位用户,再按与 force_logout 相同的顺序锁用户行;条件 UPDATE 是最终原子消费闸。
+    let user_id: Option<String> =
+        sqlx::query_scalar("SELECT user_id FROM refresh_tokens WHERE token_hash = $1")
+            .bind(&token_hash)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(internal)?;
+    let Some(user_id) = user_id else {
         return Err((
             StatusCode::UNAUTHORIZED,
             "refresh token 无效或已过期".into(),
         ));
     };
-    // 轮换:吊销旧的(已吊销/过期的不可能走到这里)
-    sqlx::query("UPDATE refresh_tokens SET revoked_ms = $1 WHERE token_hash = $2")
-        .bind(now)
-        .bind(auth::sha256_hex(&req.refresh_token))
-        .execute(&app.pool)
-        .await
-        .map_err(internal)?;
+    let account: Option<(String, Option<i64>)> =
+        sqlx::query_as("SELECT username, banned_ms FROM users WHERE id = $1 FOR UPDATE")
+            .bind(&user_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(internal)?;
+    let Some((username, banned_ms)) = account else {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "refresh token 无效或已过期".into(),
+        ));
+    };
+    if banned_ms.is_some() {
+        return Err(account_banned_error());
+    }
 
-    let tokens = issue_tokens(&app, &user_id, &username, &device_id, &device_name).await?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let consumed: Option<(String, String)> = sqlx::query_as(
+        "UPDATE refresh_tokens SET revoked_ms = $1
+         WHERE token_hash = $2 AND user_id = $3 AND revoked_ms IS NULL AND expires_ms > $1
+         RETURNING device_id, device_name",
+    )
+    .bind(now)
+    .bind(&token_hash)
+    .bind(&user_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let Some((device_id, device_name)) = consumed else {
+        // 并发 refresh / force_logout 已消费或吊销;旧 token 不得二次换发。
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "refresh token 无效或已过期".into(),
+        ));
+    };
+
+    let tokens =
+        issue_tokens_on(&app, &mut tx, &user_id, &username, &device_id, &device_name).await?;
+    tx.commit().await.map_err(internal)?;
     Ok(Json(tokens))
 }
 
-/// POST /v1/auth/logout —— 吊销指定 refresh token(access 到期自然失效;幂等)。
+/// POST /v1/auth/logout —— 吊销指定 refresh token(幂等)。带 sid access 立即失效;
+/// 过渡期无 sid 单会话 access 无法定位到某一行,只能等 exp;logout 对 banned 仍开放。
 pub async fn logout(
     State(app): State<AppState>,
     Json(req): Json<RefreshRequest>,
@@ -393,21 +477,29 @@ pub async fn change_password(
     headers: HeaderMap,
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<Json<AuthTokens>, ApiError> {
-    let auth_user = authenticate(&app, &headers)?;
+    let auth_user = authenticate(&app, &headers).await?;
     let user_str = auth_user.as_str();
-    let hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
-        .bind(user_str)
-        .fetch_optional(&app.pool)
-        .await
-        .map_err(internal)?;
-    let Some(hash) = hash else {
-        return Err((StatusCode::NOT_FOUND, "账号不存在".into()));
-    };
-    if !auth::verify_password(&req.old_password, &hash) {
-        return Err((StatusCode::UNAUTHORIZED, "旧密码不正确".into()));
-    }
     if !auth::valid_password(&req.new_password) {
         return Err((StatusCode::BAD_REQUEST, "新密码需 8-128 位".into()));
+    }
+
+    // 与 login/refresh 共用用户行锁:旧密码验证、改密、吊销与新发牌是同一原子协议。
+    let mut tx = app.pool.begin().await.map_err(internal)?;
+    let account: Option<(String, String, Option<i64>)> = sqlx::query_as(
+        "SELECT password_hash, username, banned_ms FROM users WHERE id = $1 FOR UPDATE",
+    )
+    .bind(user_str)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let Some((hash, username, banned_ms)) = account else {
+        return Err((StatusCode::NOT_FOUND, "账号不存在".into()));
+    };
+    if banned_ms.is_some() {
+        return Err(account_banned_error());
+    }
+    if !auth::verify_password(&req.old_password, &hash) {
+        return Err((StatusCode::UNAUTHORIZED, "旧密码不正确".into()));
     }
     let new_hash = auth::hash_password(&req.new_password)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -415,50 +507,49 @@ pub async fn change_password(
     sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
         .bind(&new_hash)
         .bind(user_str)
-        .execute(&app.pool)
+        .execute(&mut *tx)
         .await
         .map_err(internal)?;
-    // 全端踢出:旧 refresh 全部吊销
-    sqlx::query(
-        "UPDATE refresh_tokens SET revoked_ms = $1 WHERE user_id = $2 AND revoked_ms IS NULL",
-    )
-    .bind(now)
-    .bind(user_str)
-    .execute(&app.pool)
-    .await
-    .map_err(internal)?;
-    let username: String = sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
-        .bind(user_str)
-        .fetch_one(&app.pool)
+    force_logout_user_on(&mut tx, user_str, now)
         .await
         .map_err(internal)?;
-    let tokens = issue_tokens(
+    let tokens = issue_tokens_on(
         &app,
+        &mut tx,
         user_str,
         &username,
         req.device_id.as_deref().unwrap_or(""),
         req.device_name.as_deref().unwrap_or(""),
     )
     .await?;
+    tx.commit().await.map_err(internal)?;
     Ok(Json(tokens))
 }
 
 /// 会话请求的公共内核:用调用方 refresh token 定位用户与当前行 id。
 async fn resolve_session(app: &AppState, refresh_token: &str) -> Result<(String, i64), ApiError> {
     let now = chrono::Utc::now().timestamp_millis();
-    let row: Option<(String, i64)> = sqlx::query_as(
-        "SELECT user_id, id FROM refresh_tokens
-         WHERE token_hash = $1 AND revoked_ms IS NULL AND expires_ms > $2",
+    let row: Option<(String, i64, Option<i64>)> = sqlx::query_as(
+        "SELECT rt.user_id, rt.id, u.banned_ms
+         FROM refresh_tokens rt
+         JOIN users u ON u.id = rt.user_id
+         WHERE rt.token_hash = $1 AND rt.revoked_ms IS NULL AND rt.expires_ms > $2",
     )
     .bind(auth::sha256_hex(refresh_token))
     .bind(now)
     .fetch_optional(&app.pool)
     .await
     .map_err(internal)?;
-    row.ok_or((
-        StatusCode::UNAUTHORIZED,
-        "refresh token 无效或已过期".into(),
-    ))
+    let Some((user_id, session_id, banned_ms)) = row else {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "refresh token 无效或已过期".into(),
+        ));
+    };
+    if banned_ms.is_some() {
+        return Err(account_banned_error());
+    }
+    Ok((user_id, session_id))
 }
 
 /// POST /v1/auth/sessions —— 有效会话列表(current 标记调用方自己)。
@@ -507,19 +598,10 @@ pub async fn revoke_session(
             "不能踢出当前会话(请用退出登录)".into(),
         ));
     }
-    let now = chrono::Utc::now().timestamp_millis();
-    let n = sqlx::query(
-        "UPDATE refresh_tokens SET revoked_ms = $1
-         WHERE id = $2 AND user_id = $3 AND revoked_ms IS NULL",
-    )
-    .bind(now)
-    .bind(req.revoke_id)
-    .bind(&user_id)
-    .execute(&app.pool)
-    .await
-    .map_err(internal)?
-    .rows_affected();
-    if n == 0 {
+    let revoked = force_logout_session(&app, &user_id, req.revoke_id)
+        .await
+        .map_err(internal)?;
+    if !revoked {
         return Err((StatusCode::NOT_FOUND, "会话不存在或已下线".into()));
     }
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -532,6 +614,27 @@ pub async fn revoke_others(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let (user_id, current_id) = resolve_session(&app, &req.refresh_token).await?;
     let now = chrono::Utc::now().timestamp_millis();
+    let mut tx = app.pool.begin().await.map_err(internal)?;
+    // 全局 cutoff 覆盖无 sid legacy access;当前 refresh 保留,可换新 access。
+    advance_access_cutoff_on(&mut tx, &user_id, now)
+        .await
+        .map_err(internal)?;
+    let current_active: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM refresh_tokens
+         WHERE id = $1 AND user_id = $2 AND revoked_ms IS NULL AND expires_ms > $3)",
+    )
+    .bind(current_id)
+    .bind(&user_id)
+    .bind(now)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?;
+    if !current_active {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "refresh token 无效或已过期".into(),
+        ));
+    }
     let n = sqlx::query(
         "UPDATE refresh_tokens SET revoked_ms = $1
          WHERE user_id = $2 AND id <> $3 AND revoked_ms IS NULL",
@@ -539,24 +642,163 @@ pub async fn revoke_others(
     .bind(now)
     .bind(&user_id)
     .bind(current_id)
-    .execute(&app.pool)
+    .execute(&mut *tx)
     .await
     .map_err(internal)?
     .rows_affected();
+    tx.commit().await.map_err(internal)?;
     Ok(Json(serde_json::json!({ "ok": true, "revoked": n })))
 }
 
-/// 认证 sync 端点:Bearer → JWT(若启用)→ 静态 Token 回落;返回已认证 user_id。
-/// (放这里供 handlers.rs 复用;纯函数便于单测的部分在 auth.rs)
-pub fn authenticate(app: &AppState, headers: &HeaderMap) -> Result<Id, ApiError> {
+/// 在调用方事务内推进 access cutoff,并通过 UPDATE 锁住用户行。
+/// cutoff 取 now + 1ms:legacy token 只有秒级 iat,即使与操作同秒也严格早于 cutoff。
+async fn advance_access_cutoff_on(
+    conn: &mut sqlx::PgConnection,
+    user_id: &str,
+    now_ms: i64,
+) -> Result<(), sqlx::Error> {
+    let cutoff = now_ms.saturating_add(1);
+    let updated: Option<String> = sqlx::query_scalar(
+        "UPDATE users
+         SET access_revoked_before_ms = GREATEST(COALESCE(access_revoked_before_ms, $1), $1)
+         WHERE id = $2
+         RETURNING id",
+    )
+    .bind(cutoff)
+    .bind(user_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if updated.is_none() {
+        return Err(sqlx::Error::RowNotFound);
+    }
+    Ok(())
+}
+
+/// 在调用方事务内执行用户级强制下线;必须先锁/更新用户行,再吊销 refresh。
+pub(crate) async fn force_logout_user_on(
+    conn: &mut sqlx::PgConnection,
+    user_id: &str,
+    now_ms: i64,
+) -> Result<(), sqlx::Error> {
+    advance_access_cutoff_on(conn, user_id, now_ms).await?;
+    sqlx::query(
+        "UPDATE refresh_tokens SET revoked_ms = $1 WHERE user_id = $2 AND revoked_ms IS NULL",
+    )
+    .bind(now_ms)
+    .bind(user_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// 用户级强制下线的独立事务包装(P4 后管内部复用)。
+#[allow(dead_code)] // 后管封禁/强制下线写路径复用;当前协议内流程使用 *_on 形态。
+pub(crate) async fn force_logout_user(app: &AppState, user_id: &str) -> Result<(), sqlx::Error> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut tx = app.pool.begin().await?;
+    force_logout_user_on(&mut tx, user_id, now).await?;
+    tx.commit().await
+}
+
+/// 单会话强制下线:带 sid 的 access 会因对应 refresh 行吊销而立即失效。
+/// 无 sid legacy access 不绑定任何单行,只能等 exp;用户级操作会用 cutoff 覆盖。
+pub(crate) async fn force_logout_session(
+    app: &AppState,
+    user_id: &str,
+    session_id: i64,
+) -> Result<bool, sqlx::Error> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let n = sqlx::query(
+        "UPDATE refresh_tokens SET revoked_ms = $1
+         WHERE id = $2 AND user_id = $3 AND revoked_ms IS NULL",
+    )
+    .bind(now)
+    .bind(session_id)
+    .bind(user_id)
+    .execute(&app.pool)
+    .await?
+    .rows_affected();
+    Ok(n == 1)
+}
+
+fn access_denial_error(denial: auth::AccessDenial) -> ApiError {
+    match denial {
+        auth::AccessDenial::AccountBanned => account_banned_error(),
+        auth::AccessDenial::AccountMissing => {
+            (StatusCode::UNAUTHORIZED, "账号不存在或已删除".into())
+        }
+        auth::AccessDenial::AccessRevoked => {
+            (StatusCode::UNAUTHORIZED, "access token 已被强制下线".into())
+        }
+        auth::AccessDenial::SessionMissing
+        | auth::AccessDenial::SessionWrongUser
+        | auth::AccessDenial::SessionRevoked
+        | auth::AccessDenial::SessionExpired => (
+            StatusCode::UNAUTHORIZED,
+            "access token 会话无效或已过期".into(),
+        ),
+    }
+}
+
+/// JWT 验签后的 DB 授权。与纯 token 解码分离,便于无 PG 单测状态判定。
+async fn authorize_access(app: &AppState, claims: &auth::AccessClaims) -> Result<(), ApiError> {
+    let row: Option<(Option<i64>, Option<i64>)> =
+        sqlx::query_as("SELECT banned_ms, access_revoked_before_ms FROM users WHERE id = $1")
+            .bind(&claims.sub)
+            .fetch_optional(&app.pool)
+            .await
+            .map_err(internal)?;
+    let account = row.map(
+        |(banned_ms, access_revoked_before_ms)| auth::AccountStatus {
+            banned_ms,
+            access_revoked_before_ms,
+        },
+    );
+    auth::check_account_access(claims.issued_at_ms(), account).map_err(access_denial_error)?;
+
+    if let Some(session_id) = claims.sid {
+        let now = chrono::Utc::now().timestamp_millis();
+        let row: Option<(String, Option<i64>, i64)> = sqlx::query_as(
+            "SELECT user_id, revoked_ms, expires_ms FROM refresh_tokens WHERE id = $1",
+        )
+        .bind(session_id)
+        .fetch_optional(&app.pool)
+        .await
+        .map_err(internal)?;
+        let session = row.map(|(user_id, revoked_ms, expires_ms)| auth::SessionStatus {
+            user_id,
+            revoked_ms,
+            expires_ms,
+        });
+        auth::check_session_access(&claims.sub, session, now).map_err(access_denial_error)?;
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+pub(crate) struct AuthenticatedUser {
+    pub id: Id,
+    pub session_id: Option<i64>,
+}
+
+/// 返回 user_id 与 access 绑定的当前 sid,供需要保留当前会话的敏感操作使用。
+pub async fn authenticate_detailed(
+    app: &AppState,
+    headers: &HeaderMap,
+) -> Result<AuthenticatedUser, ApiError> {
     let Some(token) = bearer(headers) else {
         return Err((StatusCode::UNAUTHORIZED, "missing bearer token".into()));
     };
     // 1) JWT(配置了 JWT_SECRET 才尝试;静态 token 不是 JWT 格式,解析失败无副作用)
     if let Some(secret) = app.jwt_secret.as_deref() {
-        if let Some(user) = auth::verify_access(secret, token) {
-            return Id::parse(&user)
-                .ok_or((StatusCode::UNAUTHORIZED, "jwt sub 不是合法 UUID".into()));
+        if let Some(claims) = auth::verify_access(secret, token) {
+            let user = Id::parse(&claims.sub)
+                .ok_or((StatusCode::UNAUTHORIZED, "jwt sub 不是合法 UUID".into()))?;
+            authorize_access(app, &claims).await?;
+            return Ok(AuthenticatedUser {
+                id: user,
+                session_id: claims.sid,
+            });
         }
     }
     // 2) 静态 Token 回落:**仅账号体系未启用(未配 JWT_SECRET)的纯静态模式**。
@@ -566,16 +808,27 @@ pub fn authenticate(app: &AppState, headers: &HeaderMap) -> Result<Id, ApiError>
     //    端点的显式校验(register 的 operator_ok、email_handlers 的
     //    bearer_static),不经此处。
     if app.jwt_secret.is_none() && token == app.token {
-        return Ok(app.user_id.clone());
+        return Ok(AuthenticatedUser {
+            id: app.user_id.clone(),
+            session_id: None,
+        });
     }
     Err((StatusCode::UNAUTHORIZED, "invalid token".into()))
+}
+
+/// 认证 sync 端点:Bearer → JWT(验签 + DB 授权)→ 纯静态 Token 回落。
+/// 纯静态模式不触库;JWT 模式必须确认 users 仍存在且账号/会话可用。
+pub async fn authenticate(app: &AppState, headers: &HeaderMap) -> Result<Id, ApiError> {
+    authenticate_detailed(app, headers)
+        .await
+        .map(|authenticated| authenticated.id)
 }
 
 #[cfg(test)]
 mod tests {
     //! authenticate() 的 C1 回归锁(2026-10-02):JWT 启用后静态 SYNC_TOKEN
     //! 不得再被受保护端点接受;纯静态模式(未配 JWT_SECRET)回落保持可用。
-    //! lazy PgPool 不建连(authenticate 不触库)。
+    //! 这里只覆盖不触库的 token 分支;DB 授权状态判定在 auth.rs 纯函数测试中覆盖。
     use super::*;
     use crate::mailer::LogSender;
     use axum::http::header::AUTHORIZATION;
@@ -604,31 +857,40 @@ mod tests {
     #[tokio::test]
     async fn static_token_rejected_when_jwt_enabled() {
         let app = test_app(Some("secret"));
-        let err = authenticate(&app, &headers_with("static-token")).unwrap_err();
+        let err = authenticate(&app, &headers_with("static-token"))
+            .await
+            .unwrap_err();
         assert_eq!(err.0, StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
     async fn static_token_accepted_in_pure_static_mode() {
         let app = test_app(None);
-        let user = authenticate(&app, &headers_with("static-token")).unwrap();
+        let user = authenticate(&app, &headers_with("static-token"))
+            .await
+            .unwrap();
         assert_eq!(user.as_str(), STATIC_UID);
+        let detailed = authenticate_detailed(&app, &headers_with("static-token"))
+            .await
+            .unwrap();
+        assert_eq!(detailed.id.as_str(), STATIC_UID);
+        assert_eq!(detailed.session_id, None);
     }
 
-    #[tokio::test]
-    async fn jwt_accepted_when_enabled() {
-        let app = test_app(Some("secret"));
-        let jwt = auth::issue_access("secret", "22222222-2222-4222-8222-222222222222")
-            .expect("签发 access token");
-        let user = authenticate(&app, &headers_with(&jwt)).unwrap();
-        assert_eq!(user.as_str(), "22222222-2222-4222-8222-222222222222");
+    #[test]
+    fn legacy_db_error_does_not_leak_details() {
+        let error = internal(sqlx::Error::RowNotFound);
+        assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(error.1, INTERNAL_ERROR_MESSAGE);
     }
 
     #[tokio::test]
     async fn wrong_or_missing_token_rejected_in_both_modes() {
         for app in [test_app(None), test_app(Some("secret"))] {
-            assert!(authenticate(&app, &headers_with("wrong-token")).is_err());
-            assert!(authenticate(&app, &HeaderMap::new()).is_err());
+            assert!(authenticate(&app, &headers_with("wrong-token"))
+                .await
+                .is_err());
+            assert!(authenticate(&app, &HeaderMap::new()).await.is_err());
         }
     }
 }

@@ -12,6 +12,10 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
 
+pub const ACCOUNT_BANNED_CODE: &str = "ACCOUNT_BANNED";
+pub const ACCOUNT_BANNED_MESSAGE: &str = "账号已被封禁";
+pub const INTERNAL_ERROR_MESSAGE: &str = "internal server error";
+
 #[derive(Debug)]
 pub struct ApiErr {
     pub status: StatusCode,
@@ -38,6 +42,14 @@ impl ApiErr {
         Self::new(StatusCode::UNAUTHORIZED, "UNAUTHORIZED", message)
     }
 
+    pub fn account_banned() -> Self {
+        Self::new(
+            StatusCode::FORBIDDEN,
+            ACCOUNT_BANNED_CODE,
+            ACCOUNT_BANNED_MESSAGE,
+        )
+    }
+
     pub fn not_found(message: impl Into<String>) -> Self {
         Self::new(StatusCode::NOT_FOUND, "NOT_FOUND", message)
     }
@@ -61,7 +73,8 @@ impl ApiErr {
     }
 
     pub fn db(e: sqlx::Error) -> Self {
-        Self::internal(format!("db: {e}"))
+        log::error!("database error: {e}");
+        Self::internal(INTERNAL_ERROR_MESSAGE)
     }
 }
 
@@ -81,5 +94,18 @@ impl IntoResponse for ApiErr {
             }
         }
         resp
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn db_error_response_does_not_leak_database_details() {
+        let error = ApiErr::db(sqlx::Error::RowNotFound);
+        assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(error.code, "INTERNAL");
+        assert_eq!(error.message, INTERNAL_ERROR_MESSAGE);
     }
 }

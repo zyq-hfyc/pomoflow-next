@@ -13,9 +13,12 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::auth;
-use crate::auth_handlers::{authenticate, issue_tokens, log_login, AuthTokens};
+use crate::auth_handlers::{
+    authenticate_detailed, force_logout_user_on, issue_tokens, issue_tokens_on, log_login,
+    AuthTokens, AuthenticatedUser,
+};
 use crate::email_codes as ec;
-use crate::errors::ApiErr;
+use crate::errors::{ApiErr, ACCOUNT_BANNED_CODE};
 use crate::state::AppState;
 
 type ApiJson<T> = Result<(StatusCode, Json<T>), ApiErr>;
@@ -24,14 +27,42 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-/// 旧认证函数的错误类型 → ApiErr(仅做包装,不改语义)。
-fn auth_user(app: &AppState, headers: &HeaderMap) -> Result<Id, ApiErr> {
-    authenticate(app, headers).map_err(|(status, message)| ApiErr {
+/// 旧认证函数的错误类型 → ApiErr,保留封禁机器码与内部错误语义。
+fn legacy_auth_error_code(status: StatusCode, message: &str) -> &'static str {
+    if message.starts_with(ACCOUNT_BANNED_CODE) {
+        ACCOUNT_BANNED_CODE
+    } else if status == StatusCode::INTERNAL_SERVER_ERROR {
+        "INTERNAL"
+    } else if status == StatusCode::FORBIDDEN {
+        "FORBIDDEN"
+    } else {
+        "UNAUTHORIZED"
+    }
+}
+
+fn legacy_auth_error(status: StatusCode, message: String) -> ApiErr {
+    let code = legacy_auth_error_code(status, &message);
+    ApiErr {
         status,
-        code: "UNAUTHORIZED",
+        code,
         message,
         retry_after_secs: None,
-    })
+    }
+}
+
+async fn auth_user_detailed(
+    app: &AppState,
+    headers: &HeaderMap,
+) -> Result<AuthenticatedUser, ApiErr> {
+    authenticate_detailed(app, headers)
+        .await
+        .map_err(|(status, message)| legacy_auth_error(status, message))
+}
+
+async fn auth_user(app: &AppState, headers: &HeaderMap) -> Result<Id, ApiErr> {
+    auth_user_detailed(app, headers)
+        .await
+        .map(|authenticated| authenticated.id)
 }
 
 fn bearer_static(app: &AppState, headers: &HeaderMap) -> bool {
@@ -144,8 +175,14 @@ pub struct ProfileResponse {
 
 // === 验证码核对(共用内核)==================================================
 
-/// 校验并消费验证码:错码 attempts+1,达上限作废;对/错/无码返回统一语义。
-async fn verify_code(app: &AppState, email: &str, purpose: &str, code: &str) -> Result<(), ApiErr> {
+/// 在调用方事务内校验并消费验证码:错码 attempts+1,达上限作废。
+async fn verify_code_on(
+    app: &AppState,
+    conn: &mut sqlx::PgConnection,
+    email: &str,
+    purpose: &str,
+    code: &str,
+) -> Result<(), ApiErr> {
     if !ec::looks_like_code(code) {
         return Err(ApiErr::bad_request("CODE_INVALID", "验证码错误或已过期"));
     }
@@ -153,12 +190,12 @@ async fn verify_code(app: &AppState, email: &str, purpose: &str, code: &str) -> 
     let row: Option<(i64, String, i32)> = sqlx::query_as(
         "SELECT id, code_hash, attempts FROM email_codes
          WHERE email = $1 AND purpose = $2 AND used_ms IS NULL AND expires_ms > $3
-         ORDER BY created_ms DESC LIMIT 1",
+         ORDER BY created_ms DESC LIMIT 1 FOR UPDATE",
     )
     .bind(email)
     .bind(purpose)
     .bind(now)
-    .fetch_optional(&app.pool)
+    .fetch_optional(&mut *conn)
     .await
     .map_err(ApiErr::db)?;
 
@@ -175,14 +212,14 @@ async fn verify_code(app: &AppState, email: &str, purpose: &str, code: &str) -> 
         sqlx::query("UPDATE email_codes SET used_ms = $1 WHERE id = $2")
             .bind(now)
             .bind(id)
-            .execute(&app.pool)
+            .execute(&mut *conn)
             .await
             .map_err(ApiErr::db)?;
         Ok(())
     } else {
-        sqlx::query("UPDATE email_codes SET attempts = attempts + 1 WHERE id = $2")
+        sqlx::query("UPDATE email_codes SET attempts = attempts + 1 WHERE id = $1")
             .bind(id)
-            .execute(&app.pool)
+            .execute(&mut *conn)
             .await
             .map_err(ApiErr::db)?;
         if attempts + 1 >= ec::CODE_MAX_ATTEMPTS {
@@ -194,6 +231,14 @@ async fn verify_code(app: &AppState, email: &str, purpose: &str, code: &str) -> 
             Err(ApiErr::bad_request("CODE_INVALID", "验证码错误或已过期"))
         }
     }
+}
+
+/// 独立验证码操作包装:成功消费或失败计数都在本事务提交。
+async fn verify_code(app: &AppState, email: &str, purpose: &str, code: &str) -> Result<(), ApiErr> {
+    let mut tx = app.pool.begin().await.map_err(ApiErr::db)?;
+    let result = verify_code_on(app, &mut tx, email, purpose, code).await;
+    tx.commit().await.map_err(ApiErr::db)?;
+    result
 }
 
 /// 发送频控(按 email_codes 行数统计):邮箱 60s / 5每小时 / 10每天 + IP 10每小时。
@@ -459,12 +504,13 @@ pub async fn login_email(
     Json(req): Json<LoginEmailRequest>,
 ) -> Result<Json<AuthTokens>, ApiErr> {
     let email = ec::normalize_email(&req.email);
-    let row: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT id, COALESCE(NULLIF(display_name, ''), username), password_hash
-         FROM users WHERE email = $1",
+    let mut tx = app.pool.begin().await.map_err(ApiErr::db)?;
+    let row: Option<(String, String, String, Option<i64>)> = sqlx::query_as(
+        "SELECT id, COALESCE(NULLIF(display_name, ''), username), password_hash, banned_ms
+         FROM users WHERE email = $1 FOR UPDATE",
     )
     .bind(&email)
-    .fetch_optional(&app.pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(ApiErr::db)?;
 
@@ -472,7 +518,7 @@ pub async fn login_email(
     let dev_id = req.device_id.as_deref().unwrap_or("");
     let dev_name = req.device_name.as_deref().unwrap_or("");
     // 统一错误文案,不给"邮箱是否存在"的探测口子
-    let Some((user_id, display, password_hash)) = row else {
+    let Some((user_id, display, password_hash, banned_ms)) = row else {
         log_login(
             &app,
             "",
@@ -500,25 +546,34 @@ pub async fn login_email(
         .await;
         return Err(ApiErr::unauthorized("邮箱或密码错误"));
     }
+    if banned_ms.is_some() {
+        log_login(
+            &app,
+            &user_id,
+            dev_id,
+            dev_name,
+            &ip,
+            "email",
+            false,
+            ACCOUNT_BANNED_CODE,
+        )
+        .await;
+        return Err(ApiErr::account_banned());
+    }
+    let tokens = issue_tokens_on(&app, &mut tx, &user_id, &display, dev_id, dev_name)
+        .await
+        .map_err(|(status, message)| ApiErr {
+            status,
+            code: "INTERNAL",
+            message,
+            retry_after_secs: None,
+        })?;
+    tx.commit().await.map_err(ApiErr::db)?;
     log_login(&app, &user_id, dev_id, dev_name, &ip, "email", true, "").await;
-    let tokens = issue_tokens(
-        &app,
-        &user_id,
-        &display,
-        req.device_id.as_deref().unwrap_or(""),
-        req.device_name.as_deref().unwrap_or(""),
-    )
-    .await
-    .map_err(|(status, message)| ApiErr {
-        status,
-        code: "INTERNAL",
-        message,
-        retry_after_secs: None,
-    })?;
     Ok(Json(tokens))
 }
 
-/// POST /v1/auth/reset-password —— 找回密码:验码 → 改哈希 → **全端踢出(含本机)**。
+/// POST /v1/auth/reset-password —— 单事务验码/消费、改密、全端吊销与 cutoff。
 pub async fn reset_password(
     State(app): State<AppState>,
     Json(req): Json<ResetPasswordRequest>,
@@ -530,16 +585,27 @@ pub async fn reset_password(
             "新密码需 8 位及以上",
         ));
     }
-    // 无码行(含"账号不存在导致从未发码")与错码同错误,不泄露注册情况
-    verify_code(&app, &email, "reset", &req.code).await?;
-    let user_id: Option<String> = sqlx::query_scalar("SELECT id FROM users WHERE email = $1")
-        .bind(&email)
-        .fetch_optional(&app.pool)
-        .await
-        .map_err(ApiErr::db)?;
-    let Some(user_id) = user_id else {
+
+    let mut tx = app.pool.begin().await.map_err(ApiErr::db)?;
+    // 无码行(含"账号不存在导致从未发码")与错码同错误,不泄露注册情况。
+    // 验证失败显式提交 attempts;一旦成功消费,后续任何 Err 都回滚 used_ms。
+    if let Err(error) = verify_code_on(&app, &mut tx, &email, "reset", &req.code).await {
+        tx.commit().await.map_err(ApiErr::db)?;
+        return Err(error);
+    }
+    let user: Option<(String, Option<i64>)> =
+        sqlx::query_as("SELECT id, banned_ms FROM users WHERE email = $1 FOR UPDATE")
+            .bind(&email)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(ApiErr::db)?;
+    let Some((user_id, banned_ms)) = user else {
         return Err(ApiErr::bad_request("CODE_INVALID", "验证码错误或已过期"));
     };
+    // 有效验证码之后才可区分封禁;不存在/错码仍保持原防枚举响应。
+    if banned_ms.is_some() {
+        return Err(ApiErr::account_banned());
+    }
 
     let hash = auth::hash_password(&req.new_password).map_err(ApiErr::internal)?;
     let now = now_ms();
@@ -547,18 +613,14 @@ pub async fn reset_password(
         .bind(&hash)
         .bind(now)
         .bind(&user_id)
-        .execute(&app.pool)
+        .execute(&mut *tx)
         .await
         .map_err(ApiErr::db)?;
-    // 全端下线(含正在使用的设备)—— 找回密码是高权限动作
-    sqlx::query(
-        "UPDATE refresh_tokens SET revoked_ms = $1 WHERE user_id = $2 AND revoked_ms IS NULL",
-    )
-    .bind(now)
-    .bind(&user_id)
-    .execute(&app.pool)
-    .await
-    .map_err(ApiErr::db)?;
+    force_logout_user_on(&mut tx, &user_id, now)
+        .await
+        .map_err(ApiErr::db)?;
+    // 同一 commit 才让密码、refresh 吊销、cutoff 与验证码消费同时生效。
+    tx.commit().await.map_err(ApiErr::db)?;
     log::info!("password reset via email: user={user_id} (all sessions revoked)");
     Ok(Json(json!({ "ok": true })))
 }
@@ -569,7 +631,7 @@ pub async fn bind_email(
     headers: HeaderMap,
     Json(req): Json<BindEmailRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    let user = auth_user(&app, &headers)?;
+    let user = auth_user(&app, &headers).await?;
     let email = ec::normalize_email(&req.email);
     if !ec::valid_email(&email) {
         return Err(ApiErr::bad_request("INVALID_EMAIL", "邮箱格式不正确"));
@@ -627,7 +689,7 @@ pub async fn get_profile(
         Option<i64>,
         Option<i64>,
     );
-    let user = auth_user(&app, &headers)?;
+    let user = auth_user(&app, &headers).await?;
     let row: Option<ProfileRow> = sqlx::query_as(
         "SELECT id, username, display_name, bio, email, email_verified_ms, created_ms,
                     password_changed_ms, deletion_requested_ms
@@ -671,7 +733,7 @@ pub async fn update_profile(
     headers: HeaderMap,
     Json(req): Json<UpdateProfileRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    let user = auth_user(&app, &headers)?;
+    let user = auth_user(&app, &headers).await?;
     if let Some(name) = req.display_name.as_deref() {
         let name = name.trim();
         if name.chars().count() > 32 {
@@ -720,14 +782,16 @@ async fn verify_user_password(app: &AppState, user: &str, password: &str) -> Res
 
 /// POST /v1/auth/deletion/request(JWT)—— 申请注销:
 /// 验当前密码;已绑并验证邮箱的账号还必须带 purpose=delete 的验证码。
-/// 生效语义:标记 deletion_requested_ms + 其他设备全部下线(保留本机最新会话
-/// 以便冷静期内登录撤销);到期由每日清理任务级联删除全部云端数据。
+/// 生效语义:标记 deletion_requested_ms + 其他设备全部下线(保留当前 access 的 sid
+/// 以便冷静期内登录撤销;legacy/static 无 sid 时不保留任何 refresh);到期级联删除。
 pub async fn deletion_request(
     State(app): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<DeletionRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    let user = auth_user(&app, &headers)?;
+    let authenticated = auth_user_detailed(&app, &headers).await?;
+    let user = authenticated.id;
+    let current_session_id = authenticated.session_id;
     verify_user_password(&app, user.as_str(), &req.password).await?;
 
     let row: Option<(Option<String>, Option<i64>)> =
@@ -744,27 +808,52 @@ pub async fn deletion_request(
         verify_code(&app, email, "delete", code).await?;
     }
 
+    let mut tx = app.pool.begin().await.map_err(ApiErr::db)?;
+    let locked_user: Option<String> =
+        sqlx::query_scalar("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+            .bind(user.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(ApiErr::db)?;
+    if locked_user.is_none() {
+        return Err(ApiErr::not_found("账号不存在"));
+    }
     let now = now_ms();
+    // 与 refresh 共用用户行锁后再次过滤当前 sid,防止保留刚被并发吊销/过期的行。
+    if let Some(current_id) = current_session_id {
+        let current_active: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM refresh_tokens
+             WHERE id = $1 AND user_id = $2 AND revoked_ms IS NULL AND expires_ms > $3)",
+        )
+        .bind(current_id)
+        .bind(user.as_str())
+        .bind(now)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(ApiErr::db)?;
+        if !current_active {
+            return Err(ApiErr::unauthorized("当前会话已失效,请重新登录"));
+        }
+    }
     sqlx::query("UPDATE users SET deletion_requested_ms = $1 WHERE id = $2")
         .bind(now)
         .bind(user.as_str())
-        .execute(&app.pool)
+        .execute(&mut *tx)
         .await
         .map_err(ApiErr::db)?;
-    // 其他设备下线:保留该用户最新创建的一条会话(本机撤销通道),其余吊销
+    // 只保留已经核验的当前 sid;legacy/static 无 sid 时吊销全部 refresh。
     sqlx::query(
         "UPDATE refresh_tokens SET revoked_ms = $1
          WHERE user_id = $2 AND revoked_ms IS NULL
-           AND id <> (
-             SELECT id FROM refresh_tokens WHERE user_id = $2
-             ORDER BY created_ms DESC LIMIT 1
-           )",
+           AND id IS DISTINCT FROM $3",
     )
     .bind(now)
     .bind(user.as_str())
-    .execute(&app.pool)
+    .bind(current_session_id)
+    .execute(&mut *tx)
     .await
     .map_err(ApiErr::db)?;
+    tx.commit().await.map_err(ApiErr::db)?;
 
     let effective = now + DELETION_COOLDOWN_MS;
     log::warn!(
@@ -784,7 +873,7 @@ pub async fn deletion_cancel(
     headers: HeaderMap,
     Json(req): Json<DeletionCancelRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    let user = auth_user(&app, &headers)?;
+    let user = auth_user(&app, &headers).await?;
     verify_user_password(&app, user.as_str(), &req.password).await?;
     let n = sqlx::query(
         "UPDATE users SET deletion_requested_ms = NULL
@@ -812,7 +901,7 @@ pub async fn update_username(
     headers: HeaderMap,
     Json(req): Json<UpdateUsernameRequest>,
 ) -> Result<Json<AuthTokens>, ApiErr> {
-    let user = auth_user(&app, &headers)?;
+    let user = auth_user(&app, &headers).await?;
     let username = req.username.trim().to_string();
     if !auth::valid_username(&username) {
         return Err(ApiErr::bad_request(
@@ -820,14 +909,19 @@ pub async fn update_username(
             "用户名需 3-32 位字母/数字/_/-",
         ));
     }
-    let hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
-        .bind(user.as_str())
-        .fetch_optional(&app.pool)
-        .await
-        .map_err(ApiErr::db)?;
-    let Some(hash) = hash else {
+    let mut tx = app.pool.begin().await.map_err(ApiErr::db)?;
+    let account: Option<(String, Option<i64>)> =
+        sqlx::query_as("SELECT password_hash, banned_ms FROM users WHERE id = $1 FOR UPDATE")
+            .bind(user.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(ApiErr::db)?;
+    let Some((hash, banned_ms)) = account else {
         return Err(ApiErr::not_found("账号不存在"));
     };
+    if banned_ms.is_some() {
+        return Err(ApiErr::account_banned());
+    }
     if !auth::verify_password(&req.password, &hash) {
         return Err(ApiErr::unauthorized("当前密码不正确"));
     }
@@ -836,22 +930,17 @@ pub async fn update_username(
     let updated = sqlx::query("UPDATE users SET username = $1 WHERE id = $2")
         .bind(&username)
         .bind(user.as_str())
-        .execute(&app.pool)
+        .execute(&mut *tx)
         .await
         .map_err(ApiErr::db)?;
     if updated.rows_affected() == 0 {
         return Err(ApiErr::not_found("账号不存在"));
     }
-    sqlx::query(
-        "UPDATE refresh_tokens SET revoked_ms = $1 WHERE user_id = $2 AND revoked_ms IS NULL",
-    )
-    .bind(now)
-    .bind(user.as_str())
-    .execute(&app.pool)
-    .await
-    .map_err(ApiErr::db)?;
+    force_logout_user_on(&mut tx, user.as_str(), now)
+        .await
+        .map_err(ApiErr::db)?;
 
-    let tokens = issue_tokens(&app, user.as_str(), &username, "", "")
+    let tokens = issue_tokens_on(&app, &mut tx, user.as_str(), &username, "", "")
         .await
         .map_err(|(status, message)| ApiErr {
             status,
@@ -859,6 +948,7 @@ pub async fn update_username(
             message,
             retry_after_secs: None,
         })?;
+    tx.commit().await.map_err(ApiErr::db)?;
     log::info!("username changed: user={} -> {username}", user.as_str());
     Ok(Json(tokens))
 }
@@ -875,7 +965,7 @@ pub async fn set_avatar(
     Json(req): Json<SetAvatarRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     use base64::Engine as _;
-    let user = auth_user(&app, &headers)?;
+    let user = auth_user(&app, &headers).await?;
     if !matches!(req.mime.as_str(), "image/jpeg" | "image/png") {
         return Err(ApiErr::bad_request("INVALID_AVATAR", "头像仅支持 JPG/PNG"));
     }
@@ -913,7 +1003,7 @@ pub async fn get_avatar(
     headers: HeaderMap,
 ) -> Result<Json<AvatarResponse>, ApiErr> {
     use base64::Engine as _;
-    let user = auth_user(&app, &headers)?;
+    let user = auth_user(&app, &headers).await?;
     let row: Option<(Option<Vec<u8>>, Option<String>)> =
         sqlx::query_as("SELECT avatar, avatar_mime FROM users WHERE id = $1")
             .bind(user.as_str())
@@ -934,7 +1024,7 @@ pub async fn delete_avatar(
     State(app): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    let user = auth_user(&app, &headers)?;
+    let user = auth_user(&app, &headers).await?;
     sqlx::query("UPDATE users SET avatar = NULL, avatar_mime = NULL WHERE id = $1")
         .bind(user.as_str())
         .execute(&app.pool)
@@ -950,7 +1040,7 @@ pub async fn export_data(
     State(app): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    let user = auth_user(&app, &headers)?;
+    let user = auth_user(&app, &headers).await?;
     let profile = get_profile_inner(&app, &headers).await?;
     let rows: Vec<(String, String, i64, i64, serde_json::Value)> = sqlx::query_as(
         "SELECT entity, entity_id, revision, updated_ms, payload
@@ -987,7 +1077,7 @@ pub async fn export_data(
 
 /// get_profile 的内部复用形(export 需要同一份数据)。
 async fn get_profile_inner(app: &AppState, headers: &HeaderMap) -> Result<ProfileResponse, ApiErr> {
-    let user = auth_user(app, headers)?;
+    let user = auth_user(app, headers).await?;
     type ProfileRow = (
         String,
         String,
@@ -1052,7 +1142,7 @@ pub async fn login_logs(
     State(app): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<LoginLogItem>>, ApiErr> {
-    let user = auth_user(&app, &headers)?;
+    let user = auth_user(&app, &headers).await?;
     let rows: Vec<(i64, String, String, String, String, bool, String)> = sqlx::query_as(
         "SELECT created_ms, device_id, device_name, ip, method, ok, detail
          FROM login_logs WHERE user_id = $1
@@ -1077,4 +1167,32 @@ pub async fn login_logs(
         )
         .collect();
     Ok(Json(out))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_auth_error_preserves_machine_codes() {
+        let (status, message) = crate::auth_handlers::account_banned_error();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(message.starts_with(ACCOUNT_BANNED_CODE));
+        assert_eq!(
+            legacy_auth_error_code(status, &message),
+            ACCOUNT_BANNED_CODE
+        );
+        let json_error = ApiErr::account_banned();
+        assert_eq!(json_error.status, StatusCode::FORBIDDEN);
+        assert_eq!(json_error.code, ACCOUNT_BANNED_CODE);
+
+        assert_eq!(
+            legacy_auth_error_code(StatusCode::INTERNAL_SERVER_ERROR, "db: unavailable"),
+            "INTERNAL"
+        );
+        assert_eq!(
+            legacy_auth_error_code(StatusCode::UNAUTHORIZED, "invalid token"),
+            "UNAUTHORIZED"
+        );
+    }
 }

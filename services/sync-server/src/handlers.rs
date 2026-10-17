@@ -22,12 +22,17 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::auth_handlers::authenticate;
+use crate::errors::INTERNAL_ERROR_MESSAGE;
 use crate::state::{AppState, PULL_LIMIT};
 
 type ApiError = (StatusCode, String);
 
 fn internal(e: sqlx::Error) -> ApiError {
-    (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {e}"))
+    log::error!("database error: {e}");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        INTERNAL_ERROR_MESSAGE.into(),
+    )
 }
 
 fn bad_request(e: serde_json::Error) -> ApiError {
@@ -74,7 +79,7 @@ pub async fn push(
 ) -> Result<Json<PushResponse>, ApiError> {
     // 认证 → 已认证 user_id(JWT 账号或静态 Token 回落);
     // 归属断言:请求体声称的 user 必须与 token 一致(多租户第一道闸,ADR-007)
-    let auth_user = authenticate(&app, &headers)?;
+    let auth_user = authenticate(&app, &headers).await?;
     if req.user_id != auth_user {
         return Err((StatusCode::FORBIDDEN, "user mismatch".into()));
     }
@@ -196,7 +201,7 @@ pub async fn pull(
     headers: HeaderMap,
     Json(req): Json<PullRequest>,
 ) -> Result<Json<PullResponse>, ApiError> {
-    let auth_user = authenticate(&app, &headers)?;
+    let auth_user = authenticate(&app, &headers).await?;
     if req.user_id != auth_user {
         return Err((StatusCode::FORBIDDEN, "user mismatch".into()));
     }

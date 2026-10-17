@@ -38,8 +38,18 @@ CREATE TABLE IF NOT EXISTS users (
   id            TEXT PRIMARY KEY,          -- UUID
   username      TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  created_ms    BIGINT NOT NULL
+  created_ms    BIGINT NOT NULL,
+  banned_ms     BIGINT,
+  banned_reason TEXT NOT NULL DEFAULT '',
+  banned_by     TEXT NOT NULL DEFAULT '',
+  access_revoked_before_ms BIGINT
 );
+
+-- P4 后管前置安全:封禁信息 + access 强制下线水位(旧数据卷幂等升级)。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_ms BIGINT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_by TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS access_revoked_before_ms BIGINT;
 
 -- refresh_tokens:只存 SHA-256 摘要(库被拖走也拿不到原 token 可用);
 -- revoked_ms 非空 = 已吊销(轮换时旧 token 立即作废)。
