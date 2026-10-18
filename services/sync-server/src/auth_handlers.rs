@@ -652,7 +652,7 @@ pub async fn revoke_others(
 
 /// 在调用方事务内推进 access cutoff,并通过 UPDATE 锁住用户行。
 /// cutoff 取 now + 1ms:legacy token 只有秒级 iat,即使与操作同秒也严格早于 cutoff。
-async fn advance_access_cutoff_on(
+pub(crate) async fn advance_access_cutoff_on(
     conn: &mut sqlx::PgConnection,
     user_id: &str,
     now_ms: i64,
@@ -845,6 +845,7 @@ mod tests {
             jwt_secret: jwt_secret.map(str::to_string),
             code_pepper: "pepper".to_string(),
             mailer: Arc::new(LogSender),
+            internal_token: None,
         }
     }
 

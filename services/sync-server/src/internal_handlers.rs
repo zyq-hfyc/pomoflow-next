@@ -40,7 +40,8 @@ fn internal(e: sqlx::Error) -> ApiError {
     )
 }
 
-/// 内部路由(挂在共享 AppState 上,鉴权由 route_layer 统一施加)。
+/// 内部路由(挂在共享 AppState 上;服务间鉴权由 main.rs 挂载处统一
+/// route_layer 施加,这里不带 state 的 from_fn 满足不了 State 提取器)。
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/internal/users", axum::routing::get(list_users))
@@ -58,7 +59,6 @@ pub fn router() -> Router<AppState> {
             "/internal/metrics/overview",
             axum::routing::get(metrics_overview),
         )
-        .route_layer(axum::middleware::from_fn(require_service_token))
 }
 
 /// 服务间鉴权:固定 Bearer,常量时间比较;未配置 token 时全组拒绝。
@@ -202,17 +202,7 @@ pub async fn list_users(
         .clamp(1, USER_LIST_MAX_PAGE_SIZE);
     let offset = (page - 1) * page_size;
 
-    let rows: Vec<(
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<i64>,
-        String,
-        i64,
-        Option<i64>,
-        Option<i64>,
-    )> = sqlx::query_as(&format!(
+    let rows: Vec<UserListRow> = sqlx::query_as(&format!(
         "SELECT u.id, u.username, u.display_name, u.email, u.email_verified_ms,
                 CASE
                     WHEN u.deletion_requested_ms IS NOT NULL THEN 'deletion_pending'
@@ -336,22 +326,42 @@ pub struct UserDetailResponse {
     pub sync: SyncMetadata,
 }
 
+/// sqlx 位置元组:账号资料投影(列序与 user_detail 的 SELECT 一一对应)。
+/// banned_ms 列是 BIGINT(可空);banned_reason 列 TEXT NOT NULL DEFAULT ''。
+type AccountRow = (
+    String,         // username
+    String,         // display_name
+    Option<String>, // email
+    Option<i64>,    // email_verified_ms
+    i64,            // created_ms
+    Option<i64>,    // deletion_requested_ms
+    Option<i64>,    // last_login_ms(子查询)
+    Option<i64>,    // banned_ms
+    String,         // banned_reason
+);
+
+/// sqlx 位置元组:登录日志投影。
+type LoginLogRow = (i64, String, String, String, String, bool, String, i64);
+
+/// sqlx 位置元组:用户列表投影(status 由 CASE 表达式算出)。
+type UserListRow = (
+    String,         // id
+    String,         // username
+    String,         // display_name
+    Option<String>, // email
+    Option<i64>,    // email_verified_ms
+    String,         // status(CASE)
+    i64,            // created_ms
+    Option<i64>,    // last_login_ms(子查询)
+    Option<i64>,    // last_sync_ms(子查询)
+);
+
 /// GET /internal/users/{id}
 pub async fn user_detail(
     State(app): State<AppState>,
     Path(user_id): Path<String>,
 ) -> Result<Json<UserDetailResponse>, ApiError> {
-    let account: Option<(
-        String,
-        String,
-        Option<String>,
-        Option<i64>,
-        i64,
-        Option<i64>,
-        Option<i64>,
-        Option<String>,
-        String,
-    )> = sqlx::query_as(
+    let account: Option<AccountRow> = sqlx::query_as(
         "SELECT username, display_name, email, email_verified_ms, created_ms,
                 deletion_requested_ms,
                 (SELECT MAX(l.created_ms) FROM login_logs l WHERE l.user_id = users.id AND l.ok),
@@ -388,7 +398,7 @@ pub async fn user_detail(
     .await
     .map_err(internal)?;
 
-    let login_logs: Vec<(i64, String, String, String, String, bool, String, i64)> = sqlx::query_as(
+    let login_logs: Vec<LoginLogRow> = sqlx::query_as(
         "SELECT id, device_id, device_name, ip, method, ok, detail, created_ms
          FROM login_logs WHERE user_id = $1
          ORDER BY created_ms DESC LIMIT 100",
@@ -583,7 +593,8 @@ pub async fn ban_user(
     );
     Ok(Json(BanResponse {
         banned_ms: now,
-        revoked_sessions,
+        // rows_affected 是 u64,契约字段是 i64;吊销数不可能溢出,兜底 0。
+        revoked_sessions: i64::try_from(revoked_sessions).unwrap_or_default(),
     }))
 }
 
@@ -694,7 +705,9 @@ pub async fn revoke_sessions(
             .rows_affected();
             tx.commit().await.map_err(internal)?;
             log::info!("internal: user {user_id} force logout, revoked {revoked} sessions");
-            Ok(Json(RevokeSessionsResponse { revoked }))
+            Ok(Json(RevokeSessionsResponse {
+                revoked: i64::try_from(revoked).unwrap_or_default(),
+            }))
         }
     }
 }
@@ -858,8 +871,8 @@ mod tests {
             mask_email("alice@example.com").as_deref(),
             Some("a***@example.com")
         );
-        assert_eq!(mask_email("@nodomain").is_none(), true);
-        assert_eq!(mask_email("noat").is_none(), true);
+        assert!(mask_email("@nodomain").is_none());
+        assert!(mask_email("noat").is_none());
     }
 
     #[test]
