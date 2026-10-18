@@ -90,6 +90,9 @@ pub async fn require_service_token(
 /// 邮箱遮蔽:保留首字符 + 域名(`a***@example.com`);无法解析返回 None。
 fn mask_email(email: &str) -> Option<String> {
     let (local, domain) = email.split_once('@')?;
+    if local.is_empty() {
+        return None; // "@domain" 这类残缺数据 → None(响应里 masked_email = null)
+    }
     let mut masked = local.chars().take(1).collect::<String>();
     masked.push_str("***");
     Some(format!("{masked}@{domain}"))
@@ -747,6 +750,9 @@ pub struct MetricsSummary {
 
 /// [from_ms, to_ms) 内按 UTC 日的桶序列(`YYYY-MM-DD`)。
 fn utc_day_buckets(from_ms: i64, to_ms: i64) -> Vec<String> {
+    if from_ms >= to_ms {
+        return Vec::new(); // 倒序/零长窗口(上游已 400 挡,这里纯防御)
+    }
     let Some(start) = chrono::DateTime::from_timestamp_millis(from_ms) else {
         return Vec::new();
     };
