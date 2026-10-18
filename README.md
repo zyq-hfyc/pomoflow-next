@@ -48,8 +48,11 @@ pomoflow-next/
 ├── crates/core/                # 域模型 + 同步 + 存储抽象(纯 Rust lib)
 ├── apps/desktop/               # Tauri 2 桌面端(P2)
 ├── apps/mobile/                # Flutter 移动端(P3 Android)
+├── apps/admin/                 # React 管理后台前端(P4)
+├── apps/website/               # 产品官网单页(介绍 + 六平台安装包下载)
 ├── tools/migrate-v1/           # v1 → v2 数据迁移 CLI
 ├── services/sync-server/       # 云端同步服务(P1,部署说明在其 README)
+├── services/admin-bff/         # 管理后台 Go BFF(P4,走 ADR-008 内部通道)
 ├── docs/                       # 仓库内文档(含协作任务清单)
 ├── Cargo.toml                  # workspace root
 ├── rust-toolchain.toml         # Rust 版本锁
