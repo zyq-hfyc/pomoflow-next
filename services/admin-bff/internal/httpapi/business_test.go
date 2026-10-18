@@ -16,7 +16,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/zyq-hfyc/pomoflow-next/services/admin-bff/internal/auth"
-	"github.com/zyq-hfyc/pomoflow-next/services/admin-bff/internal/config"
 	"github.com/zyq-hfyc/pomoflow-next/services/admin-bff/internal/store"
 )
 

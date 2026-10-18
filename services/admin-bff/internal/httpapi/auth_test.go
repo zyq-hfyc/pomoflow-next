@@ -173,13 +173,17 @@ func (f *fakeStore) ListAudit(_ context.Context, filter store.AuditFilter) ([]st
 		}
 		return true
 	}
-	// 新→旧(追加序的逆序);ID 与写入顺序一致。
+	// 新→旧:对齐 postgres.go 的 ORDER BY created_ms DESC —— 从后往前
+	// 收集(同毫秒保持写入倒序),再按时间倒序排;ID 与写入顺序一致。
 	records := []store.AuditRecord{}
 	for i := len(f.audits) - 1; i >= 0; i-- {
 		if matches(f.audits[i]) {
 			records = append(records, store.AuditRecord{ID: int64(i + 1), AuditEntry: f.audits[i]})
 		}
 	}
+	sort.SliceStable(records, func(a, b int) bool {
+		return records[a].CreatedMS > records[b].CreatedMS
+	})
 	total := len(records)
 	page := filter.Page
 	if page < 1 {
