@@ -75,6 +75,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|v| v.trim().parse().ok())
         .unwrap_or(512 * 1024 * 1024);
+    // 官网静态托管(ADR-013):指向 apps/website/dist 的绝对路径;
+    // 未配置 = 不挂 fallback,行为与纯同步部署一致。启动即校验,fail-fast。
+    let website_dist_dir = std::env::var("WEBSITE_DIST_DIR")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+    if let Some(dir) = &website_dist_dir {
+        let p = std::path::Path::new(dir);
+        if !p.is_absolute() {
+            return Err("WEBSITE_DIST_DIR 必须是绝对路径".into());
+        }
+        if !p.is_dir() {
+            return Err(format!("WEBSITE_DIST_DIR 目录不存在: {dir}").into());
+        }
+    }
 
     let pool = PgPoolOptions::new()
         .max_connections(8)
@@ -92,7 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("应用 schema.sql 失败: {e}"))?;
 
     log::info!(
-        "sync-server listening on 0.0.0.0:{port}, user={}, auth={}, mail={}, internal={}, release={}",
+        "sync-server listening on 0.0.0.0:{port}, user={}, auth={}, mail={}, internal={}, release={}, website={}",
         user_id.as_str(),
         if jwt_secret.is_some() {
             "jwt+static"
@@ -106,6 +120,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "off"
         },
         if release_files_dir.is_some() {
+            "on"
+        } else {
+            "off"
+        },
+        if website_dist_dir.is_some() {
             "on"
         } else {
             "off"
@@ -132,7 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             internal_handlers::require_service_token,
         ));
 
-    let app = Router::new()
+    let router = Router::new()
         .route("/v1/sync/push", post(handlers::push))
         .route("/v1/sync/pull", post(handlers::pull))
         .route("/v1/auth/register", post(auth_handlers::register))
@@ -187,7 +206,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/healthz", get(handlers::healthz))
         .merge(internal)
         // 发布分发公开面(无鉴权只读):官网与各端下载入口(ADR-013)
-        .merge(release_handlers::public_router())
+        .merge(release_handlers::public_router());
+
+    // 官网静态托管(ADR-013):fallback 只在无路由命中时触发,
+    // /v1/*、/healthz、/internal/*、/api/public/* 的优先级不变;
+    // 单页站无客户端路由,ServeDir 自带 index.html 兜底即可。
+    let router = if let Some(dir) = website_dist_dir {
+        router.fallback_service(tower_http::services::ServeDir::new(dir))
+    } else {
+        router
+    };
+
+    let app = router
         // CORS:Flutter Web(Chrome 预览)跨域;桌面端/Android 原生不走 CORS。
         // 开发期 Any;P5 正式部署收敛到 nginx/gateway 层指定 origin。
         .layer(
