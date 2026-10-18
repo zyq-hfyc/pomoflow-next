@@ -35,10 +35,19 @@ func main() {
 		log.Fatalf("initialize admin store: %v", err)
 	}
 	defer st.Close()
-	sso, err := auth.NewOIDCService(startupCtx, cfg.OIDCIssuer, cfg.OIDCClientID,
-		cfg.OIDCClientSecret, cfg.OIDCRedirectURL)
-	if err != nil {
-		log.Fatalf("initialize OIDC: %v", err)
+	// dev 假登录模式:NewOIDCService 启动时做 discovery,没有 IdP 会直接
+	// fatal,所以这里换成 stub;真实 OIDC 链路一行不改。
+	var sso httpapi.SSO
+	if cfg.DevFakeLogin {
+		sso = httpapi.NewDevStubSSO(cfg.PublicURL)
+		log.Printf("[DEV] ADMIN_DEV_FAKE_LOGIN=1: OIDC disabled, login via GET %s/api/auth/dev-login?role=<role>", cfg.PublicURL)
+	} else {
+		var err error
+		sso, err = auth.NewOIDCService(startupCtx, cfg.OIDCIssuer, cfg.OIDCClientID,
+			cfg.OIDCClientSecret, cfg.OIDCRedirectURL)
+		if err != nil {
+			log.Fatalf("initialize OIDC: %v", err)
+		}
 	}
 	router, err := httpapi.NewRouter(cfg, st, sso)
 	if err != nil {

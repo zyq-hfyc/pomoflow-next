@@ -11,6 +11,7 @@ var envKeys = []string{
 	"ADMIN_COOKIE_SECURE", "ADMIN_IP_ALLOWLIST", "ADMIN_TRUSTED_PROXY_CIDRS",
 	"ADMIN_SESSION_TTL_MINUTES", "ADMIN_BOOTSTRAP_SUBJECT", "ADMIN_BOOTSTRAP_DISPLAY_NAME",
 	"SYNC_SERVER_URL", "MEMBERSHIP_SERVICE_URL", "ANALYTICS_SERVICE_URL", "INTERNAL_SERVICE_TOKEN",
+	"ADMIN_DEV_FAKE_LOGIN",
 }
 
 func clearEnv(t *testing.T) {
@@ -103,5 +104,36 @@ func TestLoadExplicitDevelopmentCookie(t *testing.T) {
 	}
 	if cfg.CookieSecure {
 		t.Fatal("explicit development CookieSecure=false not honored")
+	}
+}
+
+func TestLoadDevFakeLoginRequiresInsecureCookies(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("ADMIN_DEV_FAKE_LOGIN", "true")
+	if _, err := Load(); err == nil {
+		t.Fatal("dev fake login must be rejected while ADMIN_COOKIE_SECURE=true")
+	}
+}
+
+func TestLoadDevFakeLoginMakesOIDCOptional(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("ADMIN_DEV_FAKE_LOGIN", "true")
+	t.Setenv("ADMIN_COOKIE_SECURE", "false")
+	t.Setenv("ADMIN_PUBLIC_URL", "http://localhost:5173")
+	for _, key := range []string{
+		"ADMIN_OIDC_ISSUER", "ADMIN_OIDC_CLIENT_ID",
+		"ADMIN_OIDC_CLIENT_SECRET", "ADMIN_OIDC_REDIRECT_URL",
+	} {
+		t.Setenv(key, "")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.DevFakeLogin {
+		t.Fatal("DevFakeLogin not honored")
+	}
+	if cfg.OIDCIssuer != "" || cfg.OIDCClientID != "" || cfg.OIDCClientSecret != "" || cfg.OIDCRedirectURL != "" {
+		t.Fatal("dev fake login should tolerate empty OIDC configuration")
 	}
 }

@@ -36,6 +36,7 @@ schema.sql          自有表:admin_users / admin_sessions / admin_oidc_states /
 | ADMIN_SESSION_TTL_MINUTES | 否(480) | 后台会话时长(15..720) |
 | ADMIN_BOOTSTRAP_SUBJECT | 首次 | 首个应急超管的 IdP subject(引导窗口) |
 | ADMIN_BOOTSTRAP_DISPLAY_NAME | 否 | 引导身份显示名 |
+| ADMIN_DEV_FAKE_LOGIN | 否(false) | **仅本地联调**:跳过 OIDC 的假登录。强制要求 `ADMIN_COOKIE_SECURE=false`(否则启动失败),OIDC 四项随之可留空;登录入口 `GET /api/auth/dev-login?role=<role>` 换一张真会话(角色任意合法值,默认 emergency_admin),并自动种一个后备应急超管避免「最后一个应急管理员」保护挡住角色实验。生产配置到不了这条路径 |
 
 ## RBAC(固定角色,默认拒绝)
 

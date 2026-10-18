@@ -27,6 +27,13 @@ export default function LoginPage() {
         <Button type="primary" size="large" block href={loginURL}>
           使用企业 SSO 登录
         </Button>
+        {/* 仅 vite dev server 渲染(生产构建 DEV=false,不会进产物):
+            本地没有 IdP,用 BFF 的假登录换一张真会话,?role= 可切角色。 */}
+        {import.meta.env.DEV && (
+          <Button block href="/api/auth/dev-login" style={{ marginTop: 12 }}>
+            本地联调登录(dev,免 SSO)
+          </Button>
+        )}
         <Typography.Text type="secondary" className="login-footnote">
           后台不对普通用户开放，请勿分享管理链接或会话。
         </Typography.Text>

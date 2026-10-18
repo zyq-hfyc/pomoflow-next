@@ -30,6 +30,9 @@ type Config struct {
 	MembershipServiceURL string
 	AnalyticsServiceURL  string
 	InternalServiceToken string
+	// DevFakeLogin 启用仅限本地回环联调的假登录(无 OIDC)。
+	// 只在 CookieSecure=false 时可用,生产配置永远到不了这条路径。
+	DevFakeLogin bool
 }
 
 // Load 读取并校验配置。任何必需密钥或 URL 缺失都在监听端口前失败。
@@ -44,17 +47,41 @@ func Load() (Config, error) {
 	if cfg.DatabaseURL, err = required("DATABASE_URL"); err != nil {
 		return Config{}, err
 	}
-	if cfg.OIDCIssuer, err = requiredURL("ADMIN_OIDC_ISSUER", false); err != nil {
+
+	cfg.CookieSecure, err = boolEnv("ADMIN_COOKIE_SECURE", true)
+	if err != nil {
 		return Config{}, err
 	}
-	if cfg.OIDCClientID, err = required("ADMIN_OIDC_CLIENT_ID"); err != nil {
+	if cfg.DevFakeLogin, err = boolEnv("ADMIN_DEV_FAKE_LOGIN", false); err != nil {
 		return Config{}, err
 	}
-	if cfg.OIDCClientSecret, err = required("ADMIN_OIDC_CLIENT_SECRET"); err != nil {
-		return Config{}, err
+	if cfg.DevFakeLogin && cfg.CookieSecure {
+		return Config{}, errors.New("ADMIN_DEV_FAKE_LOGIN requires ADMIN_COOKIE_SECURE=false (local loopback only)")
 	}
-	if cfg.OIDCRedirectURL, err = requiredURL("ADMIN_OIDC_REDIRECT_URL", false); err != nil {
-		return Config{}, err
+
+	// OIDC 配置:生产必填;dev 假登录模式改为可选(填了也只会指向 stub)。
+	if cfg.DevFakeLogin {
+		if cfg.OIDCIssuer, err = optionalURL("ADMIN_OIDC_ISSUER", false); err != nil {
+			return Config{}, err
+		}
+		cfg.OIDCClientID = valueOr("ADMIN_OIDC_CLIENT_ID", "")
+		cfg.OIDCClientSecret = valueOr("ADMIN_OIDC_CLIENT_SECRET", "")
+		if cfg.OIDCRedirectURL, err = optionalURL("ADMIN_OIDC_REDIRECT_URL", false); err != nil {
+			return Config{}, err
+		}
+	} else {
+		if cfg.OIDCIssuer, err = requiredURL("ADMIN_OIDC_ISSUER", false); err != nil {
+			return Config{}, err
+		}
+		if cfg.OIDCClientID, err = required("ADMIN_OIDC_CLIENT_ID"); err != nil {
+			return Config{}, err
+		}
+		if cfg.OIDCClientSecret, err = required("ADMIN_OIDC_CLIENT_SECRET"); err != nil {
+			return Config{}, err
+		}
+		if cfg.OIDCRedirectURL, err = requiredURL("ADMIN_OIDC_REDIRECT_URL", false); err != nil {
+			return Config{}, err
+		}
 	}
 	if cfg.PublicURL, err = requiredURL("ADMIN_PUBLIC_URL", true); err != nil {
 		return Config{}, err
@@ -63,10 +90,6 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	cfg.CookieSecure, err = boolEnv("ADMIN_COOKIE_SECURE", true)
-	if err != nil {
-		return Config{}, err
-	}
 	if cfg.CookieSecure {
 		for key, raw := range map[string]string{
 			"ADMIN_OIDC_REDIRECT_URL": cfg.OIDCRedirectURL,
@@ -114,6 +137,18 @@ func requiredURL(key string, originOnly bool) (string, error) {
 	raw, err := required(key)
 	if err != nil {
 		return "", err
+	}
+	if err := validateAbsoluteURL(raw, originOnly); err != nil {
+		return "", fmt.Errorf("%s: %w", key, err)
+	}
+	return strings.TrimRight(raw, "/"), nil
+}
+
+// optionalURL 允许留空;填了就必须是合法绝对 URL。
+func optionalURL(key string, originOnly bool) (string, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return "", nil
 	}
 	if err := validateAbsoluteURL(raw, originOnly); err != nil {
 		return "", fmt.Errorf("%s: %w", key, err)

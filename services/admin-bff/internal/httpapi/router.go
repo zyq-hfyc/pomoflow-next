@@ -22,12 +22,12 @@ type SSO interface {
 
 // Server 持有请求处理所需的不可变依赖。
 type Server struct {
-	cfg      config.Config
-	store    store.Store
-	sso      SSO
+	cfg       config.Config
+	store     store.Store
+	sso       SSO
 	allowlist *security.IPAllowlist
-	upstream *upstream.Client
-	now      func() time.Time
+	upstream  *upstream.Client
+	now       func() time.Time
 }
 
 // NewRouter 构建 Admin BFF 路由。业务接口统一挂在 /api 下并经过 IP 白名单。
@@ -37,12 +37,12 @@ func NewRouter(cfg config.Config, st store.Store, sso SSO) (*gin.Engine, error) 
 		return nil, err
 	}
 	s := &Server{
-		cfg:      cfg,
-		store:    st,
-		sso:      sso,
+		cfg:       cfg,
+		store:     st,
+		sso:       sso,
 		allowlist: allowlist,
-		upstream: upstream.New(cfg.SyncServerURL, cfg.InternalServiceToken),
-		now:      time.Now,
+		upstream:  upstream.New(cfg.SyncServerURL, cfg.InternalServiceToken),
+		now:       time.Now,
 	}
 
 	router := gin.New()
@@ -58,6 +58,10 @@ func NewRouter(cfg config.Config, st store.Store, sso SSO) (*gin.Engine, error) 
 	authRoutes.GET("/callback", s.handleCallback)
 	authRoutes.GET("/me", s.authRequiredMiddleware(), s.handleMe)
 	authRoutes.POST("/logout", s.authRequiredMiddleware(), s.csrfRequiredMiddleware(), s.handleLogout)
+	// 假登录只在 ADMIN_DEV_FAKE_LOGIN=1(且 CookieSecure=false)时存在。
+	if cfg.DevFakeLogin {
+		authRoutes.GET("/dev-login", s.handleDevLogin)
+	}
 
 	s.mountDashboardRoutes(api)
 	s.mountUserRoutes(api)
