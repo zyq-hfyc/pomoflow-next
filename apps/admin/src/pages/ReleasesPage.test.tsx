@@ -1,5 +1,5 @@
 import { App as AntApp } from 'antd'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import ReleasesPage from './ReleasesPage'
 import * as admin from '../services/admin'
@@ -48,17 +48,23 @@ describe('ReleasesPage', () => {
     // antd 会在两个 CJK 按钮字间插空格,可访问名是「发 布」
     expect(screen.getByRole('button', { name: /发\s*布/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /新\s*建\s*版\s*本/ })).toBeInTheDocument()
+    // 冲排 React 尚未执行的调度任务,避免慢 CI 上遗留到环境拆除后
+    await act(async () => {})
   })
 
   test('点击发布调用 publishRelease 并刷新列表', async () => {
     vi.mocked(admin.publishRelease).mockResolvedValue({ id: 'rel-1', status: 'published' })
     renderPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: /发\s*布/ }))
+    // 先等数据渲染成行(慢环境下表格初载可超 findByRole 默认 1s),再点行内「发布」
+    await screen.findByText('v0.2.1')
+    fireEvent.click(screen.getByRole('button', { name: /发\s*布/ }))
 
     await waitFor(() => {
       expect(admin.publishRelease).toHaveBeenCalledWith('rel-1')
       expect(admin.listReleases).toHaveBeenCalledTimes(2)
     })
+    // listReleases 调用数达标 ≠ reload 的 setState 已渲染完;冲排干净再结束
+    await act(async () => {})
   })
 })
