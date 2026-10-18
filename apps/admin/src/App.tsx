@@ -9,6 +9,7 @@ import DashboardPage from './pages/DashboardPage'
 import UsersPage from './pages/UsersPage'
 import MembershipsPage from './pages/MembershipsPage'
 import AuditPage from './pages/AuditPage'
+import ReleasesPage from './pages/ReleasesPage'
 import AuthorizationPage from './pages/AuthorizationPage'
 import './App.css'
 
@@ -18,6 +19,7 @@ function Home() {
   if (hasPermission('users:read')) return <Navigate to="/users" replace />
   if (hasPermission('membership:read')) return <Navigate to="/memberships" replace />
   if (hasPermission('audit:read')) return <Navigate to="/audit" replace />
+  if (hasPermission('releases:manage')) return <Navigate to="/releases" replace />
   if (hasPermission('admin:grant')) return <Navigate to="/authorization" replace />
   return <div>当前角色没有可用菜单，请联系安全与权限管理员。</div>
 }
@@ -35,6 +37,7 @@ export default function App() {
                 <Route path="users" element={<RequirePermission permission="users:read"><UsersPage /></RequirePermission>} />
                 <Route path="memberships" element={<RequirePermission permission="membership:read"><MembershipsPage /></RequirePermission>} />
                 <Route path="audit" element={<RequirePermission permission="audit:read"><AuditPage /></RequirePermission>} />
+                <Route path="releases" element={<RequirePermission permission="releases:manage"><ReleasesPage /></RequirePermission>} />
                 <Route path="authorization" element={<RequirePermission permission="admin:grant"><AuthorizationPage /></RequirePermission>} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />

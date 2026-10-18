@@ -16,6 +16,7 @@ export type Permission =
   | 'audit:read'
   | 'audit:export'
   | 'admin:grant'
+  | 'releases:manage'
 
 export interface AdminIdentity {
   issuer: string
@@ -170,4 +171,37 @@ export interface AdminUser extends AdminIdentity {
   created_ms: number
   updated_ms: number
   last_login_ms: number | null
+}
+
+// ---- 发布分发(ADR-013)----
+
+export type ReleasePlatform = 'windows' | 'linux' | 'mac' | 'ios' | 'android' | 'harmony'
+
+export type ReleaseStatus = 'draft' | 'published' | 'unpublished'
+
+export interface ReleaseAsset {
+  id: string
+  platform: ReleasePlatform
+  filename: string
+  size_bytes: number
+  sha256: string
+  download_count: number
+  created_ms: number
+  /** 公开下载相对路径,拼 download_base_url 得完整链接 */
+  download_path: string
+}
+
+export interface Release {
+  id: string
+  version: string
+  notes: string
+  status: ReleaseStatus
+  created_ms: number
+  published_ms: number | null
+  assets: ReleaseAsset[]
+}
+
+export interface ReleaseList {
+  items: Release[]
+  download_base_url: string
 }

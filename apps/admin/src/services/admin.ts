@@ -6,6 +6,9 @@ import type {
   Membership,
   MembershipChange,
   Page,
+  Release,
+  ReleaseAsset,
+  ReleaseList,
   Role,
   UserDetail,
   UserListItem,
@@ -98,4 +101,53 @@ export function setAdminStatus(issuer: string, subject: string, status: 'active'
   return apiFetch<AdminUser>('/api/admin-users/status', {
     method: 'POST', body: { issuer, subject, status, reason },
   })
+}
+
+// ---- 发布分发(ADR-013)----
+
+export function listReleases() {
+  return apiFetch<ReleaseList>('/api/releases')
+}
+
+export function createRelease(version: string, notes: string) {
+  return apiFetch<Release>('/api/releases', { method: 'POST', body: { version, notes } })
+}
+
+/**
+ * 上传安装包:File 以 Blob 原样穿透 apiFetch(不设 Content-Type),
+ * BFF 流式转发 sync-server;展示名走 query。
+ */
+export function uploadReleaseAsset(releaseID: string, platform: string, file: File) {
+  const query = new URLSearchParams({ platform, filename: file.name })
+  return apiFetch<ReleaseAsset>(
+    `/api/releases/${encodeURIComponent(releaseID)}/assets?${query.toString()}`,
+    { method: 'POST', body: file },
+  )
+}
+
+export function publishRelease(releaseID: string) {
+  return apiFetch<{ id: string; status: string }>(
+    `/api/releases/${encodeURIComponent(releaseID)}/publish`,
+    { method: 'POST', body: {} },
+  )
+}
+
+export function unpublishRelease(releaseID: string) {
+  return apiFetch<{ id: string; status: string }>(
+    `/api/releases/${encodeURIComponent(releaseID)}/unpublish`,
+    { method: 'POST', body: {} },
+  )
+}
+
+export function deleteRelease(releaseID: string) {
+  return apiFetch<{ ok: boolean }>(`/api/releases/${encodeURIComponent(releaseID)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function deleteReleaseAsset(releaseID: string, assetID: string) {
+  return apiFetch<{ ok: boolean }>(
+    `/api/releases/${encodeURIComponent(releaseID)}/assets/${encodeURIComponent(assetID)}`,
+    { method: 'DELETE' },
+  )
 }

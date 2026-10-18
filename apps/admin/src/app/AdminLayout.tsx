@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { Button, Dropdown } from 'antd'
 import {
   AuditOutlined,
+  CloudUploadOutlined,
   CrownOutlined,
   DashboardOutlined,
   LogoutOutlined,
@@ -18,6 +19,7 @@ const menu: Array<{ path: string; name: string; icon: React.ReactNode; permissio
   { path: '/users', name: '用户运营', icon: <TeamOutlined />, permission: 'users:read' },
   { path: '/memberships', name: '会员管理', icon: <CrownOutlined />, permission: 'membership:read' },
   { path: '/audit', name: '审计中心', icon: <AuditOutlined />, permission: 'audit:read' },
+  { path: '/releases', name: '发布分发', icon: <CloudUploadOutlined />, permission: 'releases:manage' },
   { path: '/authorization', name: '后台授权', icon: <SafetyCertificateOutlined />, permission: 'admin:grant' },
 ]
 
