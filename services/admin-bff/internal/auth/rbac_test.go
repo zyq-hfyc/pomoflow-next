@@ -19,6 +19,7 @@ func TestRolePermissions(t *testing.T) {
 		{"security admin grants roles", RoleSecurityAdmin, PermissionAdminGrant},
 		{"emergency admin reads dashboard", RoleEmergencyAdmin, PermissionDashboardRead},
 		{"emergency admin grants roles", RoleEmergencyAdmin, PermissionAdminGrant},
+		{"emergency admin manages releases", RoleEmergencyAdmin, PermissionReleasesManage},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -45,6 +46,8 @@ func TestRoleDeniesOutOfScopePermissions(t *testing.T) {
 		{"auditor cannot write membership", RoleAuditor, PermissionMembershipWrite},
 		{"auditor cannot export by default", RoleAuditor, PermissionAuditExport},
 		{"security admin cannot adjust membership", RoleSecurityAdmin, PermissionMembershipWrite},
+		{"security admin cannot manage releases", RoleSecurityAdmin, PermissionReleasesManage},
+		{"auditor cannot manage releases", RoleAuditor, PermissionReleasesManage},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

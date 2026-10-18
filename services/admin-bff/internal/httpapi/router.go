@@ -68,6 +68,7 @@ func NewRouter(cfg config.Config, st store.Store, sso SSO) (*gin.Engine, error) 
 	s.mountMembershipRoutes(api)
 	s.mountAuditRoutes(api)
 	s.mountAuthorizationRoutes(api)
+	s.mountReleasesRoutes(api)
 	return router, nil
 }
 
@@ -121,4 +122,22 @@ func (s *Server) mountAuthorizationRoutes(api *gin.RouterGroup) {
 		s.requirePermission(auth.PermissionAdminGrant))
 	grant.POST("/role", s.handleGrantAdminRole)
 	grant.POST("/status", s.handleSetAdminStatus)
+}
+
+// mountReleasesRoutes 发布分发(ADR-013):读与写都要求 releases:manage
+// (目前只授 emergency_admin);写链额外过 CSRF —— 双提交校验只看
+// header/cookie 不碰 body,与流式上传兼容。
+func (s *Server) mountReleasesRoutes(api *gin.RouterGroup) {
+	releases := api.Group("/releases", s.authRequiredMiddleware(),
+		s.requirePermission(auth.PermissionReleasesManage))
+	releases.GET("", s.handleListReleases)
+
+	writes := api.Group("/releases", s.authRequiredMiddleware(), s.csrfRequiredMiddleware(),
+		s.requirePermission(auth.PermissionReleasesManage))
+	writes.POST("", s.handleCreateRelease)
+	writes.POST("/:id/assets", s.handleUploadReleaseAsset)
+	writes.POST("/:id/publish", s.handleReleaseTransition("publish"))
+	writes.POST("/:id/unpublish", s.handleReleaseTransition("unpublish"))
+	writes.DELETE("/:id", s.handleDeleteRelease)
+	writes.DELETE("/:id/assets/:assetID", s.handleDeleteReleaseAsset)
 }

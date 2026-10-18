@@ -29,6 +29,9 @@ const (
 	PermissionAuditRead           Permission = "audit:read"
 	PermissionAuditExport         Permission = "audit:export"
 	PermissionAdminGrant          Permission = "admin:grant"
+	// 发布分发管理(ADR-013):上传安装包 / 建版本 / 发布下架。
+	// 发布影响官网公开面,最小授权只给应急超管(precedent:audit:export)。
+	PermissionReleasesManage Permission = "releases:manage"
 )
 
 var rolePermissions = map[Role][]Permission{
@@ -62,6 +65,7 @@ var rolePermissions = map[Role][]Permission{
 		PermissionAuditRead,
 		PermissionAuditExport,
 		PermissionAdminGrant,
+		PermissionReleasesManage,
 	},
 }
 

@@ -11,7 +11,7 @@ var envKeys = []string{
 	"ADMIN_COOKIE_SECURE", "ADMIN_IP_ALLOWLIST", "ADMIN_TRUSTED_PROXY_CIDRS",
 	"ADMIN_SESSION_TTL_MINUTES", "ADMIN_BOOTSTRAP_SUBJECT", "ADMIN_BOOTSTRAP_DISPLAY_NAME",
 	"SYNC_SERVER_URL", "MEMBERSHIP_SERVICE_URL", "ANALYTICS_SERVICE_URL", "INTERNAL_SERVICE_TOKEN",
-	"ADMIN_DEV_FAKE_LOGIN",
+	"ADMIN_DEV_FAKE_LOGIN", "RELEASE_DOWNLOAD_BASE_URL", "RELEASE_UPLOAD_MAX_BYTES",
 }
 
 func clearEnv(t *testing.T) {
@@ -53,6 +53,12 @@ func TestLoadValidDefaults(t *testing.T) {
 	}
 	if cfg.SyncServerURL != "http://127.0.0.1:8080" {
 		t.Fatalf("unexpected sync URL %q", cfg.SyncServerURL)
+	}
+	if cfg.ReleaseDownloadBaseURL != "http://127.0.0.1:8080" {
+		t.Fatalf("unexpected download base URL %q", cfg.ReleaseDownloadBaseURL)
+	}
+	if cfg.ReleaseUploadMaxBytes != 512<<20 {
+		t.Fatalf("ReleaseUploadMaxBytes = %d, want 512MiB", cfg.ReleaseUploadMaxBytes)
 	}
 }
 

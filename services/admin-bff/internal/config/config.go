@@ -30,6 +30,10 @@ type Config struct {
 	MembershipServiceURL string
 	AnalyticsServiceURL  string
 	InternalServiceToken string
+	// 发布分发(ADR-013):下载基址拼「复制下载链接」;上传上限是 BFF 侧
+	// 预检(sync-server 流式计数器仍是真权威,两侧需一致调参)。
+	ReleaseDownloadBaseURL string
+	ReleaseUploadMaxBytes  int64
 	// DevFakeLogin 启用仅限本地回环联调的假登录(无 OIDC)。
 	// 只在 CookieSecure=false 时可用,生产配置永远到不了这条路径。
 	DevFakeLogin bool
@@ -113,14 +117,20 @@ func Load() (Config, error) {
 	cfg.SyncServerURL = valueOr("SYNC_SERVER_URL", "http://127.0.0.1:8080")
 	cfg.MembershipServiceURL = valueOr("MEMBERSHIP_SERVICE_URL", "http://127.0.0.1:8091")
 	cfg.AnalyticsServiceURL = valueOr("ANALYTICS_SERVICE_URL", "http://127.0.0.1:8092")
+	cfg.ReleaseDownloadBaseURL = valueOr("RELEASE_DOWNLOAD_BASE_URL", "http://127.0.0.1:8080")
 	for key, raw := range map[string]string{
-		"SYNC_SERVER_URL":        cfg.SyncServerURL,
-		"MEMBERSHIP_SERVICE_URL": cfg.MembershipServiceURL,
-		"ANALYTICS_SERVICE_URL":  cfg.AnalyticsServiceURL,
+		"SYNC_SERVER_URL":           cfg.SyncServerURL,
+		"MEMBERSHIP_SERVICE_URL":    cfg.MembershipServiceURL,
+		"ANALYTICS_SERVICE_URL":     cfg.AnalyticsServiceURL,
+		"RELEASE_DOWNLOAD_BASE_URL": cfg.ReleaseDownloadBaseURL,
 	} {
 		if err := validateAbsoluteURL(raw, false); err != nil {
 			return Config{}, fmt.Errorf("%s: %w", key, err)
 		}
+	}
+	if cfg.ReleaseUploadMaxBytes, err = int64Env("RELEASE_UPLOAD_MAX_BYTES",
+		512<<20, 1<<20, 4<<30); err != nil {
+		return Config{}, err
 	}
 	return cfg, nil
 }
@@ -186,6 +196,18 @@ func intEnv(key string, fallback, min, max int) (int, error) {
 		return fallback, nil
 	}
 	value, err := strconv.Atoi(raw)
+	if err != nil || value < min || value > max {
+		return 0, fmt.Errorf("%s must be an integer in [%d, %d]", key, min, max)
+	}
+	return value, nil
+}
+
+func int64Env(key string, fallback, min, max int64) (int64, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || value < min || value > max {
 		return 0, fmt.Errorf("%s must be an integer in [%d, %d]", key, min, max)
 	}

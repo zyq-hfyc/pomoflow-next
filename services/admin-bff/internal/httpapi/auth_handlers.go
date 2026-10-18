@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	sessionCookieName     = "pomoflow_admin_session"
-	csrfCookieName        = "pomoflow_admin_csrf"
-	oauthStateCookieName  = "pomoflow_admin_oauth_state"
-	oauthStateTTL         = 10 * time.Minute
+	sessionCookieName    = "pomoflow_admin_session"
+	csrfCookieName       = "pomoflow_admin_csrf"
+	oauthStateCookieName = "pomoflow_admin_oauth_state"
+	oauthStateTTL        = 10 * time.Minute
 )
 
 func (s *Server) handleLogin(c *gin.Context) {

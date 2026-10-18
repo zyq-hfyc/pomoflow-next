@@ -101,7 +101,7 @@ func (s *Server) handleDashboard(c *gin.Context) {
 	var payload metricsOverview
 	query := url.Values{
 		"from_ms": {strconv.FormatInt(fromMS, 10)},
-		"to_ms":   {strconv.FormatInt(toMS + dayMS, 10)},
+		"to_ms":   {strconv.FormatInt(toMS+dayMS, 10)},
 	}
 	if err := s.upstream.Do(c.Request.Context(), http.MethodGet, "/internal/metrics/overview",
 		query, nil, &payload); err != nil {
