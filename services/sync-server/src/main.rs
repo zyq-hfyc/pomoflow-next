@@ -85,7 +85,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "static"
         },
         mailer.mode(),
-        if internal_token.is_some() { "on" } else { "off" }
+        if internal_token.is_some() {
+            "on"
+        } else {
+            "off"
+        }
     );
 
     // P4 后管内部端点:鉴权中间件只作用于这组路由(route_layer 先于 merge)。

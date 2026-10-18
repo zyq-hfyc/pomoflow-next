@@ -147,8 +147,10 @@ fn status_condition(status: Option<&str>) -> Result<Option<&'static str>, ApiErr
 
 /// 列表/计数共用的 WHERE 子句($1 = 搜索串,$2 = 状态)。
 fn users_where(condition: Option<&str>) -> String {
-    let mut sql = String::from("WHERE ($1::text = '' OR username ILIKE $1 \
-         OR display_name ILIKE $1 OR email ILIKE $1)");
+    let mut sql = String::from(
+        "WHERE ($1::text = '' OR username ILIKE $1 \
+         OR display_name ILIKE $1 OR email ILIKE $1)",
+    );
     if let Some(extra) = condition {
         sql.push_str(" AND (");
         sql.push_str(extra);
@@ -187,13 +189,11 @@ pub async fn list_users(
     let pattern = format!("%{}%", q.query.unwrap_or_default().trim());
     let where_sql = users_where(status_filter);
 
-    let total: i64 = sqlx::query_scalar(&format!(
-        "SELECT COUNT(*) FROM users {where_sql}"
-    ))
-    .bind(&pattern)
-    .fetch_one(&app.pool)
-    .await
-    .map_err(internal)?;
+    let total: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM users {where_sql}"))
+        .bind(&pattern)
+        .fetch_one(&app.pool)
+        .await
+        .map_err(internal)?;
 
     let page = q.page.unwrap_or(1).max(1);
     let page_size = q
@@ -202,9 +202,18 @@ pub async fn list_users(
         .clamp(1, USER_LIST_MAX_PAGE_SIZE);
     let offset = (page - 1) * page_size;
 
-    let rows: Vec<(String, String, String, Option<String>, Option<i64>, String, i64, Option<i64>, Option<i64>)> =
-        sqlx::query_as(&format!(
-            "SELECT u.id, u.username, u.display_name, u.email, u.email_verified_ms,
+    let rows: Vec<(
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<i64>,
+        String,
+        i64,
+        Option<i64>,
+        Option<i64>,
+    )> = sqlx::query_as(&format!(
+        "SELECT u.id, u.username, u.display_name, u.email, u.email_verified_ms,
                 CASE
                     WHEN u.deletion_requested_ms IS NOT NULL THEN 'deletion_pending'
                     WHEN u.banned_ms IS NOT NULL THEN 'banned'
@@ -217,18 +226,28 @@ pub async fn list_users(
              {where_sql}
              ORDER BY u.created_ms DESC, u.username ASC
              LIMIT $2 OFFSET $3"
-        ))
-        .bind(&pattern)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(&app.pool)
-        .await
-        .map_err(internal)?;
+    ))
+    .bind(&pattern)
+    .bind(page_size)
+    .bind(offset)
+    .fetch_all(&app.pool)
+    .await
+    .map_err(internal)?;
 
     let items = rows
         .into_iter()
         .map(
-            |(id, username, display_name, email, email_verified_ms, status, created_ms, last_login_ms, last_sync_ms)| {
+            |(
+                id,
+                username,
+                display_name,
+                email,
+                email_verified_ms,
+                status,
+                created_ms,
+                last_login_ms,
+                last_sync_ms,
+            )| {
                 UserListItem {
                     id,
                     username,
@@ -322,21 +341,39 @@ pub async fn user_detail(
     State(app): State<AppState>,
     Path(user_id): Path<String>,
 ) -> Result<Json<UserDetailResponse>, ApiError> {
-    let account: Option<(String, String, Option<String>, Option<i64>, i64, Option<i64>, Option<i64>, Option<String>, String)> =
-        sqlx::query_as(
-            "SELECT username, display_name, email, email_verified_ms, created_ms,
+    let account: Option<(
+        String,
+        String,
+        Option<String>,
+        Option<i64>,
+        i64,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
+        "SELECT username, display_name, email, email_verified_ms, created_ms,
                 deletion_requested_ms,
                 (SELECT MAX(l.created_ms) FROM login_logs l WHERE l.user_id = users.id AND l.ok),
                 banned_ms,
                 banned_reason
              FROM users WHERE id = $1",
-        )
-        .bind(&user_id)
-        .fetch_optional(&app.pool)
-        .await
-        .map_err(internal)?;
-    let Some((username, display_name, email, email_verified_ms, created_ms, deletion_requested_ms, last_login_ms, banned_ms, ban_reason)) =
-        account
+    )
+    .bind(&user_id)
+    .fetch_optional(&app.pool)
+    .await
+    .map_err(internal)?;
+    let Some((
+        username,
+        display_name,
+        email,
+        email_verified_ms,
+        created_ms,
+        deletion_requested_ms,
+        last_login_ms,
+        banned_ms,
+        ban_reason,
+    )) = account
     else {
         return Err((StatusCode::NOT_FOUND, "user not found".into()));
     };
@@ -414,27 +451,35 @@ pub async fn user_detail(
         },
         sessions: sessions
             .into_iter()
-            .map(|(id, device_id, device_name, created_ms, expires_ms, revoked_ms)| UserSessionItem {
-                id,
-                device_id,
-                device_name,
-                created_ms,
-                expires_ms,
-                revoked_ms,
-            })
+            .map(
+                |(id, device_id, device_name, created_ms, expires_ms, revoked_ms)| {
+                    UserSessionItem {
+                        id,
+                        device_id,
+                        device_name,
+                        created_ms,
+                        expires_ms,
+                        revoked_ms,
+                    }
+                },
+            )
             .collect(),
         login_logs: login_logs
             .into_iter()
-            .map(|(id, device_id, device_name, ip, method, ok, detail, created_ms)| UserLoginLogItem {
-                id,
-                device_id,
-                device_name,
-                masked_ip: mask_ip(&ip),
-                method,
-                ok,
-                detail,
-                created_ms,
-            })
+            .map(
+                |(id, device_id, device_name, ip, method, ok, detail, created_ms)| {
+                    UserLoginLogItem {
+                        id,
+                        device_id,
+                        device_name,
+                        masked_ip: mask_ip(&ip),
+                        method,
+                        ok,
+                        detail,
+                        created_ms,
+                    }
+                },
+            )
             .collect(),
         sync: SyncMetadata {
             device_count,
@@ -443,12 +488,16 @@ pub async fn user_detail(
             last_sync_ms,
             entities: entity_rows
                 .into_iter()
-                .map(|(entity, record_count, latest_revision, latest_updated_ms)| SyncEntityMetadata {
-                    entity,
-                    record_count,
-                    latest_revision,
-                    latest_updated_ms,
-                })
+                .map(
+                    |(entity, record_count, latest_revision, latest_updated_ms)| {
+                        SyncEntityMetadata {
+                            entity,
+                            record_count,
+                            latest_revision,
+                            latest_updated_ms,
+                        }
+                    },
+                )
                 .collect(),
         },
     }))
@@ -602,19 +651,17 @@ pub async fn revoke_sessions(
 ) -> Result<Json<RevokeSessionsResponse>, ApiError> {
     match req.session_id {
         Some(session_id) => {
-            let exists: Option<i32> =
-                sqlx::query_scalar("SELECT 1 FROM users WHERE id = $1")
-                    .bind(&user_id)
-                    .fetch_optional(&app.pool)
-                    .await
-                    .map_err(internal)?;
+            let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM users WHERE id = $1")
+                .bind(&user_id)
+                .fetch_optional(&app.pool)
+                .await
+                .map_err(internal)?;
             if exists.is_none() {
                 return Err((StatusCode::NOT_FOUND, "user not found".into()));
             }
-            let revoked =
-                force_logout_session(&app, &user_id, session_id)
-                    .await
-                    .map_err(internal)?;
+            let revoked = force_logout_session(&app, &user_id, session_id)
+                .await
+                .map_err(internal)?;
             if !revoked {
                 return Err((StatusCode::NOT_FOUND, "session not found".into()));
             }
@@ -713,7 +760,10 @@ pub async fn metrics_overview(
     AxumQuery(q): AxumQuery<MetricsQuery>,
 ) -> Result<Json<MetricsOverviewResponse>, ApiError> {
     if q.from_ms >= q.to_ms {
-        return Err((StatusCode::BAD_REQUEST, "from_ms must be before to_ms".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "from_ms must be before to_ms".into(),
+        ));
     }
 
     let new_rows: Vec<(String, i64)> = sqlx::query_as(
@@ -762,8 +812,10 @@ pub async fn metrics_overview(
     .map_err(internal)?;
 
     let new_by_day: std::collections::HashMap<String, i64> = new_rows.into_iter().collect();
-    let mut active_by_day: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    let mut pushed_by_day: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut active_by_day: std::collections::HashMap<String, i64> =
+        std::collections::HashMap::new();
+    let mut pushed_by_day: std::collections::HashMap<String, i64> =
+        std::collections::HashMap::new();
     for (day, active, pushed) in snapshot_rows {
         active_by_day.insert(day.clone(), active);
         pushed_by_day.insert(day, pushed);
@@ -828,11 +880,9 @@ mod tests {
         assert!(status_condition(Some("")).unwrap().is_none());
         assert!(status_condition(Some("active")).unwrap().is_some());
         assert!(status_condition(Some("banned")).unwrap().is_some());
-        assert!(
-            status_condition(Some("deletion_pending"))
-                .unwrap()
-                .is_some()
-        );
+        assert!(status_condition(Some("deletion_pending"))
+            .unwrap()
+            .is_some());
         assert!(status_condition(Some("hacker")).is_err());
     }
 

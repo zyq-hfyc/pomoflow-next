@@ -95,9 +95,7 @@ pub fn validate_journal(journal: &Journal) -> CoreResult<()> {
         return Err(CoreError::validation("journal.title 不能超过 200 字符"));
     }
     if journal.content.chars().count() > 20000 {
-        return Err(CoreError::validation(
-            "journal.content 不能超过 20000 字符",
-        ));
+        return Err(CoreError::validation("journal.content 不能超过 20000 字符"));
     }
     Ok(())
 }
