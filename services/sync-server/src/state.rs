@@ -21,6 +21,11 @@ use crate::mailer::MailSender;
 /// - `SMTP_HOST/PORT/USER/PASS/FROM`:发信通道;未配置 = 日志模式(开发)
 /// - `INTERNAL_SERVICE_TOKEN`:P4 后管内部通道(Admin BFF 服务间调用)Bearer;
 ///   未配置 = /internal/* 全组 403(与用户 token 体系完全独立)
+/// - `RELEASE_FILES_DIR`:发布分发(ADR-013)安装包本地卷;未配置 = 上传端点 500、
+///   公开下载 404(纯同步部署不受影响)
+/// - `MAX_RELEASE_UPLOAD_BYTES`:单个安装包上传上限,默认 512 MiB
+/// - `WEBSITE_DIST_DIR`:官网单页静态产物目录(绝对路径);配置即由本服务托管(/),
+///   未配置 = 行为与此前一致(无 fallback)
 /// - `PORT`:监听端口(默认 8080)
 #[derive(Clone)]
 pub struct AppState {
@@ -35,6 +40,12 @@ pub struct AppState {
     pub mailer: Arc<dyn MailSender>,
     /// None = 后管内部通道未启用(/internal/* 一律 403)
     pub internal_token: Option<String>,
+    /// None = 发布分发未启用(安装包存储卷未配置)
+    pub release_files_dir: Option<std::path::PathBuf>,
+    /// 单个安装包上传上限(字节)
+    pub release_upload_cap: u64,
+    /// 公开下载限频器(固定窗 per-IP,fail-closed)
+    pub release_limiter: Arc<crate::release_limiter::RateLimiter>,
 }
 
 impl AppState {

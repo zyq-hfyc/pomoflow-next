@@ -19,6 +19,8 @@ mod errors;
 mod handlers;
 mod internal_handlers;
 mod mailer;
+mod release_handlers;
+mod release_limiter;
 mod state;
 
 use std::net::SocketAddr;
@@ -60,6 +62,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let internal_token = std::env::var("INTERNAL_SERVICE_TOKEN")
         .ok()
         .filter(|s| !s.trim().is_empty());
+    // 发布分发(ADR-013):安装包本地卷 + 上传上限;未配 RELEASE_FILES_DIR =
+    // 上传端点 500、公开下载 404(纯同步部署不受影响)。
+    let release_files_dir = std::env::var("RELEASE_FILES_DIR")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(std::path::PathBuf::from);
+    if let Some(dir) = &release_files_dir {
+        std::fs::create_dir_all(dir).map_err(|e| format!("创建 RELEASE_FILES_DIR 失败: {e}"))?;
+    }
+    let release_upload_cap: u64 = std::env::var("MAX_RELEASE_UPLOAD_BYTES")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(512 * 1024 * 1024);
 
     let pool = PgPoolOptions::new()
         .max_connections(8)
@@ -77,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("应用 schema.sql 失败: {e}"))?;
 
     log::info!(
-        "sync-server listening on 0.0.0.0:{port}, user={}, auth={}, mail={}, internal={}",
+        "sync-server listening on 0.0.0.0:{port}, user={}, auth={}, mail={}, internal={}, release={}",
         user_id.as_str(),
         if jwt_secret.is_some() {
             "jwt+static"
@@ -86,6 +101,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         mailer.mode(),
         if internal_token.is_some() {
+            "on"
+        } else {
+            "off"
+        },
+        if release_files_dir.is_some() {
             "on"
         } else {
             "off"
@@ -101,11 +121,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         code_pepper,
         mailer: mailer.clone(),
         internal_token,
+        release_files_dir,
+        release_upload_cap,
+        release_limiter: std::sync::Arc::new(release_limiter::RateLimiter::new(60, 60_000)),
     };
-    let internal = internal_handlers::router().route_layer(axum::middleware::from_fn_with_state(
-        state.clone(),
-        internal_handlers::require_service_token,
-    ));
+    let internal = internal_handlers::router()
+        .merge(release_handlers::internal_router(release_upload_cap))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            internal_handlers::require_service_token,
+        ));
 
     let app = Router::new()
         .route("/v1/sync/push", post(handlers::push))
@@ -161,6 +186,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/auth/login-logs", get(email_handlers::login_logs))
         .route("/healthz", get(handlers::healthz))
         .merge(internal)
+        // 发布分发公开面(无鉴权只读):官网与各端下载入口(ADR-013)
+        .merge(release_handlers::public_router())
         // CORS:Flutter Web(Chrome 预览)跨域;桌面端/Android 原生不走 CORS。
         // 开发期 Any;P5 正式部署收敛到 nginx/gateway 层指定 origin。
         .layer(

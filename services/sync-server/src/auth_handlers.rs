@@ -846,6 +846,9 @@ mod tests {
             code_pepper: "pepper".to_string(),
             mailer: Arc::new(LogSender),
             internal_token: None,
+            release_files_dir: None,
+            release_upload_cap: 1024 * 1024,
+            release_limiter: Arc::new(crate::release_limiter::RateLimiter::new(60, 60_000)),
         }
     }
 

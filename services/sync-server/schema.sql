@@ -134,3 +134,38 @@ CREATE TABLE IF NOT EXISTS login_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_login_logs_user ON login_logs(user_id, created_ms DESC);
+
+-- ============================================================
+-- 发布分发(官网下载 + 后管上传联动;ADR-013)
+-- 版本与安装包资产是业务数据,归 sync-server(ADR-008 精神);
+-- 文件实体存 RELEASE_FILES_DIR 本地卷,DB 只存相对路径。
+-- ============================================================
+
+-- 发布版本:后管建 draft → 传资产 → publish 官网可见;unpublish 可下架
+CREATE TABLE IF NOT EXISTS releases (
+  id           TEXT PRIMARY KEY,        -- UUID
+  version      TEXT NOT NULL UNIQUE,    -- 展示/排序用版本号("0.2.0")
+  notes        TEXT NOT NULL DEFAULT '',-- 发布说明(官网展示)
+  status       TEXT NOT NULL DEFAULT 'draft'
+               CHECK (status IN ('draft', 'published', 'unpublished')),
+  created_ms   BIGINT NOT NULL,
+  published_ms BIGINT                   -- 首次发布时间(下架后保留)
+);
+
+-- 安装包资产:每版本每平台至多一个(UNIQUE)→ 重传即替换
+CREATE TABLE IF NOT EXISTS release_assets (
+  id             TEXT PRIMARY KEY,      -- UUID(下载 URL 只暴露这个)
+  release_id     TEXT NOT NULL REFERENCES releases(id) ON DELETE CASCADE,
+  platform       TEXT NOT NULL
+                 CHECK (platform IN ('windows', 'linux', 'mac', 'ios', 'android', 'harmony')),
+  filename       TEXT NOT NULL,         -- 原始展示名(已清洗,仅用于头与展示)
+  ext            TEXT NOT NULL,         -- 白名单内小写扩展(无点,如 "exe")
+  size_bytes     BIGINT NOT NULL,
+  sha256         TEXT NOT NULL,         -- 上传时滚动计算(hex)
+  storage_path   TEXT NOT NULL,         -- 相对 RELEASE_FILES_DIR("{uuid}.{ext}")
+  download_count BIGINT NOT NULL DEFAULT 0,
+  created_ms     BIGINT NOT NULL,
+  UNIQUE (release_id, platform)
+);
+
+CREATE INDEX IF NOT EXISTS idx_release_assets_release ON release_assets (release_id);
