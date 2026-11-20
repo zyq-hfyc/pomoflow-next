@@ -1,8 +1,10 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../data/database.dart';
+import '../providers/auth_provider.dart';
 import 'api_client.dart';
 import 'sync_wire.dart';
 
@@ -48,6 +50,9 @@ class SyncClient {
   static String Function()? _deviceIdProvider;
   static String? Function()? _userIdProvider;
 
+  /// 换服亲和 meta 键:记录当前 pull 游标 / pending 队列属于哪个服务器 URL。
+  static const _affinityKey = 'sync_affinity_url';
+
   static AppDatabase get _db {
     final fn = _dbProvider;
     if (fn == null) {
@@ -56,10 +61,49 @@ class SyncClient {
     return fn();
   }
 
+  /// 换服亲和检测(pushOnce/pullOnce 入口最先调):meta 记录值与
+  /// ApiClient.baseUrl 不一致 = 服务器切换 → pull 游标归零 + 全量 pending
+  /// 复位 + 清登录态(token 与 user_id;重登时 _onAuthSuccess 重写,重启由
+  /// _ensureUserId 重生成)。affinity 缺失(升级首跑)只记录不复位;地址未
+  /// 配置(空)不动。与桌面端 `ensure_server_affinity` 同机制 —— 游标是
+  /// 全局单键不分服务器,不复位则老设备切服后推不上/拉不下,静默丢数据;
+  /// LWW 幂等,全量重推/重拉安全。
+  Future<void> _ensureServerAffinity() async {
+    final url = ApiClient.instance.baseUrl;
+    if (url.isEmpty) return;
+    final db = _db;
+    final prev = await db.getMeta(_affinityKey);
+    if (prev == url) return;
+    if (prev != null && prev.isNotEmpty) {
+      debugPrint('[sync] 服务器切换 $prev -> $url:复位游标/pending/登录态');
+      await db.setLastSeq(0);
+      await db.resetSyncForServerSwitch();
+      await authReset();
+    }
+    await db.setMeta(_affinityKey, url);
+  }
+
+  /// 换服复位里的登录态清理:token + user_id secure 键(user_id 与
+  /// AuthProvider 同 keyset;services 层不走 Provider 树,复用其静态键)。
+  static Future<void> _defaultAuthReset() async {
+    await ApiClient.instance.clearTokens();
+    const storage = FlutterSecureStorage(
+      aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    );
+    await storage.delete(key: AuthProvider.storageKeyUserId);
+  }
+
+  /// 测试注入点(单测无平台通道);生产路径走 [_defaultAuthReset]。
+  static Future<void> Function()? authResetOverride;
+
+  static Future<void> authReset() =>
+      authResetOverride?.call() ?? _defaultAuthReset();
+
   /// 推本地 pending 行到服务端(task + pomodoro_session 混一包,
   /// 与桌面端 `build_push_request` 全实体混包同构)。返回 (pushed/accepted/conflicted)。
   Future<({int pushed, int accepted, int conflicted})> pushOnce() async {
     if (kIsWeb) return (pushed: 0, accepted: 0, conflicted: 0);
+    await _ensureServerAffinity();
     final db = _db;
     final deviceId = (_deviceIdProvider ?? (() => 'flutter-unknown'))();
     final uid = (_userIdProvider ?? (() => null))();
@@ -610,6 +654,7 @@ class SyncClient {
   /// 注:cursor 推进按 nextCursor 推进,不会因为 skip 单行而卡死整体。
   Future<({int pulled, int applied, int skipped})> pullOnce() async {
     if (kIsWeb) return (pulled: 0, applied: 0, skipped: 0);
+    await _ensureServerAffinity();
     final db = _db;
     final deviceId = (_deviceIdProvider ?? (() => 'flutter-unknown'))();
     final uid = (_userIdProvider ?? (() => null))();

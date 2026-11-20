@@ -23,6 +23,15 @@ class ApiClient {
   static const _keyRefresh = 'auth_refresh_token';
   static const _keyUrl = 'server_url'; // shared_preferences
 
+  // 发布受管版(2026-11-20 腾讯云生产部署批):构建期 dart-define 注入官方
+  // 地址,登录页服务器输入框不渲染,地址通道整体关闭 —— 与桌面端
+  // POMOFLOW_MANAGED_BUILD / POMOFLOW_DEFAULT_SERVER_URL 同语义。
+  // dart-define 值不属机密,这里只烘地址不烘任何密钥。
+  static const bool kManagedBuild =
+      bool.fromEnvironment('POMOFLOW_MANAGED_BUILD');
+  static const String kDefaultServerUrl =
+      String.fromEnvironment('POMOFLOW_DEFAULT_SERVER_URL');
+
   String _baseUrl = '';
   String? _accessToken;
 
@@ -30,9 +39,26 @@ class ApiClient {
   bool get hasToken => _accessToken != null;
 
   /// 初始化:恢复服务器地址与 token。
+  ///
+  /// managed 构建:生效地址 = 烘焙值且**总是赢**(覆盖历史存值 —— 桌面端
+  /// 同决策,老设备残留 VM 地址时升级即切生产);烘焙值写回 `server_url`
+  /// 键,供换服亲和检测(sync_client)辨识「服务器变了」。managed 而烘焙值
+  /// 为空 → 抛错 fail-fast(与桌面端启动 panic 同语义,防流水线漏配)。
   Future<void> initialize() async {
     final prefs = await SharedPreferences.getInstance();
-    _baseUrl = prefs.getString(_keyUrl) ?? '';
+    if (kManagedBuild) {
+      if (kDefaultServerUrl.isEmpty) {
+        throw StateError(
+          'managed 构建缺少 POMOFLOW_DEFAULT_SERVER_URL(dart-define 漏配)',
+        );
+      }
+      _baseUrl = kDefaultServerUrl.endsWith('/')
+          ? kDefaultServerUrl.substring(0, kDefaultServerUrl.length - 1)
+          : kDefaultServerUrl;
+      await prefs.setString(_keyUrl, _baseUrl);
+    } else {
+      _baseUrl = prefs.getString(_keyUrl) ?? '';
+    }
     _accessToken = await _storage.read(key: _keyAccess);
   }
 

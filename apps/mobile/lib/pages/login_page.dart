@@ -224,7 +224,12 @@ class _LoginPageState extends State<LoginPage>
                     },
                   ),
                   const SizedBox(height: 18),
-                  _serverField(theme),
+                  // managed 构建地址出厂烘焙,服务器输入框不渲染(只读展示,
+                  // 无「保存」);开发/测试版保持可配置(VM 地址自填)。
+                  if (ApiClient.kManagedBuild)
+                    _serverManagedRow(theme)
+                  else
+                    _serverField(theme),
                   const SizedBox(height: 14),
                   if (_tabCtrl.index == 0) ..._buildLoginTab(auth),
                   if (_tabCtrl.index == 1) ..._buildRegisterTab(auth),
@@ -272,6 +277,34 @@ class _LoginPageState extends State<LoginPage>
             color: Colors.white,
           ),
         ),
+      ),
+    );
+  }
+
+  /// managed 构建只读服务器行:地址烘焙自 dart-define,无输入无保存。
+  Widget _serverManagedRow(ThemeData theme) {
+    final url = ApiClient.instance.baseUrl;
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: theme.pfSurface2,
+        borderRadius: BorderRadius.circular(PfRadii.sm),
+        border: Border.all(color: theme.pfLine),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.dns_outlined, size: 16, color: theme.pfMuted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              url.isEmpty ? '…' : url,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 13, color: theme.pfMuted),
+            ),
+          ),
+        ],
       ),
     );
   }

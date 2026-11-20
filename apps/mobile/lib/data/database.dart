@@ -1213,6 +1213,31 @@ class AppDatabase {
     );
   }
 
+  /// 换服务器复位:全部同步参与表的实体行(含软删 tombstone)重标
+  /// `pending`(全量重推)。pull 游标(`last_seq` 归零)由调用方一并处理
+  /// —— 桌面端同款机制(core `mark_all_pending`),LWW 幂等,重放安全。
+  Future<void> resetSyncForServerSwitch() async {
+    const tables = [
+      'tasks',
+      'projects',
+      'tags',
+      'subtasks',
+      'pomodoro_sessions',
+      'mottos',
+      'journals',
+      'daily_reviews',
+      'weekly_reviews',
+      'monthly_reviews',
+      'yearly_reviews',
+      'task_tag_sync',
+    ];
+    await _db.transaction((txn) async {
+      for (final t in tables) {
+        await txn.rawUpdate("UPDATE $t SET sync_state = 'pending'");
+      }
+    });
+  }
+
   /// Pull 时与远端比 LWW 取本地候选(id 是 String)。
   Future<Map<String, Object?>?> localTaskCandidate(String id) async {
     final rows = await _db.query(
