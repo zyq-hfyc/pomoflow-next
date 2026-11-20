@@ -84,6 +84,10 @@ artifacts/
 # 发布分发默认存储卷(RELEASE_FILES_DIR 未配时的默认目录),绝不入仓
 release-files/
 
+# 腾讯云生产部署运行时数据卷(deploy/prod:releases / website-dist / backups,
+# backup.sh 与 compose prod override 落盘处,绝不入仓)
+services/sync-server/data/
+
 # Android 机器本地配置(SDK/flutter 路径,各机器 owner 自配)
 apps/mobile/android/local.properties
 apps/mobile/android/.gradle/

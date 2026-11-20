@@ -57,6 +57,19 @@ Analytics 按字段统计时,再从快照展开实体表**(数据已在 JSONB �
 
 ---
 
+## 腾讯云生产部署(2026-11-20 起)
+
+生产环境走**独立 runbook**: [`docs/腾讯云部署runbook.md`](../../docs/腾讯云部署runbook.md) ——
+
+- 生产 override(`deploy/docker-compose.prod.yml`:8080 只绑回环、发布分发
+  变量转发、官网/安装包挂卷)叠加在 base 之上,**base 原样继续服务 VM**
+- nginx :80 反代 + `/internal/*` 公网 404 + 备份 cron + 首版发布脚本,
+  物料全在 `deploy/`(各文件头注释含用法)
+- 客户端侧的「生产受管版」机制(构建期烘焙地址、无配置 UI)与数据迁移,
+  见桌面/移动端 RELEASE 与 runbook「数据迁移」节
+
+下方 VM 指南继续有效,仅适用于测试环境。
+
 ## 部署指南(VMware Ubuntu,每步含命令说明)
 
 > 目标拓扑:

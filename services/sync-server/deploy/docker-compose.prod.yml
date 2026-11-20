@@ -1,0 +1,35 @@
+# 生产环境 override(腾讯云,2026-11-20)—— 叠加在 docker-compose.yml 之上,
+# **不改 base**(base 原样继续服务 VMware VM 测试环境,两环境天然隔离)。
+#
+# 用法(服务器上,与 docker-compose.yml 同目录):
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d
+#
+# 与开发环境的全部差异(单文件承载):
+#   1. sync-server 只绑 127.0.0.1:8080 —— 公网入口由宿主机 nginx :80 反代
+#      (见同目录 nginx-pomoflow.conf)。compose 多文件合并时 ports 是**并集**,
+#      必须用 `!override` 标签整体替换 base 的 "8080:8080"(0.0.0.0 绑定),
+#      需要 compose v2.24+;过旧则改为独立完整 prod compose 文件。
+#   2. 转发发布分发 4 变量 —— compose 只把列在 environment 里的变量传进容器
+#      (漏转发 = .env 配了也不生效,同 JWT_SECRET 踩坑,见 base 注释)。
+#      其中 WEBSITE_DIST_DIR 指向容器内挂载点,服务启动即校验绝对路径 + 目录
+#      存在(fail-fast)→ **官网 dist 必须先于首启上传**(runbook 步骤 2)。
+#      RELEASE_FILES_DIR 启动时自动建目录。
+#   3. postgres 端口绑定 base 已是 127.0.0.1:5432,无需覆盖。
+#
+# 其余运维物料:nginx 配置 nginx-pomoflow.conf、每日备份 backup.sh、
+# 首版发布 first-release.sh;全流程见 docs/腾讯云部署runbook.md。
+
+services:
+  sync-server:
+    environment:
+      WEBSITE_DIST_DIR: /data/website-dist
+      RELEASE_FILES_DIR: /data/releases
+      # 未设置时内部端点全组 403 —— 生产要跑 first-release.sh / admin-bff,必配
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?请在 .env 设置 INTERNAL_SERVICE_TOKEN(openssl rand -hex 32)}
+      # 安装包上传上限,与 nginx client_max_body_size 对齐(默认 512MiB → 1GiB)
+      MAX_RELEASE_UPLOAD_BYTES: ${MAX_RELEASE_UPLOAD_BYTES:-1073741824}
+    volumes:
+      - ./data/website-dist:/data/website-dist:ro
+      - ./data/releases:/data/releases
+    ports: !override
+      - "127.0.0.1:8080:8080"
