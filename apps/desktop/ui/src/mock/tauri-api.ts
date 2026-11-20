@@ -15,6 +15,9 @@
 //   (旧纯文本);随手记页卡片摘要须提取纯文本,点开分别按格式载入编辑器。
 // 场景五:数据同步段(2026-10-08 搬家批)—— #/account 未登录菜单两项;
 //   「数据同步」段内存态配置(服务器地址已填、auth:null 未登录),保存可改;
+// 场景六:登入/登出闭环(2026-11-20 退出登录补完批)—— #/account 账号段
+//   AuthCard 登录 → auth 落账号(同 Rust 落 meta 语义)→ 菜单 6 项 + 底部
+//   「退出登录」现形 → 登出切回未登录 + 提示。内存态,刷新页面即重置。
 //
 // 没实现的命令走下面 default 兜底(返回 null / 空数组 → UI 走空态)。
 
@@ -288,6 +291,20 @@ const invoke: Invoke = async (cmd, args) => {
         auto_sync: Boolean(args?.autoSync),
         interval_min: Number(args?.intervalMin ?? 5),
       };
+      return null;
+    }
+    // 场景六(2026-11-20 退出登录补完批):登入/登出闭环。真实命令把
+    // 账号写进 meta(get_sync_config 的 auth 由此而来),mock 同语义写
+    // mockSyncConfig.auth —— 菜单形态、退出按钮显隐全由它驱动。
+    case "auth_login": {
+      const username = String(args?.username ?? "").trim();
+      const password = String(args?.password ?? "");
+      if (!username || !password) throw new Error("请输入账号名和密码");
+      mockSyncConfig = { ...mockSyncConfig, auth: { username, user_id: "mock-user" } };
+      return { username, user_id: "mock-user" };
+    }
+    case "auth_logout": {
+      mockSyncConfig = { ...mockSyncConfig, auth: null };
       return null;
     }
     case "get_sync_identity":

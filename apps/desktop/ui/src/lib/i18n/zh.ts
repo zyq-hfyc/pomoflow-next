@@ -379,6 +379,7 @@ export const zh = {
       wechatRow: '微信', wechatRowDesc: '扫码登录(需企业资质,暂缓)',
       deviceAt: '{time} 登录',
       staleLoginCleared: '本地登录状态已失效(服务端账号不存在或令牌被吊销),已自动退出,请重新登录。',
+      logoutDone: '已退出登录',
       loginLogsTitle: '最近登录记录',
       loginOk: '成功',
       loginFail: '失败',

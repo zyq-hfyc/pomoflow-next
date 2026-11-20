@@ -7,27 +7,16 @@
 //! ④ 深链:requestAccountSection("sync") 后 mount → 直接落 sync 段,
 //!    且 pending 信号已被消费($effect 消费,覆盖「已在 /account 时
 //!    navigate 不 remount」场景 —— 见 accountNav.svelte.ts 头注)。
+//! ⑤ 退出登录链(2026-11-20 补完批):点底部按钮 → authLogout +
+//!    setAccountUser(null) + resetJournals → 「已退出登录」提示 + 就地切未登录。
 
 import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 
-// 可变的登录态(hoisted 供 mock 工厂闭包引用;每个用例 mount 前重置)。
-const h = vi.hoisted(() => ({
-  acct: {
-    loaded: true,
-    user: null as { username: string } | null,
-    avatar: null as string | null,
-  },
-}));
-
-vi.mock("../lib/accountState.svelte", () => ({
-  accountState: () => h.acct,
-  loadAccountState: vi.fn(async () => {}),
-  setAccountUser: vi.fn((u: { username: string } | null) => {
-    h.acct.user = u;
-  }),
-  refreshAvatar: vi.fn(async () => {}),
-}));
+// 登录态用真 accountState(rune 模块态,不被 mock):mock 版普通对象改字段
+// 不触发 Svelte 响应性,登出后菜单形态不会切换(2026-11-20 登出测试踩过)。
+// 复位用 setAccountUser(null) —— 顺带 loaded=true,mount 的 loadAccountState
+// 不再拉 getSyncConfig,登录态由用例自己摆。
 vi.mock("../lib/api", () => ({
   // 已登录用例会触发登录态自愈核验,必须 resolve,否则误判掉线清登录态
   authGetProfile: vi.fn(async () => ({
@@ -36,6 +25,17 @@ vi.mock("../lib/api", () => ({
     display_name: "Tester",
   })),
   authLogout: vi.fn(async () => {}),
+  // accountState 的依赖绑定(首次 loadAccountState 才会调,测试路径走不到;
+  // 保留导出防 mock 缺导出报错)
+  getSyncConfig: vi.fn(async () => ({
+    server_url: "http://localhost:8321",
+    token: null,
+    auto_sync: true,
+    interval_min: 5,
+    auth: null,
+    managed: false,
+  })),
+  authGetAvatar: vi.fn(async () => null),
 }));
 vi.mock("../lib/journalsStore.svelte", () => ({ resetJournals: vi.fn() }));
 
@@ -56,6 +56,7 @@ import {
   pendingAccountSection,
   clearAccountSectionRequest,
 } from "../lib/accountNav.svelte";
+import { accountState, setAccountUser } from "../lib/accountState.svelte";
 import AccountPage from "./AccountPage.svelte";
 
 // 已挂载实例登记:必须 afterEach 卸载 —— 存活实例的 $effect 仍在追踪
@@ -87,9 +88,7 @@ function navItem(target: HTMLElement, label: string): HTMLButtonElement {
 
 beforeEach(() => {
   document.body.innerHTML = "";
-  h.acct.loaded = true;
-  h.acct.user = null;
-  h.acct.avatar = null;
+  setAccountUser(null);
   clearAccountSectionRequest();
 });
 
@@ -124,7 +123,7 @@ describe("AccountPage · 未登录", () => {
 
 describe("AccountPage · 已登录", () => {
   test("菜单 6 项顺序:数据同步插在登录设备与账号注销之间;默认个人资料段", async () => {
-    h.acct.user = { username: "tester" };
+    setAccountUser({ username: "tester", user_id: "u1" });
     const target = await render();
     expect(navLabels(target)).toEqual([
       "个人资料",
@@ -141,7 +140,7 @@ describe("AccountPage · 已登录", () => {
   });
 
   test("点「数据同步」→ sync 段直挂(不经 AccountCenter)", async () => {
-    h.acct.user = { username: "tester" };
+    setAccountUser({ username: "tester", user_id: "u1" });
     const target = await render();
     navItem(target, "数据同步").click();
     flushSync();
@@ -149,6 +148,29 @@ describe("AccountPage · 已登录", () => {
     expect(target.querySelector('[data-stub="account-center"]')).toBeNull();
     // 危险区仍在且垫底
     expect(navLabels(target).at(-1)).toBe("账号注销");
+  });
+
+  test("点退出登录 → authLogout + 清态 + 提示,菜单切回未登录形态(2026-11-20 补完)", async () => {
+    setAccountUser({ username: "tester", user_id: "u1" });
+    const target = await render();
+    const { authLogout } = await import("../lib/api");
+    const { resetJournals } = await import("../lib/journalsStore.svelte");
+
+    const logoutBtn = target.querySelector<HTMLButtonElement>(".menu-footer .menu-item")!;
+    expect(logoutBtn.textContent).toContain("退出登录");
+    logoutBtn.click();
+    // onLogout 有 await,异步续体落地后再断言(与 render 的冲排节奏一致)
+    await new Promise((r) => setTimeout(r, 0));
+    flushSync();
+
+    // 整条清态链:命令调用 → 全局登录态置空(真 rune 状态,响应性可断言)→ 缓存清
+    expect(vi.mocked(authLogout)).toHaveBeenCalledTimes(1);
+    expect(accountState().user).toBeNull();
+    expect(vi.mocked(resetJournals)).toHaveBeenCalledTimes(1);
+    // 成功反馈(G2)与形态切换
+    expect(target.textContent).toContain("已退出登录");
+    expect(navLabels(target)).toEqual(["账号", "数据同步"]);
+    expect(target.querySelector(".menu-footer")).toBeNull();
   });
 });
 

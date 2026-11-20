@@ -47,6 +47,9 @@
   let profile = $state<AccountProfile | null>(null);
   let loggingOut = $state(false);
   let staleNotice = $state("");
+  let byeNotice = $state("");
+  // 「已退出登录」提示自动消隐时长(登出是瞬时成功反馈,不像 staleNotice 需人工留意)
+  const BYE_NOTICE_CLEAR_MS = 4000;
 
   const display = $derived(profile?.display_name || profile?.username || "…");
 
@@ -118,10 +121,15 @@
     if (loggingOut) return;
     loggingOut = true;
     try {
-      await authLogout();
+      // 本地清了才算退出(2026-11-20 补完):authLogout 仅 store 异常才 Err,
+      // 网络/服务端失败 Rust 命令内部已吞 —— UI 侧不能因 reject 跳过清态,
+      // 否则异常时按钮点了没反应,违背与 Rust 同款「尽力而为」哲学
+      await authLogout().catch(() => {});
       setAccountUser(null);
       profile = null;
       resetJournals(); // M4:清随手记缓存,防换账号先渲染上一账号数据
+      byeNotice = t.settings.account.logoutDone;
+      setTimeout(() => (byeNotice = ""), BYE_NOTICE_CLEAR_MS);
     } finally {
       loggingOut = false;
     }
@@ -134,6 +142,7 @@
 
 <div class="account-page page-veil">
   {#if staleNotice}<div class="stale" role="status">⚠ {staleNotice}</div>{/if}
+  {#if byeNotice}<div class="bye" role="status">✓ {byeNotice}</div>{/if}
 
   <!-- 左侧菜单(与设置页同款视觉) -->
   <aside class="menu">
@@ -249,7 +258,8 @@
     }
   }
 
-  .stale {
+  .stale,
+  .bye {
     position: absolute;
     top: 0.75rem;
     left: 50%;
@@ -257,10 +267,16 @@
     z-index: 10;
     padding: 0.5rem 0.9rem;
     border-radius: 8px;
-    background: #fef3c7;
-    color: #92400e;
     font-size: 0.78rem;
     box-shadow: var(--shadow-sm);
+  }
+  .stale {
+    background: #fef3c7;
+    color: #92400e;
+  }
+  .bye {
+    background: #dcfce7;
+    color: #166534;
   }
 
   /* ===== 左侧菜单(样式对齐 SettingsPage)===== */

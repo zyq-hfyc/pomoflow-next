@@ -378,6 +378,7 @@ export const en: Dict = {
       wechatRow: 'WeChat', wechatRowDesc: 'QR sign-in (needs business verification; deferred)',
       deviceAt: 'Signed in {time}',
       staleLoginCleared: 'The saved session is no longer valid (account removed or tokens revoked). Signed out automatically; please sign in again.',
+      logoutDone: 'Signed out',
       loginLogsTitle: 'Recent sign-ins',
       loginOk: 'OK',
       loginFail: 'Failed',
