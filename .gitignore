@@ -23,6 +23,9 @@
 /apps/desktop/ui/.vite/
 /apps/desktop/ui/tsconfig.tsbuildinfo
 
+# Vite env 本机私有覆盖(开发默认值的令牌等,绝不入仓)
+/apps/desktop/ui/.env*.local
+
 # 桌面端根的 tauri-cli npm wrapper(P1.7 加,只装 CLI 二进制)
 /apps/desktop/node_modules/
 /apps/desktop/package-lock.json

@@ -36,6 +36,8 @@
   } from "./lib/timer.svelte";
   import { initReminders } from "./lib/reminders.svelte";
   import { initTheme } from "./lib/theme.svelte";
+  // 开发/测试环境同步默认值(.env.development;空配置才写,managed 跳过)
+  import { applySyncDefaultsOnce } from "./lib/syncDefaults";
   import TomatoIcon from "./components/ui/TomatoIcon.svelte";
   import TimerPage from "./pages/TimerPage.svelte";
   import TasksPage from "./pages/TasksPage.svelte";
@@ -60,6 +62,9 @@
   });
 
   onMount(() => {
+    // 开发/测试环境:meta 完全未配置时写入 .env.development 默认值一次
+    // (生产 managed 构建内部直接跳过;详见 lib/syncDefaults.ts)
+    void applySyncDefaultsOnce(import.meta.env);
     // 顶部导航登录态(登录后品牌位换头像)+ 同步状态指示器
     void loadAccountState();
     initSyncListener();

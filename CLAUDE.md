@@ -105,6 +105,10 @@ docs/                本仓库内文档
   → `http://localhost:1420/#/tasks`。用 `src/mock/tauri-api.ts` 顶掉 Tauri
   IPC,不必起 Rust;mock 里有任务页/手账页 fixture,缺的命令按文件头注释补。
   注意同一 URL 只有 hash 变化时浏览器不重新加载,对比前后两次要换查询串。
+- **测试环境同步默认值**:`.env.development`(入仓,`VITE_SYNC_DEFAULT_URL`)
+  + `.env.development.local`(不入仓,`VITE_SYNC_DEFAULT_TOKEN`)—— dev 启动
+  时空配置自动写入一次(lib/syncDefaults.ts),之后仍可自由改;
+  production(`npm run build`/CI)刻意无值,生产走 Rust managed 烘焙。
 
 ## 开发流程
 
