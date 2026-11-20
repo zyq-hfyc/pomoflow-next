@@ -2,7 +2,7 @@
 //! (2026-09-15 巨石拆分:自 store/sqlite.rs 按域切出,内容零改动)
 
 use super::*;
-use crate::model::Task;
+use crate::model::{Journal, Task};
 
 #[test]
 fn upsert_and_get_task_roundtrip() {
@@ -593,4 +593,31 @@ fn invalid_project_id_fails_soft_to_none() {
     let tasks = store.list_tasks(&TaskQuery::default()).unwrap();
     let hit = tasks.iter().find(|t| t.id == id).unwrap();
     assert!(hit.project_id.is_none(), "任务侧同样 fail-soft");
+}
+
+#[test]
+fn invalid_journal_id_rows_are_skipped_in_list() {
+    // 2026-11-20 随手记事故回归:DB 里存在非 UUID 主键 id 的 journal(移动端
+    // 老数字串 id / E2E 测试种子 'j01xxxx0000zzzz' 经云 → 桌面 pull 入库)时,
+    // 读路径 fail-soft:跳过脏行,别让一行垃圾打挂整页;合法 id 行为不变。
+    // API 造不出非法值,裸 SQL 种脏。
+    let store = SqliteStore::open_in_memory().unwrap();
+    {
+        let conn = store.lock().unwrap();
+        conn.execute(
+            "INSERT INTO journals (id, kind, status, title, content, tags_csv,
+                created_at_ms, revision, deleted_at_ms, updated_at_ms, user_id)
+             VALUES ('j01xxxx0000zzzz', 'note', 'active', '脏行', '', '',
+                1000, 1, NULL, 1000, '')",
+            [],
+        )
+        .unwrap();
+    }
+    let good = Journal::new("note", "好行");
+    let good_id = good.id.clone();
+    store.upsert_journal(good).unwrap();
+
+    let list = store.list_journals().unwrap();
+    assert_eq!(list.len(), 1, "脏行应被跳过而非拖死整页");
+    assert_eq!(list[0].id, good_id);
 }

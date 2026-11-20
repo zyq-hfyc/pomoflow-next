@@ -100,14 +100,25 @@ pub fn apply_pull_response(
     if changes.is_empty() {
         return Ok(Vec::new());
     }
-    let keys: Vec<(super::EntityKind, String)> = changes
+    // 脏数据防线(2026-11-20 随手记事故):远端变更实体 id 非法(非 UUID,
+    // 移动端老数字串 id / E2E 测试种子经云回流)整条跳过 —— 不应用、不进库,
+    // 一行垃圾不得打挂桌面端列表页。本引擎是双端 pull 的唯一咽喉,桌面与
+    // 移动 FFI 同享此闸;跳过的条目游标已在服务端推进,下轮不会重发。
+    let clean: Vec<&Change> = changes
+        .iter()
+        .filter(|c| Id::parse(&c.entity_id).is_some())
+        .collect();
+    if clean.is_empty() {
+        return Ok(Vec::new());
+    }
+    let keys: Vec<(super::EntityKind, String)> = clean
         .iter()
         .map(|c| (c.entity, c.entity_id.clone()))
         .collect();
     let locals = store.local_candidates(&keys)?;
     let mut overridden: Vec<PullOverridden> = Vec::new();
     let mut winners: Vec<&Change> = Vec::new();
-    for (remote, local) in changes.iter().zip(locals) {
+    for (remote, local) in clean.into_iter().zip(locals) {
         match local {
             Some(local) => match super::resolve_conflict(&local, remote) {
                 super::Resolution::Left => {} // 本地胜,保持 pending
@@ -130,5 +141,46 @@ pub fn apply_pull_response(
 
 #[cfg(test)]
 mod tests {
-    // 引擎本身无独立单测:它的行为由 tests/sync_e2e.rs 的七场景端到端锁定。
+    // 引擎行为由 tests/sync_e2e.rs 的七场景端到端锁定;此处只锁 2026-11-20
+    // 随手记事故新增的 pull id 防线(远端变更实体 id 非法 → 整条跳过不入库)。
+
+    use super::*;
+    use crate::model::Journal;
+    use crate::store::{InMemoryStore, Store};
+    use crate::sync::EntityKind;
+
+    #[test]
+    fn pull_skips_remote_changes_with_invalid_entity_id() {
+        let store = InMemoryStore::with_user_device(Id::new(), "dev-a");
+        let good = Journal::new("note", "合法行");
+        let mut bad_payload = serde_json::to_value(&good).expect("journal 序列化");
+        // 线形即服务端原样:载荷 id 是任意字符串(移动端老数字串 id / 测试种子)
+        bad_payload["id"] = serde_json::json!("j01xxxx0000zzzz");
+        let changes = vec![
+            Change {
+                id: uuid::Uuid::new_v4(),
+                device_id: "dev-b".into(),
+                entity: EntityKind::Journal,
+                entity_id: "j01xxxx0000zzzz".into(),
+                revision: 1,
+                updated_at: chrono::Utc::now(),
+                payload: bad_payload,
+            },
+            Change {
+                id: uuid::Uuid::new_v4(),
+                device_id: "dev-b".into(),
+                entity: EntityKind::Journal,
+                entity_id: good.id.to_string(),
+                revision: good.revision,
+                updated_at: chrono::Utc::now(),
+                payload: serde_json::to_value(&good).expect("journal 序列化"),
+            },
+        ];
+
+        apply_pull_response(&store, &changes).expect("非法 id 应跳过而非报错");
+
+        let list = store.list_journals().expect("list_journals");
+        assert_eq!(list.len(), 1, "脏变更不入库,合法变更正常应用");
+        assert_eq!(list[0].id, good.id);
+    }
 }

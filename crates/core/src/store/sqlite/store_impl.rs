@@ -964,12 +964,28 @@ impl Store for SqliteStore {
                 "SELECT * FROM journals WHERE deleted_at_ms IS NULL ORDER BY created_at_ms ASC",
             )
             .map_err(|e| CoreError::storage(format!("prepare list_journals: {e}")))?;
-        let rows = stmt
-            .query_map([], row_to_journal)
+        let mut rows = stmt
+            .query([])
             .map_err(|e| CoreError::storage(format!("query list_journals: {e}")))?;
         let mut out = Vec::new();
-        for r in rows {
-            out.push(r.map_err(|e| CoreError::storage(format!("row list_journals: {e}")))?);
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| CoreError::storage(format!("row list_journals: {e}")))?
+        {
+            // 脏数据容忍(2026-11-20 随手记事故):非 UUID 主键行(移动端老
+            // 数字串 id / E2E 测试种子经云 → pull 回流)跳过不显示,别让一行
+            // 垃圾打挂整页;其余列解析错误照报(那是真 bug)。先例:统计页
+            // invalid project_id fail-soft。入口防线在引擎 apply_pull_response。
+            let id_s: String = row
+                .get("id")
+                .map_err(|e| CoreError::storage(format!("row list_journals: {e}")))?;
+            if Id::parse(&id_s).is_none() {
+                continue;
+            }
+            out.push(
+                row_to_journal(row)
+                    .map_err(|e| CoreError::storage(format!("row list_journals: {e}")))?,
+            );
         }
         Ok(out)
     }
