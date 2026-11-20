@@ -156,12 +156,15 @@ function newJournalId(): string {
 }
 
 // 数据同步段(账号页):内存态配置,未登录形态(auth:null)。
+// managed:false = 模拟开发版(地址可配);目检 managed 形态可临时改 true。
 let mockSyncConfig = {
   server_url: "http://192.168.1.10:8321" as string | null,
   token: null as string | null,
   auto_sync: true,
   interval_min: 5,
   auth: null as { username: string; user_id: string } | null,
+  managed: false,
+  effective_server_url: "http://192.168.1.10:8321" as string | null,
 };
 
 const dailyReviews: { id: string; date: string; content: string }[] = [

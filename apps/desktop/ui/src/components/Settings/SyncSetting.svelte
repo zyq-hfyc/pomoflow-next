@@ -1,6 +1,8 @@
 <script lang="ts">
   // 账号页「数据同步」段(2026-10-08 从设置页迁入;已/未登录均可见 ——
   // 自部署静态 Token 用户不登录也要能配服务器地址/令牌)。
+  // managed 构建(2026-11-20):地址为编译期烘焙,服务器连接段只读展示,
+  // 保存按钮保留(自动同步开关/间隔的唯一写入口)。
   //
   // 段构成:未登录 hint(仅未登录)+ 服务器连接 + 自动同步 + 本机标识 +
   // 冲突日志(SyncConflictsSection)。改密码/设备管理本就与账号页「安全设置/
@@ -40,6 +42,10 @@
   let intervalMin = $state(5);
   let identity = $state<{ user_id: string; device_id: string } | null>(null);
   let authUser = $state<string | null>(null);
+  // 发布受管版(managed):地址为编译期烘焙,只读展示、不提供配置;
+  // 保存按钮仍是自动同步开关/间隔的唯一写入口(managed 下 save 不传地址/令牌)
+  let managed = $state(false);
+  let effectiveUrl = $state<string | null>(null);
 
   let savedFlash = $state(false);
   let syncing = $state(false);
@@ -65,6 +71,8 @@
       intervalMin = cfg.interval_min;
       authUser = cfg.auth?.username ?? null;
       identity = id;
+      managed = cfg.managed;
+      effectiveUrl = cfg.effective_server_url;
     } catch (e) {
       error = String(e);
     }
@@ -85,7 +93,10 @@
     error = null;
     savedFlash = false;
     try {
-      await setSyncConfig(serverUrl || null, token || null, autoSync, intervalMin);
+      // managed 构建不传地址/令牌(Rust 侧忽略入参,烘焙地址总是赢);
+      // 这里保存的是自动同步开关与间隔
+      const [url, tk] = managed ? [null, null] : [serverUrl || null, token || null];
+      await setSyncConfig(url, tk, autoSync, intervalMin);
       savedFlash = true;
       setTimeout(() => (savedFlash = false), 1500);
     } catch (e) {
@@ -105,7 +116,9 @@
 
   async function onSyncNow() {
     if (syncing) return;
-    if (!serverUrl.trim() || !token.trim()) {
+    // managed 构建地址出厂即有,令牌走登录态 —— 跳过本地预检,
+    // 未登录由 Rust 侧报「请先登录账号」引导
+    if (!managed && (!serverUrl.trim() || !token.trim())) {
       error = t.settings.sync.notConfigured;
       return;
     }
@@ -150,31 +163,38 @@
     </section>
   {/if}
 
-  <!-- 服务器连接 -->
+  <!-- 服务器连接(managed 构建地址为出厂烘焙,只读展示) -->
   <section class="group">
     <h3 class="group-title">{t.settings.sync.serverSection}</h3>
     <div class="group-body">
-      <div class="form-row">
-        <span class="row-label">{t.settings.sync.serverUrl}</span>
-        <input
-          class="input"
-          type="text"
-          bind:value={serverUrl}
-          placeholder={t.settings.sync.serverUrlPh}
-          spellcheck="false"
-        />
-      </div>
-      <div class="form-row">
-        <span class="row-label">{t.settings.sync.token}</span>
-        <input
-          class="input"
-          type="password"
-          bind:value={token}
-          placeholder={t.settings.sync.tokenPh}
-          spellcheck="false"
-          autocomplete="off"
-        />
-      </div>
+      {#if managed}
+        <div class="form-row">
+          <span class="row-label">{t.settings.sync.currentServer}</span>
+          <code class="id-text">{effectiveUrl ?? "…"}</code>
+        </div>
+      {:else}
+        <div class="form-row">
+          <span class="row-label">{t.settings.sync.serverUrl}</span>
+          <input
+            class="input"
+            type="text"
+            bind:value={serverUrl}
+            placeholder={t.settings.sync.serverUrlPh}
+            spellcheck="false"
+          />
+        </div>
+        <div class="form-row">
+          <span class="row-label">{t.settings.sync.token}</span>
+          <input
+            class="input"
+            type="password"
+            bind:value={token}
+            placeholder={t.settings.sync.tokenPh}
+            spellcheck="false"
+            autocomplete="off"
+          />
+        </div>
+      {/if}
       <div class="form-row">
         <span class="row-label"></span>
         <div class="actions">
@@ -192,6 +212,9 @@
           </button>
         </div>
       </div>
+      {#if managed}
+        <p class="hint">{t.settings.sync.serverUrlManagedHint}</p>
+      {/if}
     </div>
   </section>
 

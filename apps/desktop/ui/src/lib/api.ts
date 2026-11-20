@@ -481,6 +481,10 @@ export interface SyncConfig {
   interval_min: number;
   /** 账号登录状态(null = 未登录,走静态 Token) */
   auth: { username: string; user_id: string } | null;
+  /** 发布受管版:true = 地址为编译期烘焙,UI 只读展示、不提供配置 */
+  managed: boolean;
+  /** 生效服务器地址(managed = 烘焙值;否则 = meta 值) */
+  effective_server_url: string | null;
 }
 
 export interface SyncIdentity {

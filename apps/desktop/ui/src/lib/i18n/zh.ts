@@ -268,6 +268,8 @@ export const zh = {
       serverSection: '服务器连接',
       serverUrl: '服务器地址',
       serverUrlPh: 'http://192.168.1.10:8080',
+      currentServer: '当前服务器',
+      serverUrlManagedHint: '发布版已内置官方服务器,无需配置',
       token: '访问令牌(Token)',
       tokenPh: '与服务端 .env 的 SYNC_TOKEN 一致',
       save: '保存配置',

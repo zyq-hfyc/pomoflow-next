@@ -261,6 +261,8 @@ export const en: Dict = {
       serverSection: 'Server connection',
       serverUrl: 'Server URL',
       serverUrlPh: 'http://192.168.1.10:8080',
+      currentServer: 'Current server',
+      serverUrlManagedHint: 'This release has the official server built in — no configuration needed',
       token: 'Access token',
       tokenPh: 'SYNC_TOKEN from the server .env',
       save: 'Save',
