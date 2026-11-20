@@ -52,13 +52,11 @@ pub(super) fn row_to_task(row: &Row<'_>) -> rusqlite::Result<Task> {
     let pomodoro_duration: Option<i64> = row.get("pomodoro_duration")?;
 
     let project_id_s: Option<String> = row.get("project_id")?;
-    let project_id = match project_id_s {
-        Some(s) => Some(
-            Id::parse(&s)
-                .ok_or_else(|| core_err(CoreError::storage(format!("invalid project_id: {s}"))))?,
-        ),
-        None => None,
-    };
+    // 脏数据容忍(2026-11-20 统计页事故):v1 直迁/同步载荷可带入非 UUID
+    // project_id(schema 无 FK,写路径 Id 新类型不校验格式)。读路径 fail-soft:
+    // 解析不了 → 视为无项目,别让一行垃圾拖死任务列表/统计页(先例:
+    // 上方 user_id 解析失败回落 Id::nil)。归责丢失可接受,页面打挂不行。
+    let project_id = project_id_s.and_then(|s| Id::parse(&s));
     let repeat_parent_s: Option<String> = row.get("repeat_parent_id")?;
     let repeat_parent_id = match repeat_parent_s {
         Some(s) => Some(Id::parse(&s).ok_or_else(|| {
@@ -183,13 +181,11 @@ pub(super) fn row_to_pomodoro(row: &Row<'_>) -> rusqlite::Result<PomodoroSession
         None => None,
     };
     let project_id_s: Option<String> = row.get("project_id")?;
-    let project_id = match project_id_s {
-        Some(s) => Some(
-            Id::parse(&s)
-                .ok_or_else(|| core_err(CoreError::storage(format!("invalid project_id: {s}"))))?,
-        ),
-        None => None,
-    };
+    // 脏数据容忍(2026-11-20 统计页事故):v1 直迁/同步载荷可带入非 UUID
+    // project_id(schema 无 FK,写路径 Id 新类型不校验格式)。读路径 fail-soft:
+    // 解析不了 → 视为无项目,别让一行垃圾拖死任务列表/统计页(先例:
+    // 上方 user_id 解析失败回落 Id::nil)。归责丢失可接受,页面打挂不行。
+    let project_id = project_id_s.and_then(|s| Id::parse(&s));
 
     core_try(Ok(PomodoroSession {
         id,

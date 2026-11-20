@@ -548,3 +548,39 @@ fn mark_all_pending_repushes_all_including_tombstones() {
         .clone();
     assert_eq!(second_task, third_task, "复位重放的载荷应一致");
 }
+
+#[test]
+fn invalid_project_id_fails_soft_to_none() {
+    // 2026-11-20 统计页事故回归:DB 里存在非 UUID project_id(如 v1 直迁/
+    // 同步载荷带入的 'default-运营')时,读路径须 fail-soft(视为无项目),
+    // 而不是一行垃圾拖死整个任务列表/统计页。API 造不出非法值,裸 SQL 种脏。
+    let store = SqliteStore::open_in_memory().unwrap();
+    {
+        let conn = store.lock().unwrap();
+        conn.execute(
+            "INSERT INTO pomodoros (id, project_id, duration_minutes, started_at_ms,
+                ended_at_ms, is_completed, updated_at_ms)
+             VALUES ('sess-dirty', 'default-运营', 25, 1000, 26000, 1, 1000)",
+            [],
+        )
+        .unwrap();
+    }
+    let sessions = store.list_pomodoros().unwrap();
+    assert_eq!(sessions.len(), 1, "脏行不应中断会话列表");
+    assert!(sessions[0].project_id.is_none(), "非法 project_id 应降级为 None");
+
+    let task = Task::new("带脏项目的任务");
+    let id = task.id.clone();
+    store.upsert_task(task).unwrap();
+    {
+        let conn = store.lock().unwrap();
+        conn.execute(
+            "UPDATE tasks SET project_id = 'default-运营' WHERE id = ?1",
+            [id.as_str()],
+        )
+        .unwrap();
+    }
+    let tasks = store.list_tasks(&TaskQuery::default()).unwrap();
+    let hit = tasks.iter().find(|t| t.id == id).unwrap();
+    assert!(hit.project_id.is_none(), "任务侧同样 fail-soft");
+}
