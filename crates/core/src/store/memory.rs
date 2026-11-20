@@ -1367,26 +1367,34 @@ impl ChangeLogStore for InMemoryStore {
             .inner
             .write()
             .map_err(|e| CoreError::storage(e.to_string()))?;
+        // 降一次 Deref:经 guard 的字段借用不分拆(E0502,遍历 map 的不可变
+        // 借用与写 pending 的可变借用被视为都借用整个 guard);拿到 &mut Inner
+        // 后 tasks/pending 是不相交字段,借用检查器允许同帧共存
+        let inner = &mut *g;
         macro_rules! requeue {
             ($map:expr, $kind:literal, $key:ident) => {
                 for e in $map.values() {
-                    g.pending.insert(format!("{}/{}", $kind, e.$key.to_string()));
+                    inner
+                        .pending
+                        .insert(format!("{}/{}", $kind, e.$key.to_string()));
                 }
             };
         }
-        requeue!(g.tasks, "task", id);
-        requeue!(g.projects, "project", id);
-        requeue!(g.tags, "tag", id);
-        requeue!(g.subtasks, "sub_task", id);
-        requeue!(g.pomodoros, "pomodoro_session", id);
-        requeue!(g.mottos, "motto", id);
-        requeue!(g.journals, "journal", id);
-        requeue!(g.daily_reviews, "daily_review", date);
-        requeue!(g.weekly_reviews, "weekly_review", week_start);
-        requeue!(g.monthly_reviews, "monthly_review", year_month);
-        requeue!(g.yearly_reviews, "yearly_review", year);
-        for task_id in g.task_tag_meta.keys() {
-            g.pending.insert(format!("task_tag/{}", task_id.as_str()));
+        requeue!(inner.tasks, "task", id);
+        requeue!(inner.projects, "project", id);
+        requeue!(inner.tags, "tag", id);
+        requeue!(inner.subtasks, "sub_task", id);
+        requeue!(inner.pomodoros, "pomodoro_session", id);
+        requeue!(inner.mottos, "motto", id);
+        requeue!(inner.journals, "journal", id);
+        requeue!(inner.daily_reviews, "daily_review", date);
+        requeue!(inner.weekly_reviews, "weekly_review", week_start);
+        requeue!(inner.monthly_reviews, "monthly_review", year_month);
+        requeue!(inner.yearly_reviews, "yearly_review", year);
+        for task_id in inner.task_tag_meta.keys() {
+            inner
+                .pending
+                .insert(format!("task_tag/{}", task_id.as_str()));
         }
         Ok(())
     }
