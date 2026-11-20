@@ -46,6 +46,12 @@ pub fn run() {
 
     info!("PomoFlow desktop starting (P1.4 tray + notification + autostart)...");
 
+    // managed 构建防呆(2026-11-20):烘焙地址缺失 = 发布流水线 secret 漏配,
+    // 会产出「UI 隐藏配置但无地址可用」的废包 → 直接拒绝启动
+    if sync_client::MANAGED_BUILD && sync_client::BAKED_SERVER_URL.is_none() {
+        panic!("managed 构建缺少 POMOFLOW_DEFAULT_SERVER_URL(发布流水线 secret 漏配)");
+    }
+
     // 1. 打开 SQLite(失败就直接 panic —— 桌面端存储是必要前提)。
     //    结构有版本化迁移:执行前先做 .bak 备份(v1 行为对齐)。
     let path = store_path();

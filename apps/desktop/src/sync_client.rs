@@ -25,7 +25,8 @@ use pomoflow_core::sync::engine::{
     apply_pull_response, apply_push_outcomes, build_push_request, PullOverridden,
 };
 use pomoflow_core::sync::{
-    ApplyOutcome, Change, PullRequest, PullResponse, PushRequest, PushResponse, SyncCursor,
+    ApplyOutcome, Change, ChangeLogStore, PullRequest, PullResponse, PushRequest, PushResponse,
+    SyncCursor,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
@@ -41,6 +42,13 @@ const META_INTERVAL: &str = "sync_interval_min";
 const META_ACCESS: &str = "auth_access_token";
 const META_REFRESH: &str = "auth_refresh_token";
 const META_AUTH_USER: &str = "auth_username";
+/// 发布受管版(managed build):编译期注入,发布流水线烘焙生产地址;
+/// 地址不在 UI 配置,烘焙值在读取点总是赢(覆盖 meta 旧值)。
+pub const MANAGED_BUILD: bool = option_env!("POMOFLOW_MANAGED_BUILD").is_some();
+pub const BAKED_SERVER_URL: Option<&str> = option_env!("POMOFLOW_DEFAULT_SERVER_URL");
+/// 游标/pending 亲和:记录 last_sync_seq 与待推送队列属于哪台服务器;
+/// run_sync 入口检测到不一致(换服务器)→ 双复位后全量重推/重拉。
+const META_AFFINITY: &str = "sync_server_url_affinity";
 
 /// 自动同步间隔(分钟)边界:下限防高频打爆服务器,上限防形同虚设。
 const INTERVAL_MIN: u32 = 1;
@@ -142,6 +150,10 @@ pub struct SyncConfig {
     pub interval_min: u32,
     /// 账号登录状态(None = 未登录,走静态 Token)
     pub auth: Option<AuthAccount>,
+    /// 发布受管版:true = 地址为编译期烘焙,UI 只读展示、不提供配置
+    pub managed: bool,
+    /// 生效服务器地址(managed = 烘焙值;否则 = meta 值)
+    pub effective_server_url: Option<String>,
 }
 
 /// 已登录账号(展示用;token 本体不回传前端)。
@@ -153,25 +165,26 @@ pub struct AuthAccount {
 
 #[tauri::command]
 pub fn get_sync_config(state: State<'_, AppState>) -> Result<SyncConfig, String> {
+    let store = &state.store;
     Ok(SyncConfig {
-        server_url: meta_nonempty(&state.store, META_URL)?,
-        token: meta_nonempty(&state.store, META_TOKEN)?,
-        auto_sync: state.store.get_meta(META_AUTO).map_err(es)?.as_deref() == Some("1"),
-        interval_min: state
-            .store
+        server_url: meta_nonempty(store, META_URL)?,
+        token: meta_nonempty(store, META_TOKEN)?,
+        auto_sync: store.get_meta(META_AUTO).map_err(es)?.as_deref() == Some("1"),
+        interval_min: store
             .get_meta(META_INTERVAL)
             .map_err(es)?
             .and_then(|v| v.parse().ok())
             .map(clamp_interval)
             .unwrap_or(INTERVAL_DEFAULT),
-        auth: state
-            .store
+        auth: store
             .get_meta(META_AUTH_USER)
             .map_err(es)?
             .map(|u| AuthAccount {
                 username: u,
-                user_id: state.store.local_user_id().to_string(),
+                user_id: store.local_user_id().to_string(),
             }),
+        managed: MANAGED_BUILD,
+        effective_server_url: effective_server_url(store)?,
     })
 }
 
@@ -195,6 +208,51 @@ fn clamp_interval(v: u32) -> u32 {
     v.clamp(INTERVAL_MIN, INTERVAL_MAX)
 }
 
+/// 生效服务器地址:managed 构建烘焙值总是赢(覆盖 meta 旧值 —— UI 已关闭
+/// 地址通道,残留旧地址的设备升级后无法自救);非 managed 仅读 meta(现状)。
+/// 全部 META_URL 读取点统一走这里。
+fn effective_server_url(store: &SqliteStore) -> Result<Option<String>, String> {
+    if MANAGED_BUILD {
+        normalize_server_url(BAKED_SERVER_URL)
+    } else {
+        meta_nonempty(store, META_URL)
+    }
+}
+
+/// 同步就绪判断(手动/自动共用):生效地址存在,且登录 access / 静态 Token
+/// 任一非空(managed 版无静态 Token,登录后即可同步)。
+fn sync_ready(store: &SqliteStore) -> bool {
+    let url_ok = effective_server_url(store).ok().flatten().is_some();
+    let token_ok = meta_nonempty(store, META_ACCESS).ok().flatten().is_some()
+        || meta_nonempty(store, META_TOKEN).ok().flatten().is_some();
+    url_ok && token_ok
+}
+
+/// 换服亲和检测(run_sync 入口最先调用):affinity 与当前生效地址不一致 =
+/// 服务器切换 → pull 游标归零 + 清登录态(老服务器的 JWT 对新服务器无意义)
+/// + 全量 pending 复位(全量重推)。LWW 幂等,重放安全。
+/// affinity 缺失(老版本升级首跑)只记录不复位,避免无谓全量重推。
+fn ensure_server_affinity(store: &SqliteStore) -> Result<(), String> {
+    let Some(effective) = effective_server_url(store)? else {
+        return Ok(()); // 未配置地址:后续读取点给出正常报错
+    };
+    let prev = meta_nonempty(store, META_AFFINITY)?;
+    if prev.as_deref() == Some(effective.as_str()) {
+        return Ok(());
+    }
+    if prev.is_some() {
+        log::info!(
+            "sync server switched {} -> {}, resetting cursor/pending/auth",
+            prev.as_deref().unwrap_or(""),
+            effective
+        );
+        store.set_meta(META_CURSOR, "0").map_err(es)?;
+        clear_auth(store)?;
+        store.mark_all_pending().map_err(es)?;
+    }
+    store.set_meta(META_AFFINITY, &effective).map_err(es)
+}
+
 #[tauri::command]
 pub fn set_sync_config(
     server_url: Option<String>,
@@ -204,15 +262,25 @@ pub fn set_sync_config(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let store = &state.store;
-    let url_norm = normalize_server_url(server_url.as_deref())?;
+    // managed 构建不开放地址/Token 配置:入参一律忽略(烘焙地址在读取点总是
+    // 赢,meta 两键保持空;自动同步开关/间隔照常持久化)
+    let url_norm = if MANAGED_BUILD {
+        None
+    } else {
+        normalize_server_url(server_url.as_deref())?
+    };
     store
         .set_meta(META_URL, url_norm.as_deref().unwrap_or(""))
         .map_err(es)?;
-    let token_norm = token
-        .as_deref()
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .map(str::to_string);
+    let token_norm = if MANAGED_BUILD {
+        None
+    } else {
+        token
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+    };
     store
         .set_meta(META_TOKEN, token_norm.as_deref().unwrap_or(""))
         .map_err(es)?;
@@ -308,10 +376,10 @@ pub fn spawn_auto_sync(
                 .and_then(|v| v.parse::<u32>().ok())
                 .map(clamp_interval)
                 .unwrap_or(INTERVAL_DEFAULT);
-            // 配置不全(未保存地址/令牌)时静默跳过,不报错 —— 自动同步
-            // 是可选功能,首次使用只配地址不开启很正常
-            let configured = meta_nonempty(&store, META_URL).ok().flatten().is_some()
-                && meta_nonempty(&store, META_TOKEN).ok().flatten().is_some();
+            // 配置不全(未配置地址/未登录)时静默跳过,不报错 —— 自动同步
+            // 是可选功能;地址以生效值为准(managed = 烘焙值),令牌 access
+            // 或静态 Token 任一即可
+            let configured = sync_ready(&store);
             let due = last_run
                 .is_none_or(|t| t.elapsed() >= Duration::from_secs(u64::from(interval_min) * 60));
 
@@ -350,13 +418,15 @@ pub fn spawn_auto_sync(
 }
 
 async fn run_sync(store: &SqliteStore) -> Result<SyncReport, String> {
-    let url = meta_nonempty(store, META_URL)?.ok_or("未配置同步服务器(设置 → 数据同步)")?;
+    // 换服检测最先执行:复位游标/pending/登录态后,本次同步即走全量重推/重拉
+    ensure_server_affinity(store)?;
+    let url = effective_server_url(store)?.ok_or("未配置同步服务器(设置 → 数据同步)")?;
     // 账号 access token 优先(post_with_auto_refresh 内处理 401 自动刷新);
-    // 未登录回落静态 token(此时缺失即报错,与 P1a 行为一致)
-    if meta_nonempty(store, META_ACCESS)?.is_none() {
-        meta_nonempty(store, META_TOKEN)?.ok_or("未配置访问令牌")?;
-    }
+    // 未登录回落静态 token;两者皆无 → 引导登录(managed 版没有静态 Token)
     let static_token = meta_nonempty(store, META_TOKEN)?;
+    if meta_nonempty(store, META_ACCESS)?.is_none() && static_token.is_none() {
+        return Err("请先登录账号(设置 → 账号)".into());
+    }
     let client = shared_client(true).clone();
     let user = store.local_user_id().clone();
     let device = store.local_device_id().to_string();
@@ -464,6 +534,71 @@ mod tests {
         assert_eq!(clamp_interval(5), 5);
         assert_eq!(clamp_interval(60), 60);
         assert_eq!(clamp_interval(u32::MAX), 1440);
+    }
+
+    #[test]
+    fn effective_url_follows_meta_in_dev_build() {
+        // 非 managed 构建(单测默认编译形态):生效地址 = meta 值
+        let store = SqliteStore::open_in_memory().unwrap();
+        assert_eq!(effective_server_url(&store).unwrap(), None);
+        store.set_meta(META_URL, "http://10.0.0.2:8080").unwrap();
+        assert_eq!(
+            effective_server_url(&store).unwrap().as_deref(),
+            Some("http://10.0.0.2:8080")
+        );
+    }
+
+    #[test]
+    fn affinity_first_run_records_without_reset() {
+        // 老版本升级首跑:affinity 缺失 → 只记录当前生效地址,不触发复位
+        // (游标/登录态/pending 原样保留,避免无谓全量重推)
+        use pomoflow_core::sync::ChangeLogStore;
+        let store = SqliteStore::open_in_memory().unwrap();
+        store
+            .upsert_task(pomoflow_core::model::Task::new("亲和首跑"))
+            .unwrap();
+        store.set_meta(META_ACCESS, "acc").unwrap();
+        store.set_meta(META_CURSOR, "42").unwrap();
+        store.set_meta(META_URL, "http://10.0.0.2:8080").unwrap();
+
+        ensure_server_affinity(&store).unwrap();
+        assert_eq!(
+            store.get_meta(META_AFFINITY).unwrap().as_deref(),
+            Some("http://10.0.0.2:8080")
+        );
+        assert_eq!(store.get_meta(META_CURSOR).unwrap().as_deref(), Some("42"));
+        assert_eq!(store.get_meta(META_ACCESS).unwrap().as_deref(), Some("acc"));
+        assert_eq!(store.list_pending(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn affinity_change_resets_cursor_pending_auth() {
+        // 换服务器:游标归零 + 登录态清空 + 全量 pending 复位(三件套),
+        // 之后本次同步自然走全量重推/重拉
+        use pomoflow_core::sync::ChangeLogStore;
+        let store = SqliteStore::open_in_memory().unwrap();
+        store
+            .upsert_task(pomoflow_core::model::Task::new("换服复位"))
+            .unwrap();
+        store.set_meta(META_ACCESS, "acc").unwrap();
+        store.set_meta(META_CURSOR, "42").unwrap();
+        store.set_meta(META_URL, "http://10.0.0.2:8080").unwrap();
+        store.set_meta(META_AFFINITY, "http://10.0.0.2:8080").unwrap();
+
+        store.set_meta(META_URL, "http://10.0.0.9").unwrap();
+        ensure_server_affinity(&store).unwrap();
+        assert_eq!(
+            store.get_meta(META_AFFINITY).unwrap().as_deref(),
+            Some("http://10.0.0.9")
+        );
+        assert_eq!(store.get_meta(META_CURSOR).unwrap().as_deref(), Some("0"));
+        // clear_auth 把键清成空串(meta_nonempty 视为缺失)
+        assert_eq!(store.get_meta(META_ACCESS).unwrap().as_deref(), Some(""));
+        assert_eq!(
+            store.list_pending(10).unwrap().len(),
+            1,
+            "全量 pending 复位后应可重推"
+        );
     }
 }
 
@@ -637,7 +772,7 @@ async fn auth_request(
     password: &str,
     operator_token: Option<&str>,
 ) -> Result<AuthStatus, String> {
-    let url = meta_nonempty(store, META_URL)?.ok_or("请先填写并保存服务器地址")?;
+    let url = effective_server_url(store)?.ok_or("未配置同步服务器(设置 → 数据同步)")?;
     let client = shared_client(false).clone();
     let (device_id, device_name) = device_report(store);
     let mut req = client
@@ -703,7 +838,9 @@ pub async fn auth_register(
     state: State<'_, AppState>,
 ) -> Result<AuthStatus, String> {
     let store = state.store.clone();
-    let op = meta_nonempty(&store, META_TOKEN)?;
+    // 静态 Token 可选:只有首账号采纳需要(managed 版 meta 无 Token;owner
+    // 账号由服务器侧预建,注册不带 bearer 走全新账号路径)
+    let op = meta_nonempty(&store, META_TOKEN).ok().flatten();
     auth_request(
         &store,
         "/v1/auth/register",
@@ -729,7 +866,7 @@ pub async fn auth_logout(state: State<'_, AppState>) -> Result<(), String> {
     let store = state.store.clone();
     // 尽力通知服务端吊销 refresh;网络失败不阻塞本地登出(本地清了才算退出)
     if let (Some(url), Some(refresh)) = (
-        meta_nonempty(&store, META_URL)?,
+        effective_server_url(&store)?,
         meta_nonempty(&store, META_REFRESH)?,
     ) {
         // 登出是尽力而为(结果不阻断):超时由 10s 统一到共享客户端的 15s
@@ -746,7 +883,7 @@ pub async fn auth_logout(state: State<'_, AppState>) -> Result<(), String> {
 /// access token 过期后的刷新(refresh 轮换):成功返回新 access 并落 meta;
 /// 失败清空本地登录态(强制重新登录)。
 async fn refresh_access(client: &reqwest::Client, store: &SqliteStore) -> Result<String, String> {
-    let url = meta_nonempty(store, META_URL)?.ok_or("未配置同步服务器")?;
+    let url = effective_server_url(store)?.ok_or("未配置同步服务器")?;
     let refresh = meta_nonempty(store, META_REFRESH)?.ok_or("登录已过期,请重新登录".to_string())?;
     let resp = client
         .post(format!("{url}/v1/auth/refresh"))
@@ -854,7 +991,7 @@ pub struct SessionInfo {
 
 /// 会话类请求的公共前奏:拿 url/client/refresh,refresh 缺失 = 未登录。
 async fn session_context(store: &SqliteStore) -> Result<(String, reqwest::Client, String), String> {
-    let url = meta_nonempty(store, META_URL)?.ok_or("未配置同步服务器")?;
+    let url = effective_server_url(store)?.ok_or("未配置同步服务器")?;
     let refresh = meta_nonempty(store, META_REFRESH)?.ok_or("尚未登录账号".to_string())?;
     let client = shared_client(false).clone();
     Ok((url, client, refresh))
@@ -867,7 +1004,7 @@ pub async fn auth_change_password(
     state: State<'_, AppState>,
 ) -> Result<AuthStatus, String> {
     let store = state.store.clone();
-    let url = meta_nonempty(&store, META_URL)?.ok_or("未配置同步服务器")?;
+    let url = effective_server_url(&store)?.ok_or("未配置同步服务器")?;
     let access = meta_nonempty(&store, META_ACCESS)?.ok_or("尚未登录账号".to_string())?;
     let client = shared_client(false).clone();
     let (device_id, device_name) = device_report(&store);
@@ -1014,7 +1151,7 @@ fn short_client() -> Result<reqwest::Client, String> {
 }
 
 fn account_url(store: &SqliteStore, path: &str) -> Result<String, String> {
-    let url = meta_nonempty(store, META_URL)?.ok_or("请先在「数据同步」保存服务器地址")?;
+    let url = effective_server_url(store)?.ok_or("未配置同步服务器(设置 → 数据同步)")?;
     Ok(format!("{url}{path}"))
 }
 
@@ -1132,10 +1269,11 @@ pub async fn auth_register_email(
         "email": email.trim(), "code": code.trim(), "password": password,
         "device_id": device_id, "device_name": device_name,
     });
-    // ★ 注册请求携带运维静态 Token:服务端据此在 users 为空时把新账号 id
-    // 设为 SYNC_USER_ID(首账号采纳,存量数据免迁移)。漏带会开出全新 UUID
-    // 账号,被本机归属守卫拒绝(2026-08-22 实测踩坑)。
-    let op_token = meta_nonempty(&store, META_TOKEN)?;
+    // 注册请求可选携带运维静态 Token:服务端据此在 users 为空时把新账号 id
+    // 设为 SYNC_USER_ID(首账号采纳)。Token 现为可选 —— managed 版 meta 无
+    // Token,owner 账号改由服务器侧预建(采纳一次性完成);漏带则开出全新
+    // UUID 账号,在桌面会被归属守卫拒绝(2026-08-22 实测踩坑)。
+    let op_token = meta_nonempty(&store, META_TOKEN).ok().flatten();
     let tokens: AuthTokensResp = post_account(
         &store,
         "/v1/auth/register-email",
