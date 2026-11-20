@@ -25,6 +25,12 @@ on:
 # icon.icns 一并生成出来(源图先复用 128x128@2x.png,质量偏低够 MVP;后续要提升清晰度,
 # 只需 commit 一张 ≥1024×1024 源图到 `apps/desktop/icons/source.png`,然后改本步骤的
 # 源图路径即可,无需手动维护各平台 icon)。
+#
+# managed 发布版(2026-11-20 腾讯云生产部署批):release 产线统一产出
+# 生产受管版 —— `POMOFLOW_DEFAULT_SERVER_URL`(来自 secret)编译期烘焙进
+# 二进制,客户端无服务器配置 UI;地址漏配在首步防呆直接失败(Rust 侧
+# lib.rs 启动 panic 双保险)。开发/测试版仍由本地 `cargo tauri build` /
+# `npm run tauri dev` 产出,不带这两个 env,行为与现状一致。
 
 permissions:
   contents: write
@@ -55,6 +61,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # managed 地址防呆:secret 漏配在装工具链之前就失败,不烧三平台时长
+      - name: Verify POMOFLOW_PROD_SERVER_URL secret
+        env:
+          PROD_URL: ${{ secrets.POMOFLOW_PROD_SERVER_URL }}
+        run: |
+          if [ -z "$PROD_URL" ]; then
+            echo "::error::secret POMOFLOW_PROD_SERVER_URL 未配置(仓库 Settings → Secrets and variables → Actions,值形如 http://<生产IP>)"
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -113,6 +129,11 @@ jobs:
           # tauri-action 内部走 softprops/action-gh-release,需要显式 token
           # 才能创建/上传 Release asset。默认 GITHUB_TOKEN 即够(perms 已 grant contents: write)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # managed 发布版(生产受管):编译期烘焙官方服务器地址(option_env!),
+          # 客户端隐藏服务器配置 UI。注意 cargo 不跟踪 env 变化 —— CI 全新
+          # checkout 无此问题;本地带 env 重编需先 touch apps/desktop/src/sync_client.rs
+          POMOFLOW_MANAGED_BUILD: "1"
+          POMOFLOW_DEFAULT_SERVER_URL: ${{ secrets.POMOFLOW_PROD_SERVER_URL }}
         with:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
