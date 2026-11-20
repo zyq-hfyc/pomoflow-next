@@ -21,11 +21,11 @@ describe("resolveSyncDefaults", () => {
     ).toEqual({ url: "http://vm:8080", token: null });
   });
 
-  test("地址缺失:双 null(空配置自动写入不触发)", () => {
+  test("全缺失:双 null;仅令牌有值:url null、token 原样(resolver 逐键 pick,apply 才按 url 门控)", () => {
     expect(resolveSyncDefaults({})).toEqual({ url: null, token: null });
     expect(
       resolveSyncDefaults({ VITE_SYNC_DEFAULT_TOKEN: "tok-only" }),
-    ).toEqual({ url: null, token: null });
+    ).toEqual({ url: null, token: "tok-only" });
   });
 
   test("空串与纯空白视同缺失;首尾空白被 trim", () => {
