@@ -300,6 +300,17 @@ const invoke: Invoke = async (cmd, args) => {
       return 0;
     case "clear_conflicts":
       return null;
+    // 今日统计重同步(timer.svelte 启动即调;缺了会读 null.today_sessions 报错)
+    case "stats_overview":
+      return {
+        today_minutes: 0,
+        today_sessions: 0,
+        week_minutes: 0,
+        week_sessions: 0,
+        month_minutes: 0,
+        total_sessions: 0,
+        total_tasks_completed: 0,
+      };
     // 其余命令通用兜底(空数据让 UI 走空态;手账链路够用)。
     case "list_weekly_reviews":
     case "list_monthly_reviews":
