@@ -229,8 +229,8 @@ fn sync_ready(store: &SqliteStore) -> bool {
 }
 
 /// 换服亲和检测(run_sync 入口最先调用):affinity 与当前生效地址不一致 =
-/// 服务器切换 → pull 游标归零 + 清登录态(老服务器的 JWT 对新服务器无意义)
-/// + 全量 pending 复位(全量重推)。LWW 幂等,重放安全。
+/// 服务器切换 → pull 游标归零 + 清登录态 + 全量 pending 复位(全量重推,
+/// 老服务器的 JWT 对新服务器无意义)。LWW 幂等,重放安全。
 /// affinity 缺失(老版本升级首跑)只记录不复位,避免无谓全量重推。
 fn ensure_server_affinity(store: &SqliteStore) -> Result<(), String> {
     let Some(effective) = effective_server_url(store)? else {
@@ -583,7 +583,9 @@ mod tests {
         store.set_meta(META_ACCESS, "acc").unwrap();
         store.set_meta(META_CURSOR, "42").unwrap();
         store.set_meta(META_URL, "http://10.0.0.2:8080").unwrap();
-        store.set_meta(META_AFFINITY, "http://10.0.0.2:8080").unwrap();
+        store
+            .set_meta(META_AFFINITY, "http://10.0.0.2:8080")
+            .unwrap();
 
         store.set_meta(META_URL, "http://10.0.0.9").unwrap();
         ensure_server_affinity(&store).unwrap();

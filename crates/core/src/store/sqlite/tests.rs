@@ -511,7 +511,8 @@ fn mark_all_pending_repushes_all_including_tombstones() {
     let (tid, gid) = (task.id.clone(), tag.id.clone());
     a.upsert_task(task).unwrap();
     a.upsert_tag(tag).unwrap();
-    a.set_tags_for_task(&tid, std::slice::from_ref(&gid)).unwrap();
+    a.set_tags_for_task(&tid, std::slice::from_ref(&gid))
+        .unwrap();
 
     let first = a.list_pending(100).unwrap();
     assert_eq!(first.len(), 3, "任务/标签/关联应全部 pending");
@@ -520,11 +521,15 @@ fn mark_all_pending_repushes_all_including_tombstones() {
         .map(|c| (c.entity, c.entity_id.to_string()))
         .collect();
     a.mark_synced(&keys).unwrap();
-    assert!(a.list_pending(100).unwrap().is_empty(), "裁决后应无 pending");
+    assert!(
+        a.list_pending(100).unwrap().is_empty(),
+        "裁决后应无 pending"
+    );
 
-    // 本地软删 → 单行 tombstone pending;复位后全量回到队列(含 tombstone)
+    // 本地软删 → 两条 pending:任务 tombstone + task_tag 空集 tombstone
+    // (ADR-010:删除要作为变更推送,关联清空也是;两侧 store 一致)
     a.delete_task(&tid).unwrap();
-    assert_eq!(a.list_pending(100).unwrap().len(), 1);
+    assert_eq!(a.list_pending(100).unwrap().len(), 2);
     a.mark_all_pending().unwrap();
     let second = a.list_pending(100).unwrap();
     assert_eq!(second.len(), 3, "复位后应全量 pending(含软删 tombstone)");
@@ -557,17 +562,22 @@ fn invalid_project_id_fails_soft_to_none() {
     let store = SqliteStore::open_in_memory().unwrap();
     {
         let conn = store.lock().unwrap();
+        // 主键 id 必须合法(行映射器对 id 仍严格);脏的只有 project_id
         conn.execute(
             "INSERT INTO pomodoros (id, project_id, duration_minutes, started_at_ms,
                 ended_at_ms, is_completed, updated_at_ms)
-             VALUES ('sess-dirty', 'default-运营', 25, 1000, 26000, 1, 1000)",
+             VALUES ('11111111-1111-4111-8111-111111111111', 'default-运营',
+                25, 1000, 26000, 1, 1000)",
             [],
         )
         .unwrap();
     }
     let sessions = store.list_pomodoros().unwrap();
     assert_eq!(sessions.len(), 1, "脏行不应中断会话列表");
-    assert!(sessions[0].project_id.is_none(), "非法 project_id 应降级为 None");
+    assert!(
+        sessions[0].project_id.is_none(),
+        "非法 project_id 应降级为 None"
+    );
 
     let task = Task::new("带脏项目的任务");
     let id = task.id.clone();

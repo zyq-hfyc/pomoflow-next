@@ -476,7 +476,8 @@ fn mark_all_pending_repushes_all() {
     let (tid, gid) = (task.id.clone(), tag.id.clone());
     s.upsert_task(task).unwrap();
     s.upsert_tag(tag).unwrap();
-    s.set_tags_for_task(&tid, std::slice::from_ref(&gid)).unwrap();
+    s.set_tags_for_task(&tid, std::slice::from_ref(&gid))
+        .unwrap();
     let keys: Vec<_> = s
         .list_pending(100)
         .unwrap()
@@ -485,9 +486,16 @@ fn mark_all_pending_repushes_all() {
         .collect();
     assert_eq!(keys.len(), 3, "任务/标签/关联应全部 pending");
     s.mark_synced(&keys).unwrap();
-    assert!(s.list_pending(100).unwrap().is_empty(), "裁决后应无 pending");
+    assert!(
+        s.list_pending(100).unwrap().is_empty(),
+        "裁决后应无 pending"
+    );
     s.mark_all_pending().unwrap();
-    assert_eq!(s.list_pending(100).unwrap().len(), 3, "复位后应全量 pending");
+    assert_eq!(
+        s.list_pending(100).unwrap().len(),
+        3,
+        "复位后应全量 pending"
+    );
     // 复位幂等
     s.mark_all_pending().unwrap();
     assert_eq!(s.list_pending(100).unwrap().len(), 3);
