@@ -169,6 +169,36 @@ impl ChangeLogStore for SqliteStore {
         Ok(())
     }
 
+    fn mark_all_pending(&self) -> CoreResult<()> {
+        // 换服复位:单事务把全部参与同步的表重标 pending;只动 sync_state,
+        // origin_device 等 tie-break 元数据原样保留。表清单与 mark_synced 对齐。
+        let conn = self.lock()?;
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| CoreError::storage(format!("begin mark_all_pending tx: {e}")))?;
+        for table in [
+            "tasks",
+            "projects",
+            "tags",
+            "subtasks",
+            "pomodoros",
+            "mottos",
+            "journals",
+            "daily_reviews",
+            "weekly_reviews",
+            "monthly_reviews",
+            "yearly_reviews",
+            "task_tag_sync",
+        ] {
+            let sql = format!("UPDATE {table} SET sync_state = 'pending'");
+            tx.execute(&sql, [])
+                .map_err(|e| CoreError::storage(format!("mark_all_pending {table}: {e}")))?;
+        }
+        tx.commit()
+            .map_err(|e| CoreError::storage(format!("commit mark_all_pending: {e}")))?;
+        Ok(())
+    }
+
     fn local_candidate(&self, kind: EntityKind, id: &str) -> CoreResult<Option<Change>> {
         let conn = self.lock()?;
         self.candidate_of(&conn, kind, id)

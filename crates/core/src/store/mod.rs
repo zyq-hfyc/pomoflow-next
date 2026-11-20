@@ -465,3 +465,55 @@ fn task_tag_sync_semantics_matches_sqlite() {
     assert!(tp.tag_ids.is_empty());
     assert_eq!(tp.revision, 2);
 }
+
+#[test]
+fn mark_all_pending_repushes_all() {
+    // 与 SqliteStore 对齐的换服复位语义(2026-11-20)
+    use crate::sync::ChangeLogStore;
+    let s = InMemoryStore::new();
+    let task = Task::new("全量重推");
+    let tag = Tag::new("红");
+    let (tid, gid) = (task.id.clone(), tag.id.clone());
+    s.upsert_task(task).unwrap();
+    s.upsert_tag(tag).unwrap();
+    s.set_tags_for_task(&tid, std::slice::from_ref(&gid)).unwrap();
+    let keys: Vec<_> = s
+        .list_pending(100)
+        .unwrap()
+        .into_iter()
+        .map(|c| (c.entity, c.entity_id.to_string()))
+        .collect();
+    assert_eq!(keys.len(), 3, "任务/标签/关联应全部 pending");
+    s.mark_synced(&keys).unwrap();
+    assert!(s.list_pending(100).unwrap().is_empty(), "裁决后应无 pending");
+    s.mark_all_pending().unwrap();
+    assert_eq!(s.list_pending(100).unwrap().len(), 3, "复位后应全量 pending");
+    // 复位幂等
+    s.mark_all_pending().unwrap();
+    assert_eq!(s.list_pending(100).unwrap().len(), 3);
+}
+
+#[test]
+fn list_pending_includes_yearly_reviews() {
+    // 修复:list_pending 此前漏扫 yearly_reviews —— upsert 标了 pending
+    // 却永远不被收集,年复盘在 InMemoryStore 里推不出去
+    use crate::sync::ChangeLogStore;
+    let s = InMemoryStore::new();
+    let y = crate::model::YearlyReview {
+        id: crate::model::Id::new(),
+        user_id: crate::model::Id::nil(),
+        year: "2026".into(),
+        content: "年复盘".into(),
+        revision: 0,
+        deleted_at: None,
+        updated_at: crate::model::Timestamp::now(),
+    };
+    s.upsert_yearly_review(y).unwrap();
+    let hit = s
+        .list_pending(100)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.entity == EntityKind::YearlyReview)
+        .expect("年复盘应入 pending 队列");
+    assert_eq!(hit.entity_id, "2026");
+}

@@ -499,3 +499,52 @@ fn stats_windowed_path_matches_full_scan() {
         assert_eq!(full_r, win_r, "tz={tz}");
     }
 }
+
+#[test]
+fn mark_all_pending_repushes_all_including_tombstones() {
+    // 换服复位语义(2026-11-20):mark_all_pending 后全量行回到待推送队列,
+    // 含软删 tombstone;重复复位幂等,同一行两次推送载荷一致(LWW 幂等根基)。
+    use crate::sync::ChangeLogStore;
+    let a = SqliteStore::open_in_memory().unwrap();
+    let task = Task::new("全量重推");
+    let tag = Tag::new("红");
+    let (tid, gid) = (task.id.clone(), tag.id.clone());
+    a.upsert_task(task).unwrap();
+    a.upsert_tag(tag).unwrap();
+    a.set_tags_for_task(&tid, std::slice::from_ref(&gid)).unwrap();
+
+    let first = a.list_pending(100).unwrap();
+    assert_eq!(first.len(), 3, "任务/标签/关联应全部 pending");
+    let keys: Vec<_> = first
+        .iter()
+        .map(|c| (c.entity, c.entity_id.to_string()))
+        .collect();
+    a.mark_synced(&keys).unwrap();
+    assert!(a.list_pending(100).unwrap().is_empty(), "裁决后应无 pending");
+
+    // 本地软删 → 单行 tombstone pending;复位后全量回到队列(含 tombstone)
+    a.delete_task(&tid).unwrap();
+    assert_eq!(a.list_pending(100).unwrap().len(), 1);
+    a.mark_all_pending().unwrap();
+    let second = a.list_pending(100).unwrap();
+    assert_eq!(second.len(), 3, "复位后应全量 pending(含软删 tombstone)");
+    assert!(second.iter().any(|c| c.entity == EntityKind::Task));
+
+    // 复位幂等 + 同行两次推送载荷一致
+    a.mark_all_pending().unwrap();
+    let third = a.list_pending(100).unwrap();
+    assert_eq!(third.len(), 3);
+    let second_task = second
+        .iter()
+        .find(|c| c.entity == EntityKind::Task)
+        .unwrap()
+        .payload
+        .clone();
+    let third_task = third
+        .iter()
+        .find(|c| c.entity == EntityKind::Task)
+        .unwrap()
+        .payload
+        .clone();
+    assert_eq!(second_task, third_task, "复位重放的载荷应一致");
+}

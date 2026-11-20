@@ -1231,6 +1231,7 @@ impl ChangeLogStore for InMemoryStore {
         collect!(g.daily_reviews, "daily_review", date);
         collect!(g.weekly_reviews, "weekly_review", week_start);
         collect!(g.monthly_reviews, "monthly_review", year_month);
+        collect!(g.yearly_reviews, "yearly_review", year);
         // task_tag:以 task_id 为键,载荷 = 当前 tag 集合(task_tags 写入侧已排序
         // 去重;空集合 = 清除 tombstone,ADR-010)
         for (task_id, (rev, upd)) in g.task_tag_meta.iter() {
@@ -1355,6 +1356,37 @@ impl ChangeLogStore for InMemoryStore {
             .map_err(|e| CoreError::storage(e.to_string()))?;
         for (kind, key) in keys {
             g.settle(kind_str(*kind), key);
+        }
+        Ok(())
+    }
+
+    fn mark_all_pending(&self) -> CoreResult<()> {
+        // 换服复位:只重标 pending,不改写 origin(那是 tie-break 元数据,
+        // 复位不应伪造「本机最后写入」)
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        macro_rules! requeue {
+            ($map:expr, $kind:literal, $key:ident) => {
+                for e in $map.values() {
+                    g.pending.insert(format!("{}/{}", $kind, e.$key.to_string()));
+                }
+            };
+        }
+        requeue!(g.tasks, "task", id);
+        requeue!(g.projects, "project", id);
+        requeue!(g.tags, "tag", id);
+        requeue!(g.subtasks, "sub_task", id);
+        requeue!(g.pomodoros, "pomodoro_session", id);
+        requeue!(g.mottos, "motto", id);
+        requeue!(g.journals, "journal", id);
+        requeue!(g.daily_reviews, "daily_review", date);
+        requeue!(g.weekly_reviews, "weekly_review", week_start);
+        requeue!(g.monthly_reviews, "monthly_review", year_month);
+        requeue!(g.yearly_reviews, "yearly_review", year);
+        for task_id in g.task_tag_meta.keys() {
+            g.pending.insert(format!("task_tag/{}", task_id.as_str()));
         }
         Ok(())
     }

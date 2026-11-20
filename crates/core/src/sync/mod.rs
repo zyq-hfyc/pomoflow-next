@@ -245,6 +245,10 @@ pub trait ChangeLogStore {
         Ok(())
     }
     fn mark_synced(&self, keys: &[(EntityKind, String)]) -> CoreResult<()>;
+    /// 换服复位:把全部实体行(含软删 tombstone)重新标为待推送。
+    /// 服务器切换时配合 pull 游标归零使用 —— 全量重推 / 重拉,LWW
+    /// (revision→updated_at→device_id)幂等,重放安全。
+    fn mark_all_pending(&self) -> CoreResult<()>;
     fn local_candidate(&self, kind: EntityKind, id: &str) -> CoreResult<Option<Change>>;
     /// 批量取本地行的竞争快照 —— 结果与 `keys` 等长对齐,无此行为 `None`。
     /// 实现可合并为单次锁/事务(pull 批处理此前逐条查,一批 2N 次锁往返;
