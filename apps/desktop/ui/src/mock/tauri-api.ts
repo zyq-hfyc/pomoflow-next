@@ -26,11 +26,16 @@
 // 场景八:结束项目(2026-11-22 批)—— 任务页侧栏「网站改版项目」⋮ 菜单
 //   「结束项目」→ 项目任务E 从今天/已计划消失 + 侧栏「已结束」组现形
 //   (预置的「旧项目(已结束)」一并在内);点已结束项浏览归档任务F;
-//   「重新开启」恢复。设置页「清单管理」同款结束/重启。内存态,刷新即重置。
+//   「重新开启」恢复。设置页「清单管理」同款结束/重启;清单增改删
+//   (upsert_project/delete_project)同日补齐 —— 侧栏与设置页的改名/加子/
+//   删除在 MOCK 下走通。内存态,刷新即重置。
 //
 // 没实现的命令走下面 default 兜底(返回 null / 空数组 → UI 走空态)。
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+
+import { subtreeIds } from "../lib/projectTree";
+import type { Project } from "../lib/api";
 
 /// 任务页 fixture:重复模板 + 它的实例 + 普通任务,分两组日期,
 /// 让「计划」视图有折叠组可展开(跳转定位正是靠强制展开触发)。
@@ -292,6 +297,38 @@ const invoke: Invoke = async (cmd, args) => {
       hit.revision = Number(hit.revision ?? 1) + 1;
       hit.updated_at = new Date().toISOString();
       return hit;
+    }
+    // 清单增改删(2026-11-22 补:此前落 default 兜底回 null,fixture 不动,
+    // UI「回车/删除后无变化」)。与 commands.rs 同语义:upsert 整模型覆盖 +
+    // revision 服务侧 +1;删除 = 子树级联软删 + 其下任务 project_id 置空。
+    case "upsert_project": {
+      const input = args?.project as Record<string, unknown>;
+      const i = mockProjects.findIndex((p) => p.id === input.id);
+      if (i >= 0) {
+        mockProjects[i] = {
+          ...mockProjects[i],
+          ...input,
+          revision: Number(mockProjects[i].revision ?? 1) + 1,
+        };
+        return mockProjects[i];
+      }
+      const created = project(input);
+      mockProjects.push(created);
+      return created;
+    }
+    case "delete_project": {
+      const doomed = subtreeIds(
+        mockProjects as unknown as Project[],
+        String(args?.id ?? ""),
+      );
+      for (const id of doomed) {
+        const i = mockProjects.findIndex((p) => p.id === id);
+        if (i >= 0) mockProjects.splice(i, 1);
+      }
+      for (const t of mockTasks) {
+        if (t.project_id && doomed.has(String(t.project_id))) t.project_id = null;
+      }
+      return null;
     }
     case "upsert_task": {
       // 只更新内存副本:够用来验证「改完刷新后列表/详情是否跟上」。
