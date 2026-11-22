@@ -257,10 +257,7 @@ pub fn public_router() -> Router<AppState> {
     Router::new()
         .route("/api/public/releases", get(public_releases))
         .route("/api/public/releases/latest", get(public_latest))
-        .route(
-            "/api/public/update-manifest/{target}",
-            get(update_manifest),
-        )
+        .route("/api/public/update-manifest/{target}", get(update_manifest))
         .route("/api/public/download/{asset_id}", get(download))
 }
 
@@ -270,7 +267,15 @@ pub fn public_router() -> Router<AppState> {
 async fn list_releases(
     State(app): State<AppState>,
 ) -> Result<Json<InternalReleaseListResponse>, ApiError> {
-    type ReleaseRow = (String, String, String, String, i64, Option<i64>, Option<i64>);
+    type ReleaseRow = (
+        String,
+        String,
+        String,
+        String,
+        i64,
+        Option<i64>,
+        Option<i64>,
+    );
     let releases: Vec<ReleaseRow> = sqlx::query_as(
         "SELECT id, version, notes, status, created_ms, published_ms, version_code \
          FROM releases ORDER BY created_ms DESC LIMIT $1",
@@ -338,8 +343,17 @@ async fn fetch_assets(
     .map_err(internal)?;
 
     let mut grouped: HashMap<String, Vec<AssetRow>> = HashMap::new();
-    for (id, release_id, platform, filename, size_bytes, sha256, download_count, created_ms, has_sig)
-        in rows
+    for (
+        id,
+        release_id,
+        platform,
+        filename,
+        size_bytes,
+        sha256,
+        download_count,
+        created_ms,
+        has_sig,
+    ) in rows
     {
         let asset = AssetRow {
             id,
@@ -740,7 +754,10 @@ async fn upload_sig(
         return Err((StatusCode::BAD_REQUEST, "上传内容为空".to_string()));
     }
     if bytes.len() > SIG_MAX_BYTES {
-        return Err((StatusCode::BAD_REQUEST, "签名文件超过 16KiB 上限".to_string()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "签名文件超过 16KiB 上限".to_string(),
+        ));
     }
     let text = std::str::from_utf8(&bytes)
         .map_err(|_| (StatusCode::BAD_REQUEST, "签名必须是 UTF-8 文本".to_string()))?
@@ -752,14 +769,12 @@ async fn upload_sig(
         ));
     }
 
-    let updated = sqlx::query(
-        "UPDATE release_assets SET sig_content = $1 WHERE id = $2",
-    )
-    .bind(text)
-    .bind(&asset_id)
-    .execute(&app.pool)
-    .await
-    .map_err(internal)?;
+    let updated = sqlx::query("UPDATE release_assets SET sig_content = $1 WHERE id = $2")
+        .bind(text)
+        .bind(&asset_id)
+        .execute(&app.pool)
+        .await
+        .map_err(internal)?;
     if updated.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "资产不存在".to_string()));
     }
@@ -784,19 +799,21 @@ async fn asset_json_by_id(
     .fetch_optional(pool)
     .await
     .map_err(internal)?;
-    Ok(row.map(|(id, platform, filename, size_bytes, sha256, download_count, created_ms, has_sig)| {
-        InternalAssetJson {
-            download_path: format!("/api/public/download/{id}"),
-            id,
-            platform,
-            filename,
-            size_bytes,
-            sha256,
-            download_count,
-            created_ms,
-            has_sig,
-        }
-    }))
+    Ok(row.map(
+        |(id, platform, filename, size_bytes, sha256, download_count, created_ms, has_sig)| {
+            InternalAssetJson {
+                download_path: format!("/api/public/download/{id}"),
+                id,
+                platform,
+                filename,
+                size_bytes,
+                sha256,
+                download_count,
+                created_ms,
+                has_sig,
+            }
+        },
+    ))
 }
 
 // ============ 公开面 handlers ============
@@ -870,7 +887,10 @@ const DESKTOP_TARGETS: [(&str, &str, &str); 3] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpdateTarget {
     /// 桌面靶:返回 Tauri dynamic JSON(platform 字段, tauri 平台键)
-    Desktop { platform: &'static str, tauri_key: &'static str },
+    Desktop {
+        platform: &'static str,
+        tauri_key: &'static str,
+    },
     /// Android 靶:返回 versionCode 比较所需字段
     Android,
 }
@@ -936,7 +956,16 @@ async fn manifest_candidates(
     pool: &PgPool,
     platform: &str,
 ) -> Result<Vec<ManifestCandidate>, ApiError> {
-    type Row = (String, String, i64, Option<i64>, String, i64, String, Option<String>);
+    type Row = (
+        String,
+        String,
+        i64,
+        Option<i64>,
+        String,
+        i64,
+        String,
+        Option<String>,
+    );
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT r.version, r.notes, COALESCE(r.published_ms, r.created_ms), r.version_code, \
          a.id, a.size_bytes, a.sha256, a.sig_content \
@@ -949,8 +978,8 @@ async fn manifest_candidates(
     .map_err(internal)?;
     let mut out: Vec<ManifestCandidate> = rows
         .into_iter()
-        .map(|(version, notes, published_ms, version_code, asset_id, size_bytes, sha256, sig_content)| {
-            ManifestCandidate {
+        .map(
+            |(
                 version,
                 notes,
                 published_ms,
@@ -959,8 +988,19 @@ async fn manifest_candidates(
                 size_bytes,
                 sha256,
                 sig_content,
-            }
-        })
+            )| {
+                ManifestCandidate {
+                    version,
+                    notes,
+                    published_ms,
+                    version_code,
+                    asset_id,
+                    size_bytes,
+                    sha256,
+                    sig_content,
+                }
+            },
+        )
         .collect();
     // 最新版本优先(与公开列表同一套比较语义)
     out.sort_by(|a, b| compare_versions(&b.version, &a.version));
@@ -979,14 +1019,20 @@ async fn update_manifest(
         return Err((StatusCode::NOT_FOUND, "未知更新靶".to_string()));
     };
     match target {
-        UpdateTarget::Desktop { platform, tauri_key } => {
+        UpdateTarget::Desktop {
+            platform,
+            tauri_key,
+        } => {
             let candidates = manifest_candidates(&app.pool, platform).await?;
             // 签名缺失的版本直接跳过(取「最新的带签名版本」而非「最新版本」)
             let Some(c) = candidates.into_iter().find(|c| c.sig_content.is_some()) else {
                 return Ok(StatusCode::NO_CONTENT.into_response());
             };
             let Some(pub_date) = pub_date_rfc3339(c.published_ms) else {
-                return Err((StatusCode::INTERNAL_SERVER_ERROR, "发布时间非法".to_string()));
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "发布时间非法".to_string(),
+                ));
             };
             let mut platforms = HashMap::new();
             platforms.insert(
@@ -1013,7 +1059,10 @@ async fn update_manifest(
                 return Ok(StatusCode::NO_CONTENT.into_response());
             };
             let Some(pub_date) = pub_date_rfc3339(c.published_ms) else {
-                return Err((StatusCode::INTERNAL_SERVER_ERROR, "发布时间非法".to_string()));
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "发布时间非法".to_string(),
+                ));
             };
             Ok((
                 [(header::CACHE_CONTROL, "no-store")],
@@ -1131,7 +1180,7 @@ mod tests {
         assert_eq!(validate_ext("POMOFLOW.DMG"), Some("dmg"));
         assert_eq!(validate_ext("app.apk"), Some("apk"));
         assert_eq!(validate_ext("installer"), None); // 无扩展
-        // gz 特批在表(macOS 更新包 .app.tar.gz);其他多段扩展仍拒
+                                                     // gz 特批在表(macOS 更新包 .app.tar.gz);其他多段扩展仍拒
         assert_eq!(validate_ext("PomoFlow.app.tar.gz"), Some("gz"));
         assert_eq!(validate_ext("archive.tar.bz2"), None);
         assert_eq!(validate_ext("file."), None); // 空扩展
