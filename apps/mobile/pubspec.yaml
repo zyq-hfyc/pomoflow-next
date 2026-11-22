@@ -39,6 +39,12 @@ dependencies:
   flutter_local_notifications: ^17.1.2
   # 结束时刻排程备用通知(应用被杀时兜底;随 flutter_local_notifications 传递依赖)
   timezone: ^0.9.4
+  # 应用内更新:APK 拉起系统安装器(Android 8+ 引导「安装未知应用」授权)
+  open_filex: ^4.5.0
+  # 本地版本号/版本码(更新卡片展示 + versionCode 比较)
+  package_info_plus: ^8.0.0
+  # APK 下载完整性校验(流式 sha256,与更新清单比对)
+  crypto: ^3.0.3
 
 dev_dependencies:
   flutter_test:

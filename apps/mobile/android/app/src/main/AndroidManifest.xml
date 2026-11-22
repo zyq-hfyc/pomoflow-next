@@ -8,6 +8,10 @@
          随 manifest 合并自动注册,只差本权限;此前重启手机后 zonedSchedule
          排程的「结束时刻兜底通知」全部丢失。inexact 模式无需精确闹钟权限。 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- 应用内更新覆盖安装(Android 8+,2026-11-22 更新批):本权限允许发起
+         安装流程;首次安装时系统引导用户到「安装未知应用」授权页。更新 APK
+         必须与已装应用同 keystore 签名且 versionCode 严格更大(服务端清单闸)。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <application
         android:label="PomoFlow"
         android:name="${applicationName}"

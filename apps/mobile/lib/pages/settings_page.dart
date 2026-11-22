@@ -8,6 +8,7 @@ import '../sheets/tag_manager_sheet.dart';
 import '../theme/tokens.dart';
 import 'trash_page.dart';
 import '../widgets/pf_sheet.dart';
+import '../widgets/update_card.dart';
 
 /// 设置页:计时(休息时长 + 长休息间隔)+ 行为偏好 + 提示铃音 + 主题 + 关于。
 /// 专注时长不在此设置 —— 新建/编辑任务可设「单番茄时长」,全局兜底 25 分钟
@@ -276,11 +277,19 @@ class SettingsPage extends StatelessWidget {
                     style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                   ),
                   subtitle: Text(
-                    'PomoFlow Mobile · v0.2.0 · 本地优先 + 云端同步',
+                    'PomoFlow Mobile · 本地优先 + 云端同步',
                     style: TextStyle(fontSize: 12, color: theme.pfMuted),
                   ),
                 ),
               ),
+            ),
+          ),
+          // 检查更新(2026-11-22 更新批):当前版本取 PackageInfo(单一来源),
+          // 清单比较 / 下载 / 安装在 UpdateCard 内闭环
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: _Card(child: const UpdateCard()),
             ),
           ),
           const SliverToBoxAdapter(child: SizedBox(height: 76)),
