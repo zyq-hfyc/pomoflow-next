@@ -408,6 +408,7 @@ fn migrate_projects(
             parent_id,
             display_order: display_order.unwrap_or(0).max(0) as u32,
             created_at,
+            closed_at: None,
             revision: 1,
             deleted_at: None,
             updated_at,

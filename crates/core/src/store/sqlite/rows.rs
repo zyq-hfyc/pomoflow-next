@@ -131,6 +131,11 @@ pub(super) fn row_to_project(row: &Row<'_>) -> rusqlite::Result<Project> {
         parent_id,
         display_order: row.get::<_, i64>("display_order")? as u32,
         created_at: ts_from_ms(row.get("created_at_ms")?).map_err(core_err)?,
+        closed_at: row
+            .get::<_, Option<i64>>("closed_at_ms")?
+            .map(ts_from_ms)
+            .transpose()
+            .map_err(core_err)?,
         revision: row.get::<_, i64>("revision")? as u64,
         deleted_at: row
             .get::<_, Option<i64>>("deleted_at_ms")?

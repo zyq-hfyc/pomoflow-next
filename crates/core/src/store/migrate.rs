@@ -37,6 +37,7 @@ const MIGRATIONS: &[MigrationFn] = &[
     migration_006_yearly_review,
     migration_007_journal_status,
     migration_008_query_indexes,
+    migration_009_project_closed_at,
 ];
 
 /// 当前代码支持的最新 schema 版号(= 已应用迁移数)。
@@ -451,6 +452,15 @@ fn migration_008_query_indexes(conn: &Connection) -> CoreResult<()> {
     )
     .map_err(|e| CoreError::storage(format!("query indexes: {e}")))?;
     Ok(())
+}
+
+// === 迁移 9:项目结束态列(2026-11-22「结束项目」批)=======================
+
+/// v8 → v9:projects.closed_at_ms(「结束项目」= 归档派生可见性的单一事实源,
+/// 任务不落任何标记)。存量行 NULL = 未结束,无需回填;新库由 SCHEMA_SQL
+/// 一次到位,此处幂等兜底(projects 表不存在时 add_column 自行 no-op)。
+fn migration_009_project_closed_at(conn: &Connection) -> CoreResult<()> {
+    add_column(conn, "projects", "closed_at_ms", "INTEGER")
 }
 
 #[cfg(test)]

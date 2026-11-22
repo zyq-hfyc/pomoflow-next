@@ -83,11 +83,13 @@ impl SqliteStore {
         conn.execute(
             "INSERT INTO projects
                 (id, user_id, name, color, parent_id, display_order, created_at_ms,
-                 revision, deleted_at_ms, updated_at_ms, sync_state, origin_device)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                 closed_at_ms, revision, deleted_at_ms, updated_at_ms, sync_state,
+                 origin_device)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, color=excluded.color, parent_id=excluded.parent_id,
                 display_order=excluded.display_order, created_at_ms=excluded.created_at_ms,
+                closed_at_ms=excluded.closed_at_ms,
                 revision=excluded.revision, deleted_at_ms=excluded.deleted_at_ms,
                 updated_at_ms=excluded.updated_at_ms,
                 user_id=excluded.user_id, sync_state=excluded.sync_state,
@@ -100,6 +102,7 @@ impl SqliteStore {
                 project.parent_id.as_ref().map(|p| p.as_str().to_string()),
                 project.display_order as i64,
                 ts_to_ms(project.created_at),
+                project.closed_at.map(ts_to_ms),
                 project.revision as i64,
                 project.deleted_at.map(ts_to_ms),
                 ts_to_ms(project.updated_at),

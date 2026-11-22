@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS projects (
   parent_id TEXT,
   display_order INTEGER NOT NULL DEFAULT 0,
   created_at_ms INTEGER NOT NULL DEFAULT 0,
+  closed_at_ms INTEGER,
   revision INTEGER NOT NULL DEFAULT 1,
   deleted_at_ms INTEGER,
   updated_at_ms INTEGER NOT NULL,

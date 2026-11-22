@@ -25,6 +25,11 @@ pub struct Project {
     /// 创建时间(v1 created_date)
     #[serde(default)]
     pub created_at: Timestamp,
+    /// 结束时间(2026-11-22「结束项目」批):非 None 即已结束。任务不落任何
+    /// 标记 —— 归档是派生可见性(任务属于已结束项目或其子孙即隐藏);
+    /// `#[serde(default)]` 保证旧 wire 载荷(移动端/旧版桌面)照常解析。
+    #[serde(default)]
+    pub closed_at: Option<Timestamp>,
 
     #[serde(default)]
     pub revision: u64,
@@ -44,6 +49,7 @@ impl Project {
             parent_id: None,
             display_order: 0,
             created_at: Timestamp::now(),
+            closed_at: None,
             revision: 1,
             deleted_at: None,
             updated_at: Timestamp::now(),
