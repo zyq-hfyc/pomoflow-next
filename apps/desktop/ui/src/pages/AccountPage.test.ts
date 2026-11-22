@@ -1,14 +1,17 @@
-//! AccountPage 菜单状态机与深链测试(2026-10-08 数据同步搬家批)。
+//! AccountPage 菜单状态机与深链测试(2026-10-08 数据同步搬家批;
+//! 2026-11-22 数据同步改为登录后才可见 —— 用户约定,原「静态 Token
+//! 未登录可配」设计废止)。
 //!
 //! 锁:
-//! ① 未登录:菜单 = [账号, 数据同步],默认渲染认证卡片;
-//! ② 未登录点「数据同步」→ SyncSetting 段 + active 迁移;点「账号」切回;
+//! ① 未登录:菜单仅 [账号],默认渲染认证卡片;
+//! ② 未登录深链 sync 段 → 不落同步,仍渲染认证卡片(信号照常消费);
 //! ③ 已登录:菜单 6 项顺序(数据同步插在登录设备与账号注销之间);
-//! ④ 深链:requestAccountSection("sync") 后 mount → 直接落 sync 段,
+//! ④ 深链(已登录):requestAccountSection("sync") 后 mount → 直接落 sync 段,
 //!    且 pending 信号已被消费($effect 消费,覆盖「已在 /account 时
-//!    navigate 不 remount」场景 —— 见 accountNav.svelte.ts 头注)。
+//!    navigate 不 remount」场景 —— 见 accountNav.svelte.ts 头注);
 //! ⑤ 退出登录链(2026-11-20 补完批):点底部按钮 → authLogout +
-//!    setAccountUser(null) + resetJournals → 「已退出登录」提示 + 就地切未登录。
+//!    setAccountUser(null) + resetJournals → 「已退出登录」提示 +
+//!    就地切未登录(菜单仅 [账号],sync 段若开着也被闸掉)。
 
 import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
@@ -97,27 +100,22 @@ afterEach(() => {
 });
 
 describe("AccountPage · 未登录", () => {
-  test("菜单 = [账号, 数据同步],默认渲染认证卡片", async () => {
+  test("菜单仅 [账号],默认渲染认证卡片(数据同步登录后才可见)", async () => {
     const target = await render();
-    expect(navLabels(target)).toEqual(["账号", "数据同步"]);
+    expect(navLabels(target)).toEqual(["账号"]);
     expect(navItem(target, "账号").classList.contains("active")).toBe(true);
     expect(target.querySelector('[data-stub="auth-card"]')).toBeTruthy();
     expect(target.querySelector('[data-stub="sync-setting"]')).toBeNull();
   });
 
-  test("点「数据同步」→ SyncSetting 段 + active 迁移;点「账号」切回", async () => {
+  test("未登录深链 sync 段 → 不落同步,仍渲染认证卡片(信号照常消费)", async () => {
+    requestAccountSection("sync");
     const target = await render();
-    navItem(target, "数据同步").click();
-    flushSync();
-    expect(target.querySelector('[data-stub="sync-setting"]')).toBeTruthy();
-    expect(target.querySelector('[data-stub="auth-card"]')).toBeNull();
-    expect(navItem(target, "数据同步").classList.contains("active")).toBe(true);
-    expect(navItem(target, "账号").classList.contains("active")).toBe(false);
-    // 切回账号
-    navItem(target, "账号").click();
-    flushSync();
-    expect(target.querySelector('[data-stub="auth-card"]')).toBeTruthy();
     expect(target.querySelector('[data-stub="sync-setting"]')).toBeNull();
+    expect(target.querySelector('[data-stub="auth-card"]')).toBeTruthy();
+    expect(navLabels(target)).toEqual(["账号"]);
+    // 一次性信号照常被 $effect 消费,不残留
+    expect(pendingAccountSection()).toBeNull();
   });
 });
 
@@ -167,15 +165,16 @@ describe("AccountPage · 已登录", () => {
     expect(vi.mocked(authLogout)).toHaveBeenCalledTimes(1);
     expect(accountState().user).toBeNull();
     expect(vi.mocked(resetJournals)).toHaveBeenCalledTimes(1);
-    // 成功反馈(G2)与形态切换
+    // 成功反馈(G2)与形态切换(数据同步项随登录态一起消失)
     expect(target.textContent).toContain("已退出登录");
-    expect(navLabels(target)).toEqual(["账号", "数据同步"]);
+    expect(navLabels(target)).toEqual(["账号"]);
     expect(target.querySelector(".menu-footer")).toBeNull();
   });
 });
 
 describe("AccountPage · 深链(顶栏同步图标直达)", () => {
-  test("requestAccountSection(\"sync\") 后进入 → 直接落 sync 段,信号被消费", async () => {
+  test("已登录:requestAccountSection(\"sync\") 后进入 → 直接落 sync 段,信号被消费", async () => {
+    setAccountUser({ username: "tester", user_id: "u1" });
     requestAccountSection("sync");
     const target = await render();
     expect(target.querySelector('[data-stub="sync-setting"]')).toBeTruthy();

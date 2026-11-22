@@ -5,9 +5,9 @@
   // - 已登录:菜单头部 = 头像+昵称+邮箱;菜单项 = 个人资料/安全设置/第三方账号/
   //   登录设备/数据同步/账号注销;底部 = 退出登录;右侧 = AccountCenter 对应分区
   //   (「数据同步」段例外:状态自持,直挂 SyncSetting,不走 AccountCenter)。
-  // - 未登录:菜单头部 = 「登录 | 注册」;菜单项 = 「账号」+「数据同步」
-  //   (自部署静态 Token 用户不登录也要能配同步,故 sync 段未登录可见);
-  //   右侧 = 认证卡片(登录 / 注册 / 找回密码)居中,或 SyncSetting。
+  // - 未登录:菜单头部 = 「登录 | 注册」;菜单项仅「账号」—— 数据同步与账号域
+  //   各项一样登录后才可见(2026-11-22 用户约定,原「静态 Token 未登录可配」
+  //   设计废止);右侧 = 认证卡片(登录 / 注册 / 找回密码)居中。
   // 登录成功 / 退出登录 → 就地切换形态,不跳路由;顶栏头像同步(accountState)。
   // 深链:页外组件(顶栏 SyncIndicator)经 accountNav 一次性信号落指定段,
   //   $effect 消费(不能 onMount —— 已在 /account 时 navigate 不 remount)。
@@ -183,29 +183,17 @@
           </button>
         {/each}
       {:else}
-        <!-- 未登录:账号(认证卡片)+ 数据同步(静态 Token 自部署也要能配) -->
-        {@const syncActive = section === "sync"}
+        <!-- 未登录:仅「账号」入口;数据同步等段与其他账号域一样登录后才可见
+             (2026-11-22 用户约定,原「静态 Token 未登录可配」设计废止) -->
         <button
           type="button"
-          class="menu-item"
-          class:active={!syncActive}
-          aria-current={!syncActive ? "true" : undefined}
+          class="menu-item active"
+          aria-current="true"
           onclick={() => (section = "profile")}
         >
-          {#if !syncActive}<span class="indicator" aria-hidden="true"></span>{/if}
+          <span class="indicator" aria-hidden="true"></span>
           <UserRound size={16} />
           {t.settings.account.title}
-        </button>
-        <button
-          type="button"
-          class="menu-item"
-          class:active={syncActive}
-          aria-current={syncActive ? "true" : undefined}
-          onclick={() => (section = "sync")}
-        >
-          {#if syncActive}<span class="indicator" aria-hidden="true"></span>{/if}
-          <RefreshCw size={16} />
-          {t.settings.tab.sync}
         </button>
       {/if}
     </nav>
@@ -227,8 +215,8 @@
 
   <!-- 右侧内容区 -->
   <main class="content">
-    {#if section === "sync"}
-      <!-- 数据同步段:状态/错误自持,已/未登录均可用,不走 AccountCenter -->
+    {#if section === "sync" && acct.user}
+      <!-- 数据同步段:状态/错误自持,仅登录后可达,不走 AccountCenter -->
       <div class="sync-holder">
         <SyncSetting onGoAuth={() => (section = "profile")} />
       </div>
