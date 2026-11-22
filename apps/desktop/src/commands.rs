@@ -265,6 +265,27 @@ pub fn delete_project(id: String, state: State<'_, AppState>) -> Result<(), Stri
     state.store.delete_project(&id).map_err(map_err)
 }
 
+// === Project close / reopen command ===
+//
+// 「结束项目」(2026-11-22 批):归档是派生可见性 —— 任务不落任何标记,
+// 只翻项目自己的 closed_at。业务语义(与 complete/reopen_task 同款):
+// Store trait 不感知「结束」业务语义,revision/updated_at 在命令层盖章,
+// upsert 自动标 pending,下轮同步推云。
+
+#[tauri::command(async)]
+pub fn set_project_closed(
+    id: String,
+    closed: bool,
+    state: State<'_, AppState>,
+) -> Result<Project, String> {
+    let id = Id::parse(&id).ok_or_else(|| format!("invalid id: {id}"))?;
+    let mut project = state.store.get_project(&id).map_err(map_err)?;
+    project.closed_at = closed.then(Timestamp::now);
+    project.revision = project.revision.saturating_add(1);
+    project.updated_at = Timestamp::now();
+    state.store.upsert_project(project).map_err(map_err)
+}
+
 /// 项目树拖拽排序(v1 POST /projects/reorder):全量校验后事务更新。
 #[tauri::command(async)]
 pub fn reorder_projects(

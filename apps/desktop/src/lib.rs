@@ -120,6 +120,7 @@ pub fn run() {
             commands::list_projects,
             commands::upsert_project,
             commands::delete_project,
+            commands::set_project_closed,
             commands::reorder_projects,
             commands::list_tags,
             commands::upsert_tag,
