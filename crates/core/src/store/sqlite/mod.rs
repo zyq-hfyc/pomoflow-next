@@ -321,7 +321,6 @@ impl Stamped for YearlyReview {
 }
 
 mod helpers;
-mod rows;
 /// SQLite schema —— 实体表 + 同步辅助表共 16 张,
 /// 所有时间戳 ms INTEGER,所有枚举 TEXT。
 ///
@@ -334,7 +333,10 @@ mod rows;
 // - store_*       `impl Store` 按实体域分片(Rust 允许同类型多 impl 块)
 // - sync_writes   upsert_*_marked 同步写入内核
 // - sync_changelog `impl ChangeLogStore`
+// - import_writes `impl MigrationImport`(离线迁移导入写路径,2026-11-20)
 // - tests         store 层测试
+mod import_writes;
+mod rows;
 mod schema;
 mod store_impl;
 mod sync_changelog;

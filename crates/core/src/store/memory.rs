@@ -94,6 +94,11 @@ impl InMemoryStore {
 }
 
 impl Store for InMemoryStore {
+    fn local_user_id(&self) -> &Id {
+        // 同名固有方法(memory.rs:87);方法解析固有优先,这里转发不会自指
+        self.local_user_id()
+    }
+
     fn list_tasks(&self, q: &TaskQuery) -> CoreResult<Vec<Task>> {
         let g = self
             .inner
@@ -1063,6 +1068,86 @@ impl Store for InMemoryStore {
         Ok(out)
     }
 
+    // === 全量导出(离线迁移,2026-11-20)===================================
+    // 与 SqliteStore 同规格:活跃行 + 确定序(见 Store trait 侧注释)。
+    // task_tag 遍历 task_tag_meta(与 SqliteStore 的 task_tag_sync 表对齐,
+    // 含"曾打过标签后清空"的空集合行);meta 不存 user_id,用 store 归属用户。
+
+    fn list_subtasks(&self) -> CoreResult<Vec<SubTask>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<SubTask> = g
+            .subtasks
+            .values()
+            .filter(|s| s.deleted_at.is_none())
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+        Ok(out)
+    }
+
+    fn list_task_tag_links(&self) -> CoreResult<Vec<crate::model::TaskTagLink>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<crate::model::TaskTagLink> = g
+            .task_tag_meta
+            .iter()
+            .map(|(task_id, (rev, updated_at))| crate::model::TaskTagLink {
+                task_id: task_id.clone(),
+                tag_ids: g.task_tags.get(task_id).cloned().unwrap_or_default(),
+                user_id: self.user_id.clone(),
+                revision: *rev,
+                updated_at: *updated_at,
+            })
+            .collect();
+        out.sort_by(|a, b| a.task_id.0.cmp(&b.task_id.0));
+        Ok(out)
+    }
+
+    fn list_daily_reviews(&self) -> CoreResult<Vec<DailyReview>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<DailyReview> = g.daily_reviews.values().cloned().collect();
+        out.sort_by(|a, b| a.date.cmp(&b.date));
+        Ok(out)
+    }
+
+    fn list_weekly_reviews(&self) -> CoreResult<Vec<WeeklyReview>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<WeeklyReview> = g.weekly_reviews.values().cloned().collect();
+        out.sort_by(|a, b| a.week_start.cmp(&b.week_start));
+        Ok(out)
+    }
+
+    fn list_monthly_reviews(&self) -> CoreResult<Vec<MonthlyReview>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<MonthlyReview> = g.monthly_reviews.values().cloned().collect();
+        out.sort_by(|a, b| a.year_month.cmp(&b.year_month));
+        Ok(out)
+    }
+
+    fn list_yearly_reviews(&self) -> CoreResult<Vec<YearlyReview>> {
+        let g = self
+            .inner
+            .read()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        let mut out: Vec<YearlyReview> = g.yearly_reviews.values().cloned().collect();
+        out.sort_by(|a, b| a.year.cmp(&b.year));
+        Ok(out)
+    }
+
     fn upsert_journal(&self, mut journal: Journal) -> CoreResult<Journal> {
         let mut g = self
             .inner
@@ -1198,6 +1283,73 @@ fn kind_str(k: EntityKind) -> &'static str {
 
 fn cand<E: SyncEntity>(e: &E, kind: &str, id: &str, g: &Inner, device: &str) -> CoreResult<Change> {
     change_of(e, g.origin_of(kind, id), device)
+}
+
+/// 离线迁移导入(2026-11-20):对照 `apply_remote` 的「权威载荷原样落库、
+/// revision 不 bump」,差异只有两点 —— 键来自载荷自身而非 Change 信封,
+/// 且落库后 `touch`(标 pending,下轮推送上云)而非 `settle`。
+impl crate::migration::MigrationImport for InMemoryStore {
+    fn import_daily_review(&self, review: DailyReview) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        g.daily_reviews.insert(review.date.clone(), review.clone());
+        g.touch("daily_review", &review.date, &self.device_id);
+        Ok(())
+    }
+
+    fn import_weekly_review(&self, review: WeeklyReview) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        g.weekly_reviews
+            .insert(review.week_start.clone(), review.clone());
+        g.touch("weekly_review", &review.week_start, &self.device_id);
+        Ok(())
+    }
+
+    fn import_monthly_review(&self, review: MonthlyReview) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        g.monthly_reviews
+            .insert(review.year_month.clone(), review.clone());
+        g.touch("monthly_review", &review.year_month, &self.device_id);
+        Ok(())
+    }
+
+    fn import_yearly_review(&self, review: YearlyReview) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        g.yearly_reviews.insert(review.year.clone(), review.clone());
+        g.touch("yearly_review", &review.year, &self.device_id);
+        Ok(())
+    }
+
+    fn import_task_tags(&self, link: TaskTagLink) -> CoreResult<()> {
+        let mut g = self
+            .inner
+            .write()
+            .map_err(|e| CoreError::storage(e.to_string()))?;
+        // 排序去重(与写入侧/apply_remote 同规格:同集合 → 同载荷)
+        let mut sorted = link.tag_ids.clone();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+        sorted.dedup_by(|a, b| a.0 == b.0);
+        g.task_tag_meta
+            .insert(link.task_id.clone(), (link.revision, link.updated_at));
+        if sorted.is_empty() {
+            g.task_tags.remove(&link.task_id);
+        } else {
+            g.task_tags.insert(link.task_id.clone(), sorted);
+        }
+        g.touch("task_tag", link.task_id.as_str(), &self.device_id);
+        Ok(())
+    }
 }
 
 impl ChangeLogStore for InMemoryStore {

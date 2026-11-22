@@ -25,7 +25,8 @@ use crate::model::Id;
 /// 以周期串为同步自然键(daily/weekly = 日期,monthly = `YYYY-MM`,yearly =
 /// 年份),拿 UUID 去卡会把合法复盘整族误杀(2026-11-20 CI 抓过一次)。此闸
 /// 只为拦「移动端老数字串 id 经云回流」这类垃圾,格式合法即放行。
-fn entity_id_in_domain(entity: super::EntityKind, entity_id: &str) -> bool {
+/// pub(crate):migration::apply_import 复用同一判据卡导入行(2026-11-20)。
+pub(crate) fn entity_id_in_domain(entity: super::EntityKind, entity_id: &str) -> bool {
     match entity {
         super::EntityKind::DailyReview | super::EntityKind::WeeklyReview => {
             chrono::NaiveDate::parse_from_str(entity_id, "%Y-%m-%d").is_ok()

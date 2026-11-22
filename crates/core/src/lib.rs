@@ -16,6 +16,7 @@
 //! - [`stats`]     —— 统计聚合(趋势 / 总览 / 项目分布,v1 crud.py 翻译)
 //! - [`repeat`]    —— 重复任务日期引擎(daily/weekday/weekly/monthly/yearly/custom)
 //! - [`reorder`]   —— 拖拽排序校验(项目树环/深度,标签平铺)
+//! - [`migration`] —— 离线数据迁移(导出/导入信封,2026-11-20;纯 lib,文件 I/O 在桌面层)
 //! - [`error`]     —— 统一错误类型
 
 #![deny(rust_2018_idioms)]
@@ -23,6 +24,7 @@
 #![warn(unreachable_pub)]
 
 pub mod error;
+pub mod migration;
 pub mod model;
 pub mod reorder;
 pub mod repeat;

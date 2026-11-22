@@ -7,6 +7,12 @@
 use super::*;
 
 impl Store for SqliteStore {
+    fn local_user_id(&self) -> &Id {
+        // 同名固有方法(sqlite/mod.rs `pub fn local_user_id`);方法解析固有
+        // 优先,这里转发不会自指
+        self.local_user_id()
+    }
+
     // === 任务 CRUD + 软删/回收站 ==========================================
 
     fn list_tasks(&self, q: &TaskQuery) -> CoreResult<Vec<Task>> {
@@ -833,6 +839,108 @@ impl Store for SqliteStore {
         .map_err(|e| CoreError::storage(format!("delete_yearly_review: {e}")))?;
         Ok(())
     }
+
+    // === 全量导出(离线迁移,2026-11-20)===================================
+    // 单条 SELECT 全表活跃行,确定序输出(见 trait 侧注释);task_tag 走
+    // task_tag_sync 元数据 + GROUP_CONCAT(与 sync_changelog candidate 同形,
+    // 不过滤 sync_state —— 导出要的是当前状态而非待推队列)。
+
+    fn list_subtasks(&self) -> CoreResult<Vec<SubTask>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare("SELECT * FROM subtasks WHERE deleted_at_ms IS NULL ORDER BY id ASC")
+            .map_err(|e| CoreError::storage(format!("prepare list_subtasks: {e}")))?;
+        let rows = stmt
+            .query_map([], row_to_subtask)
+            .map_err(|e| CoreError::storage(format!("query list_subtasks: {e}")))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| CoreError::storage(format!("row list_subtasks: {e}")))?);
+        }
+        Ok(out)
+    }
+
+    fn list_task_tag_links(&self) -> CoreResult<Vec<crate::model::TaskTagLink>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT s.task_id, s.revision, s.updated_at_ms, s.origin_device,
+                        s.user_id,
+                        (SELECT GROUP_CONCAT(tag_id) FROM task_tags
+                         WHERE task_id = s.task_id) AS tag_ids
+                 FROM task_tag_sync s ORDER BY s.task_id ASC",
+            )
+            .map_err(|e| CoreError::storage(format!("prepare list_task_tag_links: {e}")))?;
+        let rows = stmt
+            .query_map([], |row| row_to_task_tag_link(row).map(|(link, _)| link))
+            .map_err(|e| CoreError::storage(format!("query list_task_tag_links: {e}")))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| CoreError::storage(format!("row list_task_tag_links: {e}")))?);
+        }
+        Ok(out)
+    }
+
+    fn list_daily_reviews(&self) -> CoreResult<Vec<DailyReview>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare("SELECT * FROM daily_reviews ORDER BY date ASC")
+            .map_err(|e| CoreError::storage(format!("prepare list_daily_reviews: {e}")))?;
+        let rows = stmt
+            .query_map([], row_to_daily_review)
+            .map_err(|e| CoreError::storage(format!("query list_daily_reviews: {e}")))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| CoreError::storage(format!("row list_daily_reviews: {e}")))?);
+        }
+        Ok(out)
+    }
+
+    fn list_weekly_reviews(&self) -> CoreResult<Vec<WeeklyReview>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare("SELECT * FROM weekly_reviews ORDER BY week_start ASC")
+            .map_err(|e| CoreError::storage(format!("prepare list_weekly_reviews: {e}")))?;
+        let rows = stmt
+            .query_map([], row_to_weekly_review)
+            .map_err(|e| CoreError::storage(format!("query list_weekly_reviews: {e}")))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| CoreError::storage(format!("row list_weekly_reviews: {e}")))?);
+        }
+        Ok(out)
+    }
+
+    fn list_monthly_reviews(&self) -> CoreResult<Vec<MonthlyReview>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare("SELECT * FROM monthly_reviews ORDER BY year_month ASC")
+            .map_err(|e| CoreError::storage(format!("prepare list_monthly_reviews: {e}")))?;
+        let rows = stmt
+            .query_map([], row_to_monthly_review)
+            .map_err(|e| CoreError::storage(format!("query list_monthly_reviews: {e}")))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| CoreError::storage(format!("row list_monthly_reviews: {e}")))?);
+        }
+        Ok(out)
+    }
+
+    fn list_yearly_reviews(&self) -> CoreResult<Vec<YearlyReview>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare("SELECT * FROM yearly_reviews ORDER BY year ASC")
+            .map_err(|e| CoreError::storage(format!("prepare list_yearly_reviews: {e}")))?;
+        let rows = stmt
+            .query_map([], row_to_yearly_review)
+            .map_err(|e| CoreError::storage(format!("query list_yearly_reviews: {e}")))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| CoreError::storage(format!("row list_yearly_reviews: {e}")))?);
+        }
+        Ok(out)
+    }
+
     fn list_subtasks_for_task(&self, task_id: &Id) -> CoreResult<Vec<SubTask>> {
         let conn = self.lock()?;
         let mut stmt = conn

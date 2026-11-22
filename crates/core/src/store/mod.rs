@@ -123,6 +123,11 @@ pub(crate) fn date_filter_range(f: TaskDateFilter, tz_offset_min: i32) -> (i64, 
 /// 但 trait 加 `where Self: Send + Sync` 会让 `InMemoryStore` 失去灵活性,所以
 /// 选择"trait 不强制,具体实现各自决定"——与 `Arc<dyn Store>` 模式配合。
 pub trait Store: std::fmt::Debug {
+    // --- 归属 ---
+    /// 本机归属用户(多租户 ADR-007):两个实现都有此固有方法,2026-11-20
+    /// 提升进 trait,migration::apply_import 在泛型 `impl Store` 上盖章用。
+    fn local_user_id(&self) -> &Id;
+
     // --- Tasks ---
     fn list_tasks(&self, q: &TaskQuery) -> CoreResult<Vec<Task>>;
     /// 统计专用:全量任务(软删过滤,**无分页上限**)。
@@ -243,6 +248,19 @@ pub trait Store: std::fmt::Debug {
         &self,
         template: NotificationTemplate,
     ) -> CoreResult<NotificationTemplate>;
+
+    // --- 全量导出(离线迁移,2026-11-20)---
+    // 迁移导出需要「全表活跃行」视角,而业务 getter 是按查询形状设计的:
+    // 复盘族只有 *_between(月/年复盘连区间版都没有),task_tag 只能按 task
+    // 拿 Tag 集合(带 revision 元数据的 link 行只在同步私查路径里),purge_task
+    // 后的孤儿子任务没有全量入口。这 6 个 getter 只服务导出/校验场景,不进
+    // 业务页;排序取确定序(便于双实现 parity 对拍与导出文件可复现)。
+    fn list_subtasks(&self) -> CoreResult<Vec<SubTask>>;
+    fn list_task_tag_links(&self) -> CoreResult<Vec<crate::model::TaskTagLink>>;
+    fn list_daily_reviews(&self) -> CoreResult<Vec<DailyReview>>;
+    fn list_weekly_reviews(&self) -> CoreResult<Vec<WeeklyReview>>;
+    fn list_monthly_reviews(&self) -> CoreResult<Vec<MonthlyReview>>;
+    fn list_yearly_reviews(&self) -> CoreResult<Vec<YearlyReview>>;
 
     // --- Pomodoro stats(番茄钟页"今日专注分钟"用) ---
     /// 返回今日完成的番茄分钟数(把所有 is_completed=1 且 started_at 在当天区间内
