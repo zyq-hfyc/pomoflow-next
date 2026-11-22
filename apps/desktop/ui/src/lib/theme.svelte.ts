@@ -201,3 +201,50 @@ export function compressImageToBackgroundUrl(file: File): Promise<string | null>
 }
 
 export { PRESET_BACKGROUNDS };
+
+/**
+ * 读当前主题 blob(离线迁移导出用,2026-11-20):
+ * localStorage `pomoflow-theme` 的 JSON 对象原样交后端塞进迁移信封;
+ * 无值/损坏返回 null(信封 theme 段缺省,导入端不动目标机主题)。
+ */
+export function getPersistedThemeBlob(): unknown {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 应用迁移文件携带的主题 blob(导入成功后的副作用链,2026-11-20)。
+ * 校验形如持久化形态(theme 合法 id;background 为 `"preset:<id>"` /
+ * `"url(...)"` / `""`)。合法 → 置态 + persist + apply 并返回 true;
+ * 非法 → 返回 false 且**保持现状**(目标机主题不被半合法数据搅动)。
+ * 背景为空串 = 源机用主题渐变,忠实恢复(清除背景),不走首启默认预设。
+ */
+export function applyImportedTheme(raw: unknown): boolean {
+  if (typeof raw !== "object" || raw === null) return false;
+  const parsed = raw as { theme?: unknown; background?: unknown };
+  if (typeof parsed.theme !== "string" || !isThemeId(parsed.theme)) {
+    return false;
+  }
+  const bgRaw = typeof parsed.background === "string" ? parsed.background : "";
+  if (bgRaw.startsWith("preset:")) {
+    const id = bgRaw.slice("preset:".length);
+    if (!isPresetBackgroundId(id)) return false;
+    setTheme(parsed.theme);
+    setBackgroundPreset(id);
+    return true;
+  }
+  if (bgRaw.startsWith("url(")) {
+    setTheme(parsed.theme);
+    setBackgroundCustom(bgRaw);
+    return true;
+  }
+  setTheme(parsed.theme);
+  clearBackground();
+  return true;
+}

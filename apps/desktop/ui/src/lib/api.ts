@@ -718,3 +718,56 @@ export const restoreTask = (id: string) =>
 /** 硬删除任务(从 DB 物理删除,不可恢复)。 */
 export const purgeTask = (id: string) =>
   invoke<void>("purge_task", { id });
+
+// === Migration(离线数据迁移,2026-11-20) ===
+
+/** 单类实体的导入计数(Rust migration::KindCounts 镜像) */
+export interface MigrationKindCounts {
+  total: number;
+  applied: number;
+  skipped_invalid: number;
+  skipped_error: number;
+  first_error: string | null;
+}
+
+/** core::migration::ImportReport 镜像(12 类实体 + 单行配置 + 主题) */
+export interface MigrationImportReport {
+  projects: MigrationKindCounts;
+  tags: MigrationKindCounts;
+  tasks: MigrationKindCounts;
+  task_tags: MigrationKindCounts;
+  subtasks: MigrationKindCounts;
+  pomodoros: MigrationKindCounts;
+  mottos: MigrationKindCounts;
+  journals: MigrationKindCounts;
+  daily_reviews: MigrationKindCounts;
+  weekly_reviews: MigrationKindCounts;
+  monthly_reviews: MigrationKindCounts;
+  yearly_reviews: MigrationKindCounts;
+  notification_template: MigrationKindCounts;
+  theme_present: boolean;
+}
+
+/** 导出成功摘要(前端只用于展示文案) */
+export interface MigrationExportSummary {
+  path: string;
+  rows: number;
+}
+
+/** 导入结果:逐类报告 + 文件携带的主题 blob(原样交 theme 层校验回填) */
+export interface MigrationImportResult {
+  report: MigrationImportReport;
+  theme: unknown | null;
+}
+
+/** 导出迁移 JSON(JSON 是迁移真源,可导回;theme 为当前 localStorage blob) */
+export const exportMigrationJson = (path: string, theme: unknown) =>
+  invoke<MigrationExportSummary>("export_migration_json", { path, theme });
+
+/** 导出迁移 xlsx(13 sheet 只读快照,人看,不可导回) */
+export const exportMigrationXlsx = (path: string) =>
+  invoke<MigrationExportSummary>("export_migration_xlsx", { path });
+
+/** 导入迁移文件(按 id upsert 覆盖/其余保留/归账本机/全部标 pending) */
+export const importMigration = (path: string) =>
+  invoke<MigrationImportResult>("import_migration", { path });

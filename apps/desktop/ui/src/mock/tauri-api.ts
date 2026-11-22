@@ -18,6 +18,11 @@
 // 场景六:登入/登出闭环(2026-11-20 退出登录补完批)—— #/account 账号段
 //   AuthCard 登录 → auth 落账号(同 Rust 落 meta 语义)→ 菜单 6 项 + 底部
 //   「退出登录」现形 → 登出切回未登录 + 提示。内存态,刷新页面即重置。
+// 场景七:离线数据迁移(2026-11-20 迁移批)—— #/settings「数据迁移」标签:
+//   导出 JSON/xlsx(save 对话框回内存路径,导出回行数合计);导入三态靠
+//   文件名分支 —— 先在控制台设 `__MOCK_MIGRATION_PATH__ = 'bad.json'` /
+//   `'partial.json'`(部分跳过)/ 其他(全量成功 + 主题切 preset-bg-2
+//   供目检),再点「选择迁移文件…」(open 对话框回该路径)。
 //
 // 没实现的命令走下面 default 兜底(返回 null / 空数组 → UI 走空态)。
 
@@ -181,6 +186,24 @@ const dailyReviews: { id: string; date: string; content: string }[] = [
   },
 ];
 
+// 场景七(离线数据迁移):导入三态分支读控制台变量(见文件头),
+// open 对话框原样回它;未设时回落一个普通文件名(全量成功态)。
+declare global {
+  // eslint-disable-next-line no-var
+  var __MOCK_MIGRATION_PATH__: string | undefined;
+}
+
+/// 单实体的导入计数(全量成功 = applied == total)。
+function migrationCounts(total: number): {
+  total: number;
+  applied: number;
+  skipped_invalid: number;
+  skipped_error: number;
+  first_error: string | null;
+} {
+  return { total, applied: total, skipped_invalid: 0, skipped_error: 0, first_error: null };
+}
+
 const invoke: Invoke = async (cmd, args) => {
   switch (cmd) {
     case "list_daily_reviews": {
@@ -317,6 +340,53 @@ const invoke: Invoke = async (cmd, args) => {
       return 0;
     case "clear_conflicts":
       return null;
+    // 场景七(2026-11-20 迁移批):导出回内存行数合计(fixture:任务5 +
+    // 随手记2 + 日复盘1 = 8);导入按文件名三态(见文件头),成功态带主题
+    // preset-bg-2 供目检 applyImportedTheme 真实生效。
+    case "plugin:dialog|save":
+      return (
+        (args?.options as { defaultPath?: string } | undefined)?.defaultPath ??
+        "mock-export.json"
+      );
+    case "plugin:dialog|open":
+      return globalThis.__MOCK_MIGRATION_PATH__ ?? "mock-migration.json";
+    case "export_migration_json":
+    case "export_migration_xlsx":
+      return { path: String(args?.path ?? ""), rows: 8 };
+    case "import_migration": {
+      const path = String(args?.path ?? "");
+      if (path.includes("bad")) {
+        throw new Error("不是 PomoFlow 迁移文件");
+      }
+      const partial = path.includes("partial");
+      return {
+        report: {
+          projects: migrationCounts(0),
+          tags: migrationCounts(2),
+          tasks: partial
+            ? {
+                total: 5,
+                applied: 4,
+                skipped_invalid: 1,
+                skipped_error: 0,
+                first_error: "task id 不在合法域: not-a-uuid",
+              }
+            : migrationCounts(5),
+          task_tags: migrationCounts(2),
+          subtasks: migrationCounts(0),
+          pomodoros: migrationCounts(0),
+          mottos: migrationCounts(1),
+          journals: migrationCounts(2),
+          daily_reviews: migrationCounts(1),
+          weekly_reviews: migrationCounts(0),
+          monthly_reviews: migrationCounts(0),
+          yearly_reviews: migrationCounts(0),
+          notification_template: migrationCounts(1),
+          theme_present: true,
+        },
+        theme: { theme: "ocean", background: "preset:preset-bg-2" },
+      };
+    }
     // 今日统计重同步(timer.svelte 启动即调;缺了会读 null.today_sessions 报错)
     case "stats_overview":
       return {
