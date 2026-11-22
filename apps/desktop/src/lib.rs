@@ -102,6 +102,11 @@ pub fn run() {
         .manage(state)
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        // 检查更新(2026-11-22 批):updater 检查/下载/验签/静默安装,
+        // process 提供 relaunch —— JS 侧编排腾讯式「静默下载 → 就绪提示 →
+        // 用户决定重启」;dev 模式插件本身禁用 updater(不进启动路径)。
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             // 静默启动:开机时不抢焦点,常驻托盘

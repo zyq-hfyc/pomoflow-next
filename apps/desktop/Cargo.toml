@@ -34,6 +34,11 @@ tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
 tauri-plugin-notification = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
+# 检查更新(2026-11-22 批):updater = 应用内检查/静默下载/验签/静默安装;
+# process = relaunch(下载完「立即重启更新」用)。端点在 release.yml 经
+# --config 补丁注入生产地址;本地占位 127.0.0.1:8080(dev 起本地 sync-server 可端到端演练)。
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 # 系统通知直发(与插件同一 Windows 后端,但 dev 下也显式带 AUMID,
 # 否则回落 PowerShell 标识,通知签名显示"Windows PowerShell")
