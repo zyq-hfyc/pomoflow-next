@@ -31,6 +31,18 @@ on:
 # 二进制,客户端无服务器配置 UI;地址漏配在首步防呆直接失败(Rust 侧
 # lib.rs 启动 panic 双保险)。开发/测试版仍由本地 `cargo tauri build` /
 # `npm run tauri dev` 产出,不带这两个 env,行为与现状一致。
+#
+# 检查更新(2026-11-22 更新批):三件事 ——
+#   1. 签名:`TAURI_SIGNING_PRIVATE_KEY` secret(minisign 私钥,空密码;
+#      丢失 = 存量用户失去更新通道)→ tauri-action 对更新工件产出 .sig,
+#      随包一起上传 GitHub Release;
+#   2. 端点注入:tauri.conf.json 里 updater endpoints 只是 localhost dev
+#      占位,build 时 `--config` merge patch 换成生产
+#      `$POMOFLOW_PROD_SERVER_URL/api/public/update-manifest/<tauri 靶>`;
+#   3. 分发入库:更新工件(AppImage / -setup.exe / .app.tar.gz)+ .sig
+#      上传 sync-server 管理面(POST /internal/*,Bearer INTERNAL_SERVICE_TOKEN
+#      secret),release 落 **draft** —— 发布(publish)留给人工,发布后
+#      更新清单端点才对该版本可见。失败 warn 不阻塞 GitHub Release 产线。
 
 permissions:
   contents: write
@@ -50,12 +62,16 @@ jobs:
           - platform: linux-x86_64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            # updater 清单靶(macos ≠ darwin,矩阵名与 Tauri 靶名不同)
+            updater_target: linux-x86_64
           - platform: macos-aarch64
             os: macos-latest
             target: aarch64-apple-darwin
+            updater_target: darwin-aarch64
           - platform: windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
+            updater_target: windows-x86_64
 
     runs-on: ${{ matrix.os }}
 
@@ -69,6 +85,16 @@ jobs:
         run: |
           if [ -z "$PROD_URL" ]; then
             echo "::error::secret POMOFLOW_PROD_SERVER_URL 未配置(仓库 Settings → Secrets and variables → Actions,值形如 http://<生产IP>)"
+            exit 1
+          fi
+
+      # 更新签名私钥防呆:漏配则 tauri build 阶段才炸,提前失败省时长
+      - name: Verify TAURI_SIGNING_PRIVATE_KEY secret
+        env:
+          SIGN_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SIGN_KEY" ]; then
+            echo "::error::secret TAURI_SIGNING_PRIVATE_KEY 未配置(minisign 私钥,内容形如 untrusted comment: .../RWQ... 两段 base64;生成见 cargo tauri signer generate)"
             exit 1
           fi
 
@@ -123,6 +149,24 @@ jobs:
         working-directory: apps/desktop
         run: cargo tauri icon icons/128x128@2x.png
 
+      # updater 端点注入:仓库 conf 只带 localhost:8080 dev 占位(生产地址
+      # 不入仓),build 时用 --config merge patch 覆盖 endpoints 指向生产。
+      - name: Write updater endpoint patch(--config merge 用)
+        env:
+          PROD_URL: ${{ secrets.POMOFLOW_PROD_SERVER_URL }}
+          UPD_TARGET: ${{ matrix.updater_target }}
+        shell: bash
+        run: |
+          cat > "${{ github.workspace }}/apps/desktop/updater-endpoint-patch.json" <<EOF
+          {
+            "plugins": {
+              "updater": {
+                "endpoints": ["${PROD_URL%/}/api/public/update-manifest/${UPD_TARGET}"]
+              }
+            }
+          }
+          EOF
+
       - name: Build Tauri bundles + upload to GitHub Release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -134,6 +178,9 @@ jobs:
           # checkout 无此问题;本地带 env 重编需先 touch apps/desktop/src/sync_client.rs
           POMOFLOW_MANAGED_BUILD: "1"
           POMOFLOW_DEFAULT_SERVER_URL: ${{ secrets.POMOFLOW_PROD_SERVER_URL }}
+          # 更新签名(2026-11-22 更新批):createUpdaterArtifacts 开启 + 此 env
+          # → 更新工件旁产出 .sig(私钥空密码,无需 PASSWORD secret)
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
@@ -147,4 +194,62 @@ jobs:
             - **Windows**: `.msi` 双击安装
           releaseDraft: true
           prerelease: false
-          args: --target ${{ matrix.target }}
+          args: --target ${{ matrix.target }} --config ${{ github.workspace }}/apps/desktop/updater-endpoint-patch.json
+
+      # 更新工件入库 sync-server 分发面(ADR-013 管理面):工件 + .sig 挂到
+      # draft release,人工 publish 后更新清单才可见。warn 不阻塞:GitHub
+      # Release 已传成功,入库失败只影响「应用内更新」,可事后手动补传。
+      # 三平台矩阵并发:release 建档 409 = 平台先到先得,改走列表按版本取 id。
+      - name: Upload updater artifacts to sync-server(draft,人工 publish)
+        continue-on-error: true
+        env:
+          PROD_URL: ${{ secrets.POMOFLOW_PROD_SERVER_URL }}
+          SERVICE_TOKEN: ${{ secrets.INTERNAL_SERVICE_TOKEN }}
+          UPD_TARGET: ${{ matrix.updater_target }}
+          VERSION: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="${PROD_URL%/}"
+          VERSION="${VERSION#v}"
+          AUTH="Authorization: Bearer ${SERVICE_TOKEN}"
+
+          # 平台 → 更新工件(工件目录在 workspace 根 target/,workspace 共享)
+          case "$UPD_TARGET" in
+            windows-x86_64)
+              BUNDLE=$(ls target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe 2>/dev/null | head -1 || true)
+              PLATFORM="windows" ;;
+            linux-x86_64)
+              BUNDLE=$(ls target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage 2>/dev/null | head -1 || true)
+              PLATFORM="linux" ;;
+            darwin-aarch64)
+              BUNDLE=$(ls target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz 2>/dev/null | head -1 || true)
+              PLATFORM="mac" ;;
+            *) echo "::warning::未知 updater 靶 $UPD_TARGET"; exit 1 ;;
+          esac
+          [ -n "$BUNDLE" ] && [ -f "$BUNDLE" ] || { echo "::warning::未找到更新工件($UPD_TARGET)"; exit 1; }
+          SIG="${BUNDLE}.sig"
+          [ -f "$SIG" ] || { echo "::warning::未找到签名文件 $SIG(createUpdaterArtifacts 未生效?)"; exit 1; }
+          NAME=$(basename "$BUNDLE")
+
+          # release 建档:201 拿 id;409(并发先建/重跑)→ 列表按版本回查
+          REL_ID=$(curl -sS -X POST "$BASE/internal/releases" \
+            -H "$AUTH" -H "Content-Type: application/json" \
+            -d "{\"version\":\"${VERSION}\",\"notes\":\"PomoFlow ${GITHUB_REF_NAME}\"}" \
+            | jq -r '.id // empty')
+          if [ -z "$REL_ID" ]; then
+            REL_ID=$(curl -sS -H "$AUTH" "$BASE/internal/releases" \
+              | jq -r --arg v "$VERSION" '[.items[] | select(.version == $v)][0].id // empty')
+          fi
+          [ -n "$REL_ID" ] || { echo "::warning::release 建档且回查均失败,跳过入库"; exit 1; }
+
+          # 工件 + 签名上传(同平台重传 = 服务端替换旧行,sig 一并重置)
+          ASSET_ID=$(curl -sS -X POST \
+            "$BASE/internal/releases/$REL_ID/assets?platform=${PLATFORM}&filename=${NAME}" \
+            -H "$AUTH" -H "Content-Type: application/octet-stream" \
+            --data-binary @"$BUNDLE" | jq -r '.id // empty')
+          [ -n "$ASSET_ID" ] || { echo "::warning::工件上传失败($NAME)"; exit 1; }
+          curl -sS -X POST "$BASE/internal/assets/$ASSET_ID/sig" \
+            -H "$AUTH" -H "Content-Type: text/plain" \
+            --data-binary @"$SIG" >/dev/null
+          echo "已入库 $NAME + .sig → release $VERSION(草稿;publish 后更新清单可见)"
