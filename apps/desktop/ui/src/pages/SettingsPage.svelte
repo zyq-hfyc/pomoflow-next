@@ -1,8 +1,9 @@
 <script lang="ts">
   // 设置页 —— v1 SettingsPage.tsx 布局移植:左侧二级菜单 + 右侧表单卡。
   //
-  // 9 个标签:v1 的 8 个(计时 / 清单 / 标签 / 主题 / 名言 / 通知 / 语言 /
-  // 垃圾箱;账号占位已由账号页接管)+ v2 的「数据迁移」(2026-11-20 离线迁移批)。
+  // 10 个标签:v1 的 8 个(计时 / 清单 / 标签 / 主题 / 名言 / 通知 / 语言 /
+  // 垃圾箱;账号占位已由账号页接管)+ v2 的「数据迁移」(2026-11-20 离线迁移批)
+  // + v2 的「检查更新」(2026-11-22 腾讯式更新批)。
   // v2 新增的「数据同步」(P1a)已于 2026-10-08 迁入账号页(账号域资产,
   // 与移动端「我的」对齐)。
   // 菜单激活态:accent-50 底 + accent-600 字 + 左侧指示条(词典 t.settings.tab.*)。
@@ -19,6 +20,7 @@
     DatabaseBackup,
     Languages,
     Trash2,
+    RefreshCw,
   } from "lucide-svelte";
   import { getDict } from "../lib/i18n.svelte";
   import TimerSetting from "../components/Settings/TimerSetting.svelte";
@@ -30,6 +32,7 @@
   import MigrationSetting from "../components/Settings/MigrationSetting.svelte";
   import LanguageSetting from "../components/Settings/LanguageSetting.svelte";
   import TrashSetting from "../components/Settings/TrashSetting.svelte";
+  import UpdateSetting from "../components/Settings/UpdateSetting.svelte";
 
   const t = $derived(getDict());
 
@@ -42,7 +45,8 @@
     | "notification"
     | "migration"
     | "language"
-    | "trash";
+    | "trash"
+    | "update";
 
   let activeTab = $state<SettingTab>("timer");
 
@@ -58,6 +62,7 @@
     { key: "migration", icon: DatabaseBackup as any, label: t.settings.tab.migration },
     { key: "language", icon: Languages as any, label: t.settings.tab.language },
     { key: "trash", icon: Trash2 as any, label: t.settings.tab.trash },
+    { key: "update", icon: RefreshCw as any, label: t.settings.tab.update },
   ]);
 </script>
 
@@ -107,6 +112,8 @@
         <LanguageSetting />
       {:else if activeTab === "trash"}
         <TrashSetting />
+      {:else if activeTab === "update"}
+        <UpdateSetting />
       {/if}
     </div>
   </main>

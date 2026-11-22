@@ -29,6 +29,9 @@
 //   「重新开启」恢复。设置页「清单管理」同款结束/重启;清单增改删
 //   (upsert_project/delete_project)同日补齐 —— 侧栏与设置页的改名/加子/
 //   删除在 MOCK 下走通。内存态,刷新即重置。
+// 场景九:检查更新(2026-11-22 批)—— #/settings「检查更新」标签:当前
+//   版本 0.2.0,手动「检查更新」→「已是最新版本」(updater check 走 default
+//   兜底 = 无更新);真实下载/安装流程只能在打包应用里验。
 //
 // 没实现的命令走下面 default 兜底(返回 null / 空数组 → UI 走空态)。
 
@@ -444,6 +447,10 @@ const invoke: Invoke = async (cmd, args) => {
       );
     case "plugin:dialog|open":
       return globalThis.__MOCK_MIGRATION_PATH__ ?? "mock-migration.json";
+    // 检查更新(2026-11-22 批):版本号回 0.2.0;updater check 走 default
+    // 兜底返回 null → 插件解析为「无更新」→ 设置页显示「已是最新版本」。
+    case "plugin:app|version":
+      return "0.2.0";
     case "export_migration_json":
     case "export_migration_xlsx":
       return { path: String(args?.path ?? ""), rows: 8 };

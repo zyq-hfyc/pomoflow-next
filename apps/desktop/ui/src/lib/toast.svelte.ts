@@ -29,3 +29,8 @@ export function toast(): ToastItem[] {
 export function toastError(message: string): void {
   push(message, "error");
 }
+
+/// 中性提示(检查更新「已就绪」等非错误告警)
+export function toastInfo(message: string): void {
+  push(message, "info");
+}

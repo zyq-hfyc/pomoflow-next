@@ -36,6 +36,8 @@
   } from "./lib/timer.svelte";
   import { initReminders } from "./lib/reminders.svelte";
   import { initTheme } from "./lib/theme.svelte";
+  // 检查更新(2026-11-22 批):启动静默检查 + ready 恢复,状态机见 lib/updater.svelte.ts
+  import { initUpdater } from "./lib/updater.svelte";
   // 开发/测试环境同步默认值(.env.development;空配置才写,managed 跳过)
   import { applySyncDefaultsOnce } from "./lib/syncDefaults";
   import TomatoIcon from "./components/ui/TomatoIcon.svelte";
@@ -78,6 +80,9 @@
     initTodayStatsSync();
     // 任务提醒引擎(30s 轮询 + 专注抑制/补弹 + 启动补弹)
     initReminders();
+    // 检查更新(腾讯式:启动静默检查 → 后台下载 → 就绪 toast;内部全兜底
+    // 异常,不打扰启动;dev/插件报错静默回落)
+    void initUpdater();
     // 通知权限预请求(v1 TimerPage:73-77 / useReminders:116-120:
     // 进页面即请求,而不是等首次发通知时才弹权限框)
     void (async () => {

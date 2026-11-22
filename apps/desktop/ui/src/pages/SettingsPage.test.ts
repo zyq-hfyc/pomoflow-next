@@ -1,13 +1,14 @@
-//! SettingsPage 菜单骨架测试(2026-10-08 数据同步搬家批;2026-11-20 迁移批 8→9)。
+//! SettingsPage 菜单骨架测试(2026-10-08 数据同步搬家批;2026-11-20 迁移批
+//! 8→9;2026-11-22 更新批 9→10)。
 //!
-//! 锁:9 个标签(数据同步已迁账号页,菜单文案数组不再含它;「数据迁移」
-//! 插在通知文案与中英切换之间)+ 点击切换正常。
+//! 锁:10 个标签(数据同步已迁账号页,菜单文案数组不再含它;「数据迁移」
+//! 插在通知文案与中英切换之间;「检查更新」排末位)+ 点击切换正常。
 //! 子组件统一换替身(真实实现各自有/无测试,与本骨架无关)。
 
 import { describe, expect, test, beforeEach, vi } from "vitest";
 import { flushSync, mount } from "svelte";
 
-// 9 个子组件 → 同一共享 stub(显式逐行注册:vi.mock 会被提升,路径必须是
+// 10 个子组件 → 同一共享 stub(显式逐行注册:vi.mock 会被提升,路径必须是
 // 静态字符串、工厂不能引用外层变量,故每行内联);防真实实现拉起 Tauri IPC 依赖。
 vi.mock("../components/Settings/TimerSetting.svelte", async () => ({
   default: (await import("../components/Settings/SettingsChild.stub.svelte")).default,
@@ -36,6 +37,9 @@ vi.mock("../components/Settings/LanguageSetting.svelte", async () => ({
 vi.mock("../components/Settings/TrashSetting.svelte", async () => ({
   default: (await import("../components/Settings/SettingsChild.stub.svelte")).default,
 }));
+vi.mock("../components/Settings/UpdateSetting.svelte", async () => ({
+  default: (await import("../components/Settings/SettingsChild.stub.svelte")).default,
+}));
 
 import SettingsPage from "./SettingsPage.svelte";
 
@@ -54,7 +58,7 @@ beforeEach(() => {
 });
 
 describe("SettingsPage · 标签骨架", () => {
-  test("9 个标签,不含「数据同步」(已迁账号页),「数据迁移」在通知文案之后", async () => {
+  test("10 个标签,不含「数据同步」(已迁账号页),「数据迁移」在通知文案之后,「检查更新」排末位", async () => {
     const target = await render();
     const labels = [...target.querySelectorAll<HTMLButtonElement>(".menu-item")].map((b) =>
       b.textContent!.trim(),
@@ -69,10 +73,11 @@ describe("SettingsPage · 标签骨架", () => {
       "数据迁移",
       "中英切换",
       "垃圾箱",
+      "检查更新",
     ]);
   });
 
-  test("点末项「垃圾箱」→ active 迁移 + 子组件挂载", async () => {
+  test("点末项「检查更新」→ active 迁移 + 子组件挂载", async () => {
     const target = await render();
     const items = [...target.querySelectorAll<HTMLButtonElement>(".menu-item")];
     expect(items[0].classList.contains("active")).toBe(true); // 默认番茄钟
