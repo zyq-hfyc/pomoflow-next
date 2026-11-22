@@ -12,6 +12,7 @@ use crate::commands::{ensure_parent, store_path, AppState};
 
 pub mod commands;
 pub mod export;
+pub mod migration;
 pub mod notify;
 pub mod repeat_service;
 pub mod sync_client;
@@ -189,6 +190,9 @@ pub fn run() {
             sync_client::auth_get_login_logs,
             sync_client::auth_update_username,
             export::export_tasks_xlsx,
+            migration::export_migration_json,
+            migration::export_migration_xlsx,
+            migration::import_migration,
         ])
         .setup(move |app| {
             // 注册通知 AUMID 显示名:dev 模式下插件不给 toast 设 AUMID,
