@@ -5,7 +5,7 @@
 //! ① 进行中行:Archive 按钮(结束项目)→ setProjectClosed(id,true) →
 //!    重拉后名字灰显 + 「已结束」徽标 + 按钮翻转为 重新开启;
 //! ② 已结束行:按钮(重新开启)→ setProjectClosed(id,false) → 徽标消失;
-//! ③ 已结束行禁「添加子清单」,进行中行保留;
+//! ③ 已结束行禁「添加子清单/修改/删除」(要动先重新开启),开启后恢复;
 //! ④ 命令失败 → 错误原文 role=alert(仍会重拉,不崩页)。
 
 import { describe, expect, test, beforeEach, vi } from "vitest";
@@ -100,15 +100,18 @@ describe("ProjectManager · 结束项目", () => {
 
     expect(h.setProjectClosed).toHaveBeenCalledTimes(1);
     expect(h.setProjectClosed).toHaveBeenCalledWith("p-open", true);
-    // 重拉后:徽标 + 灰显 + 按钮翻转;「添加子清单」消失
+    // 重拉后:徽标 + 灰显 + 按钮翻转;加子/修改/删除全部消失(禁改禁删)
     expect(target.querySelector(".closed-badge")?.textContent).toContain("已结束");
     expect(target.querySelector(".name.closed")).not.toBeNull();
     expect(buttonByLabel(target, "重新开启")).toBeTruthy();
-    expect(
-      [...target.querySelectorAll("button")].some(
-        (b) => b.getAttribute("aria-label") === "添加子清单",
-      ),
-    ).toBe(false);
+    for (const banned of ["添加子清单", "修改", "删除"]) {
+      expect(
+        [...target.querySelectorAll("button")].some(
+          (b) => b.getAttribute("aria-label") === banned,
+        ),
+        `已结束行不应再有「${banned}」`,
+      ).toBe(false);
+    }
   });
 
   test("命令失败 → 错误原文就地 role=alert,不崩页", async () => {
@@ -133,24 +136,29 @@ describe("ProjectManager · 重新开启", () => {
     h.listProjects.mockResolvedValue([reopened]);
     const target = await render([CLOSED]);
 
-    // 初始:徽标 + 灰显 + 无「添加子清单」
+    // 初始:徽标 + 灰显;加子/修改/删除全无(禁改禁删)
     expect(target.querySelector(".closed-badge")?.textContent).toContain("已结束");
     expect(target.querySelector(".name.closed")).not.toBeNull();
-    expect(
-      [...target.querySelectorAll("button")].some(
-        (b) => b.getAttribute("aria-label") === "添加子清单",
-      ),
-    ).toBe(false);
+    for (const banned of ["添加子清单", "修改", "删除"]) {
+      expect(
+        [...target.querySelectorAll("button")].some(
+          (b) => b.getAttribute("aria-label") === banned,
+        ),
+        `已结束行不应有「${banned}」`,
+      ).toBe(false);
+    }
 
     await buttonByLabel(target, "重新开启").click();
     await settle();
 
     expect(h.setProjectClosed).toHaveBeenCalledTimes(1);
     expect(h.setProjectClosed).toHaveBeenCalledWith("p-closed", false);
-    // 重拉后:徽标消失、按钮翻回、加子恢复
+    // 重拉后:徽标消失、按钮翻回、加子/修改/删除恢复
     expect(target.querySelector(".closed-badge")).toBeNull();
     expect(target.querySelector(".name.closed")).toBeNull();
     expect(buttonByLabel(target, "结束项目")).toBeTruthy();
     expect(buttonByLabel(target, "添加子清单")).toBeTruthy();
+    expect(buttonByLabel(target, "修改")).toBeTruthy();
+    expect(buttonByLabel(target, "删除")).toBeTruthy();
   });
 });

@@ -506,30 +506,33 @@
               >
                 {#if node.closed_at}<ArchiveRestore size={14} />{:else}<Archive size={14} />{/if}
               </button>
-              <button
-                type="button"
-                class="icon-btn"
-                title={t.settings.list.edit}
-                aria-label={t.settings.list.edit}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  startEdit(node);
-                }}
-              >
-                <Pencil size={14} />
-              </button>
-              <button
-                type="button"
-                class="icon-btn danger"
-                title={t.settings.list.del}
-                aria-label={t.settings.list.del}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  void handleDelete(node.id);
-                }}
-              >
-                <Trash2 size={14} />
-              </button>
+              {#if !node.closed_at}
+                <!-- 已结束行禁改禁删(2026-11-22 用户约定):要动先「重新开启」 -->
+                <button
+                  type="button"
+                  class="icon-btn"
+                  title={t.settings.list.edit}
+                  aria-label={t.settings.list.edit}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    startEdit(node);
+                  }}
+                >
+                  <Pencil size={14} />
+                </button>
+                <button
+                  type="button"
+                  class="icon-btn danger"
+                  title={t.settings.list.del}
+                  aria-label={t.settings.list.del}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    void handleDelete(node.id);
+                  }}
+                >
+                  <Trash2 size={14} />
+                </button>
+              {/if}
             </span>
           </div>
         {/if}
