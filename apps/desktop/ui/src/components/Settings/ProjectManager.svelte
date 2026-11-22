@@ -13,7 +13,7 @@
   //     ReorderItem[] 调 reorderProjects(乐观更新,失败重载 + 3 秒错误条)
 
   import { syncState } from "../../lib/syncState.svelte";
-  import { ChevronDown, ChevronRight, Plus, Pencil, Trash2 } from "lucide-svelte";
+  import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, Archive, ArchiveRestore } from "lucide-svelte";
   import * as api from "../../lib/api";
   import type { Project, ReorderItem } from "../../lib/api";
   import { getDict, fmt } from "../../lib/i18n.svelte";
@@ -187,6 +187,16 @@
   async function handleDelete(id: string) {
     try {
       await api.deleteProject(id);
+    } catch (e) {
+      reorderError = String(e);
+    }
+    await load();
+  }
+
+  // 结束 / 重开(2026-11-22 批):翻 closed_at 单字段,任务归档是派生可见性
+  async function handleSetClosed(id: string, closed: boolean) {
+    try {
+      await api.setProjectClosed(id, closed);
     } catch (e) {
       reorderError = String(e);
     }
@@ -463,10 +473,13 @@
                 <span class="chevron-spacer"></span>
               {/if}
               <span class="dot" style="background-color: {node.color ?? DEFAULT_PROJECT_COLOR}"></span>
-              <span class="name">{node.name}</span>
+              <span class="name" class:closed={!!node.closed_at}>{node.name}</span>
+              {#if node.closed_at}
+                <span class="closed-badge">{t.settings.list.closedBadge}</span>
+              {/if}
             </span>
             <span class="actions">
-              {#if node.depth < 2}
+              {#if node.depth < 2 && !node.closed_at}
                 <button
                   type="button"
                   class="icon-btn"
@@ -481,6 +494,18 @@
                   <Plus size={14} />
                 </button>
               {/if}
+              <button
+                type="button"
+                class="icon-btn"
+                title={node.closed_at ? t.settings.list.reopenProject : t.settings.list.closeProject}
+                aria-label={node.closed_at ? t.settings.list.reopenProject : t.settings.list.closeProject}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  void handleSetClosed(node.id, !node.closed_at);
+                }}
+              >
+                {#if node.closed_at}<ArchiveRestore size={14} />{:else}<Archive size={14} />{/if}
+              </button>
               <button
                 type="button"
                 class="icon-btn"
@@ -689,6 +714,19 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* 已结束(2026-11-22 批):名字灰显 + 徽标 */
+  .name.closed {
+    color: var(--color-text-muted);
+  }
+  .closed-badge {
+    flex-shrink: 0;
+    padding: 0 0.35rem;
+    border-radius: var(--radius-sm);
+    background: var(--color-neutral-100);
+    color: var(--color-text-muted);
+    font-size: 0.65rem;
+    line-height: 1.5;
   }
 
   /* v1 ProjectManager:453 —— 操作按钮默认透明,行 hover 时浮现 */

@@ -23,6 +23,10 @@
 //   文件名分支 —— 先在控制台设 `__MOCK_MIGRATION_PATH__ = 'bad.json'` /
 //   `'partial.json'`(部分跳过)/ 其他(全量成功 + 主题切 preset-bg-2
 //   供目检),再点「选择迁移文件…」(open 对话框回该路径)。
+// 场景八:结束项目(2026-11-22 批)—— 任务页侧栏「网站改版项目」⋮ 菜单
+//   「结束项目」→ 项目任务E 从今天/已计划消失 + 侧栏「已结束」组现形
+//   (预置的「旧项目(已结束)」一并在内);点已结束项浏览归档任务F;
+//   「重新开启」恢复。设置页「清单管理」同款结束/重启。内存态,刷新即重置。
 //
 // 没实现的命令走下面 default 兜底(返回 null / 空数组 → UI 走空态)。
 
@@ -38,6 +42,9 @@ function today(dayOffset = 0): string {
 
 const TPL_ID = "11111111-1111-4111-8111-111111111111";
 const TPL_INSTANCE_ID = "22222222-2222-4222-8222-222222222222";
+// 场景八(结束项目)清单 id:进行中的改版项目 + 预置已结束的旧项目。
+const PROJ_OPEN_ID = "66666666-6666-4666-8666-666666666666";
+const PROJ_CLOSED_ID = "77777777-7777-4777-8777-777777777777";
 
 function task(o: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -54,6 +61,30 @@ function task(o: Record<string, unknown>): Record<string, unknown> {
     ...o,
   };
 }
+
+/// 清单 fixture(场景八):一个进行中 + 一个已结束。归档是派生可见性,
+/// mock 与真实语义一致 —— 只翻 closed_at,任务数据不动。
+function project(o: Record<string, unknown>): Record<string, unknown> {
+  return {
+    parent_id: null,
+    display_order: 0,
+    created_at: "2026-09-01T00:00:00.000Z",
+    updated_at: "2026-09-01T00:00:00.000Z",
+    revision: 1,
+    closed_at: null,
+    ...o,
+  };
+}
+
+const mockProjects: Record<string, unknown>[] = [
+  project({ id: PROJ_OPEN_ID, name: "网站改版项目" }),
+  project({
+    id: PROJ_CLOSED_ID,
+    name: "旧项目(已结束)",
+    display_order: 1,
+    closed_at: "2026-11-01T00:00:00.000Z",
+  }),
+];
 
 const mockTasks: Record<string, unknown>[] = [
   task({
@@ -77,6 +108,20 @@ const mockTasks: Record<string, unknown>[] = [
     title: "已完成任务D",
     due_date: today(),
     status: "completed",
+  }),
+  // 场景八:挂清单的任务 —— 结束「网站改版项目」→ E 消失;F 属预置已结束
+  // 项目,初始即不可见,点侧栏「已结束」组浏览时才现身
+  task({
+    id: "88888888-8888-4888-8888-888888888888",
+    title: "项目任务E",
+    due_date: today(),
+    project_id: PROJ_OPEN_ID,
+  }),
+  task({
+    id: "99999999-9999-4999-8999-999999999999",
+    title: "归档任务F",
+    due_date: today(),
+    project_id: PROJ_CLOSED_ID,
   }),
 ];
 
@@ -236,6 +281,18 @@ const invoke: Invoke = async (cmd, args) => {
       return mockTasks;
     case "get_task":
       return mockTasks.find((x) => x.id === args?.id) ?? null;
+    // 清单 + 结束/重启(场景八):与 commands.rs set_project_closed 同语义 ——
+    // 只翻 closed_at,revision+1,任务数据零改动(归档是派生可见性)。
+    case "list_projects":
+      return mockProjects;
+    case "set_project_closed": {
+      const hit = mockProjects.find((p) => p.id === args?.id);
+      if (!hit) throw new Error(`project not found: ${String(args?.id)}`);
+      hit.closed_at = args?.closed ? new Date().toISOString() : null;
+      hit.revision = Number(hit.revision ?? 1) + 1;
+      hit.updated_at = new Date().toISOString();
+      return hit;
+    }
     case "upsert_task": {
       // 只更新内存副本:够用来验证「改完刷新后列表/详情是否跟上」。
       const next = args?.task as Record<string, unknown>;
@@ -401,7 +458,6 @@ const invoke: Invoke = async (cmd, args) => {
     // 其余命令通用兜底(空数据让 UI 走空态;手账链路够用)。
     case "list_weekly_reviews":
     case "list_monthly_reviews":
-    case "list_projects":
     case "list_tags":
     case "list_tags_for_task":
     case "list_subtasks_for_task":

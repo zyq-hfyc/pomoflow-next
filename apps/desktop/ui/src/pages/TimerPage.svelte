@@ -45,6 +45,7 @@
   } from "../lib/api";
   import { getDict } from "../lib/i18n.svelte";
   import { todayStr } from "../lib/dueDate";
+  import { closedSubtreeIds } from "../lib/projectTree";
   import ReviewTextarea from "../components/Timer/ReviewTextarea.svelte";
   import MottoCard from "../components/Timer/MottoCard.svelte";
   import TaskSelector from "../components/Timer/TaskSelector.svelte";
@@ -67,6 +68,15 @@
   let todayMinutes = $state<number>(0);
   let error = $state<string | null>(null);
   let starting = $state<boolean>(false);
+  // 已结束子树任务不进番茄钟视野(归档派生;projects 由 refreshProjects 维护)。
+  // 过滤放 derived:projects 与 tasks 并行拉取,取数处过滤会漏首帧。
+  const closedIds = $derived(closedSubtreeIds(projects));
+  const visibleSidebarTasks = $derived(
+    sidebarTasks.filter((t) => !t.project_id || !closedIds.has(t.project_id)),
+  );
+  const visibleActiveTasks = $derived(
+    allActiveTasks.filter((t) => !t.project_id || !closedIds.has(t.project_id)),
+  );
 
   // 筛选器用模块级单例(v1 存 AppContext):切页再回来保留
   const filter = timerFilter;
@@ -389,7 +399,7 @@
       </div>
 
       {#if isFocus}
-        <TaskSelector tasks={allActiveTasks} activeTask={selectedTask} onSelect={onSelectTask} />
+        <TaskSelector tasks={visibleActiveTasks} activeTask={selectedTask} onSelect={onSelectTask} />
       {/if}
 
       <!-- 圆环(v1 CircleTimer:渐变描边 + 圆头 + 发光) -->
@@ -506,7 +516,7 @@
     {todayMinutes}
     {projects}
     {tags}
-    tasks={sidebarTasks}
+    tasks={visibleSidebarTasks}
     activeTaskId={timer.activeTask?.id ?? null}
     {filter}
     onFilterChange={(next) => Object.assign(filter, next)}

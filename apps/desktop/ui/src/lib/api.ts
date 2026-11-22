@@ -84,6 +84,8 @@ export interface Project extends SyncMeta, UserScoped {
   /** 同级排序(拖拽用,v1 display_order) */
   display_order?: number;
   created_at?: string;
+  /** 结束时间(2026-11-22 批):非空即已结束;任务归档是派生可见性,不落任务标记 */
+  closed_at?: string | null;
 }
 
 export interface Tag extends SyncMeta, UserScoped {
@@ -234,6 +236,10 @@ export const upsertProject = (project: Project) =>
 
 export const deleteProject = (id: string) =>
   invoke<void>("delete_project", { id });
+
+/** 结束 / 重新开启项目(归档派生:属该子树的任务随项目隐显) */
+export const setProjectClosed = (id: string, closed: boolean) =>
+  invoke<Project>("set_project_closed", { id, closed });
 
 /** 拖拽排序项(项目含 parent_id;标签只用 id + display_order) */
 export interface ReorderItem {

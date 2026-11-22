@@ -97,3 +97,58 @@ export function flattenProjectTree(
   }
   return result;
 }
+
+// === 结束项目(2026-11-22 批):归档 = 派生可见性 ===========================
+//
+// 任务不落任何标记 —— 任务属于「已结束项目或其子孙」即视为归档。
+// 两个纯函数给 TasksPage / ProjectSidebar / TimerPage 共用。
+
+/**
+ * 已结束子树的全集:自身有 closed_at,或任一祖先有(祖先闭包推导,
+ * 不批量写子项目)。parent 断链/成环按根处理,防御异常数据。
+ */
+export function closedSubtreeIds(projects: Project[]): Set<string> {
+  const closedRoots = new Set(
+    projects.filter((p) => !!p.closed_at).map((p) => p.id),
+  );
+  if (closedRoots.size === 0) return new Set();
+  const parentOf = new Map<string, string | null>();
+  for (const p of projects) parentOf.set(p.id, p.parent_id ?? null);
+  const closed = new Set<string>();
+  for (const p of projects) {
+    let cur: string | null = p.id;
+    const seen = new Set<string>();
+    let isClosed = false;
+    while (cur) {
+      if (closedRoots.has(cur)) {
+        isClosed = true;
+        break;
+      }
+      if (seen.has(cur)) break; // 成环防御
+      seen.add(cur);
+      cur = parentOf.get(cur) ?? null;
+    }
+    if (isClosed) closed.add(p.id);
+  }
+  return closed;
+}
+
+/** 以 rootId 为根的子树 id 集(rootId 不在图中返回空集);浏览态按子树筛任务用。 */
+export function subtreeIds(projects: Project[], rootId: string): Set<string> {
+  if (!projects.some((p) => p.id === rootId)) return new Set();
+  const children = new Map<string | null, string[]>();
+  for (const p of projects) {
+    const key = p.parent_id ?? null;
+    if (!children.has(key)) children.set(key, []);
+    children.get(key)!.push(p.id);
+  }
+  const result = new Set<string>();
+  const stack = [rootId];
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    if (result.has(cur)) continue; // 成环防御
+    result.add(cur);
+    for (const kid of children.get(cur) ?? []) stack.push(kid);
+  }
+  return result;
+}

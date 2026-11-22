@@ -11,13 +11,13 @@
   //   - 手账模式:任务页中栏渲染 JournalView(无独立路由);
   //     随手记同理渲染 NotesView(journal 实体,与手机「手账」同步)
 
-  import { Search, Sun, Sunrise, CalendarDays, CalendarCheck, CircleCheck, Repeat, CalendarRange, NotebookPen, Folder, ChevronDown, ChevronRight, Plus, MoreVertical, Pencil, Trash2 } from "lucide-svelte";
+  import { Search, Sun, Sunrise, CalendarDays, CalendarCheck, CircleCheck, Repeat, CalendarRange, NotebookPen, Folder, ChevronDown, ChevronRight, Plus, MoreVertical, Pencil, Trash2, Archive, ArchiveRestore } from "lucide-svelte";
   import type { Component } from "svelte";
   import type { Project, Task } from "../../lib/api";
   import { getDict } from "../../lib/i18n.svelte";
   import { datePart, todayStr, tomorrowStr } from "../../lib/dueDate";
   import { startOfWeek, endOfWeek } from "../../lib/weekMonth";
-  import { buildProjectTree, flattenProjectTree } from "../../lib/projectTree";
+  import { buildProjectTree, flattenProjectTree, closedSubtreeIds } from "../../lib/projectTree";
 
   const t = $derived(getDict());
 
@@ -33,6 +33,7 @@
     onCreateProject?: (name: string, parent_id?: string | null) => void;
     onUpdateProject?: (id: string, name: string) => void;
     onDeleteProject?: (id: string) => void;
+    onSetProjectClosed?: (id: string, closed: boolean) => void;
     search?: string;
     onSearchChange?: (value: string) => void;
   }
@@ -47,6 +48,7 @@
     onCreateProject,
     onUpdateProject,
     onDeleteProject,
+    onSetProjectClosed,
     search = "",
     onSearchChange,
   }: Props = $props();
@@ -69,6 +71,9 @@
 
   function getTaskStats(items: Task[], key: FilterKey): TaskStats {
     if (key === "journal" || key === "notes") return { timeStr: "", count: 0 };
+    // 已结束子树的任务不进日常视野统计(归档派生,2026-11-22 批)
+    const closedIds = closedSubtreeIds(projects);
+    items = items.filter((t) => !t.project_id || !closedIds.has(t.project_id));
     const today = todayStr();
     const tomorrow = tomorrowStr();
     const sow = startOfWeek(new Date());
@@ -109,6 +114,27 @@
   // === derived ===
   const tree = $derived(buildProjectTree(projects));
   const flatTree = $derived(flattenProjectTree(tree, expanded));
+  // 结束项目(2026-11-22 批):活跃树剔除已结束子树;已结束根单列「已结束」组
+  const closedIds = $derived(closedSubtreeIds(projects));
+  const activeFlatTree = $derived(flatTree.filter((n) => !closedIds.has(n.id)));
+  /** 已结束组根:自带 closed_at 且无带 closed_at 的真祖先(祖先闭的子节点随根走) */
+  const closedRoots = $derived.by(() => {
+    const flagged = new Set(projects.filter((p) => !!p.closed_at).map((p) => p.id));
+    const parentOf = new Map(projects.map((p) => [p.id, p.parent_id ?? null]));
+    return projects.filter((p) => {
+      if (!p.closed_at) return false;
+      let cur: string | null = p.parent_id ?? null;
+      const seen = new Set<string>();
+      while (cur) {
+        if (flagged.has(cur)) return false;
+        if (seen.has(cur)) break; // 成环防御
+        seen.add(cur);
+        cur = parentOf.get(cur) ?? null;
+      }
+      return true;
+    });
+  });
+  let closedOpen = $state(false);
 
   // 6 个时间筛选项(label 走词典 → $derived,语言切换即更新)
   // lucide-svelte 1.x 导出的是 Svelte 4 SvelteComponentTyped，与 Svelte 5 Component 类型不兼容。
@@ -239,7 +265,7 @@
           </div>
         {/if}
 
-        {#each flatTree as node (node.id)}
+        {#each activeFlatTree as node (node.id)}
           {@const active = selectedProject === node.id}
           {@const isMenuOpen = menuProjectId === node.id}
           {@const isEditing = editingProjectId === node.id}
@@ -395,6 +421,19 @@
                     {t.settings.list.edit}
                   </button>
                 {/if}
+                {#if onSetProjectClosed}
+                  <button
+                    type="button"
+                    class="ctx-item"
+                    onclick={() => {
+                      onSetProjectClosed(node.id, true);
+                      menuProjectId = null;
+                    }}
+                  >
+                    <Archive size={12} />
+                    {t.sidebar.closeProject}
+                  </button>
+                {/if}
                 {#if onDeleteProject}
                   <button
                     type="button"
@@ -415,6 +454,64 @@
 
         {#if projects.length === 0 && addingParentId !== "root"}
           <div class="empty-hint">{t.sidebar.emptyHint}</div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- 已结束组(2026-11-22 批):点击浏览归档任务,悬停可重新开启 -->
+    {#if closedRoots.length > 0}
+      <div class="closed-section">
+        <button
+          type="button"
+          class="closed-toggle"
+          onclick={() => (closedOpen = !closedOpen)}
+        >
+          {#if closedOpen}<ChevronDown size={12} />{:else}<ChevronRight size={12} />{/if}
+          <Archive size={12} />
+          {t.sidebar.closedSection}
+          <span class="closed-count">{closedRoots.length}</span>
+        </button>
+        {#if closedOpen}
+          {#each closedRoots as p (p.id)}
+            <div class="tree-node closed-node">
+              <div class="node-row" class:active={selectedProject === p.id}>
+                <span
+                  class="node-label"
+                  onclick={() => {
+                    onSelectProject(p.id);
+                    onSetFilter("");
+                  }}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSelectProject(p.id);
+                      onSetFilter("");
+                    }
+                  }}
+                  role="button"
+                  tabindex="0"
+                >
+                  <Folder size={14} color={p.color || "var(--color-accent)"} />
+                  <span class="node-name">{p.name}</span>
+                  <span class="closed-badge">{t.settings.list.closedBadge}</span>
+                </span>
+                {#if onSetProjectClosed}
+                  <button
+                    type="button"
+                    class="more-btn"
+                    title={t.sidebar.reopenProject}
+                    aria-label={t.sidebar.reopenProject}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      onSetProjectClosed(p.id, false);
+                    }}
+                  >
+                    <ArchiveRestore size={14} />
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {/each}
         {/if}
       </div>
     {/if}
@@ -604,6 +701,48 @@
   }
   .more-btn:hover {
     background: var(--color-bg, #fafaf7);
+  }
+
+  /* 已结束组(2026-11-22 批):折叠标题 + 灰显行 + 徽标 */
+  .closed-section {
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--color-border, #e5e2dd);
+  }
+  .closed-toggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.75rem;
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted, #6b6864);
+    font-size: 0.8rem;
+    cursor: pointer;
+    border-radius: var(--radius-lg, 12px);
+    transition: background 0.12s;
+  }
+  .closed-toggle:hover {
+    background: var(--color-bg, #fafaf7);
+  }
+  .closed-count {
+    margin-left: auto;
+    font-size: 0.7rem;
+    opacity: 0.8;
+    font-variant-numeric: tabular-nums;
+  }
+  .closed-node .node-name {
+    color: var(--color-text-muted, #6b6864);
+  }
+  .closed-badge {
+    flex-shrink: 0;
+    padding: 0 0.35rem;
+    border-radius: var(--radius-sm, 6px);
+    background: var(--color-neutral-100, #f5f3f0);
+    color: var(--color-text-muted, #6b6864);
+    font-size: 0.65rem;
+    line-height: 1.4;
   }
 
   .add-row,

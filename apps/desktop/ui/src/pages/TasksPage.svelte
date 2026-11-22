@@ -54,6 +54,7 @@
   import { startOfWeek, endOfWeek, startOfMonth, endOfMonth } from "../lib/weekMonth";
   import { toISO } from "../lib/calendar";
   import ProjectSidebar from "../components/Tasks/ProjectSidebar.svelte";
+  import { closedSubtreeIds, subtreeIds } from "../lib/projectTree";
   import TaskItem from "../components/Tasks/TaskItem.svelte";
   import TaskDetailPanel from "../components/Tasks/TaskDetailPanel.svelte";
   import GroupedTaskList from "../components/Tasks/GroupedTaskList.svelte";
@@ -130,6 +131,18 @@
   // === derived: 主筛选结果 ===
   const filtered = $derived.by(() => {
     let result = [...tasks];
+
+    // 结束项目(2026-11-22 批):归档 = 派生可见性 —— 已结束子树的任务
+    // 从一切日常视野(含搜索)消失。例外:选中的就是已结束项目 → 浏览态,
+    // 展示整个子树(active + completed)。
+    const closedIds = closedSubtreeIds(projects);
+    if (selectedProject !== null && closedIds.has(selectedProject)) {
+      const ids = subtreeIds(projects, selectedProject);
+      result = result.filter((t) => t.project_id != null && ids.has(t.project_id));
+      result.sort(compareByStatusPriorityCreated);
+      return result;
+    }
+    result = result.filter((t) => !t.project_id || !closedIds.has(t.project_id));
 
     // 搜索 → 忽略 filter / selectedProject
     if (searchQuery.trim()) {
@@ -462,6 +475,16 @@
     }
   }
 
+  // 结束 / 重开项目(归档派生可见性;重开/结束瞬时可逆)
+  async function setProjectClosed(id: string, closed: boolean) {
+    try {
+      await api.setProjectClosed(id, closed);
+      await refresh();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   function selectTask(task: TaskWithTags) {
     // 用户主动切:锁住程序性滚动,tick 后再放;handleOpenTemplate 的
     // 旧 tick().then 大半已把 pendingScrollId 清掉,新 effect 不会再滚。
@@ -596,6 +619,7 @@
     onCreateProject={createProject}
     onUpdateProject={updateProject}
     onDeleteProject={deleteProject}
+    onSetProjectClosed={setProjectClosed}
     search={searchQuery}
     onSearchChange={(v) => {
       searchQuery = v;

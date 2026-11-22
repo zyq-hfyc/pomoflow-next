@@ -10,6 +10,8 @@ import {
   projectTreeOptions,
   buildProjectTree,
   flattenProjectTree,
+  closedSubtreeIds,
+  subtreeIds,
 } from "./projectTree";
 import type { Project } from "./api";
 
@@ -122,5 +124,82 @@ describe("flattenProjectTree · expanded 集控制可见性", () => {
     const tree = buildProjectTree(fixture());
     const out = flattenProjectTree(tree, new Set(["gc", "childA2"]));
     expect(out.map((n) => n.id)).toEqual(["orphan", "rootB", "rootA"]);
+  });
+});
+
+// === 结束项目(2026-11-22 批):归档 = 派生可见性,闭包语义锁在这里 ===
+
+describe("closedSubtreeIds · 已结束闭包(祖先推导)", () => {
+  test("自身 closed 即闭;子孙沿父链推导全部入集", () => {
+    const projects = [
+      proj({ id: "rootA", name: "A", closed_at: "2026-11-22T00:00:00.000Z" }),
+      proj({ id: "childA1", name: "A1", parent_id: "rootA" }),
+      proj({ id: "gc", name: "A1a", parent_id: "childA1" }),
+      proj({ id: "rootB", name: "B" }),
+    ];
+    const closed = closedSubtreeIds(projects);
+    expect([...closed].sort()).toEqual(["childA1", "gc", "rootA"]);
+    expect(closed.has("rootB")).toBe(false);
+  });
+
+  test("闭包只向下:子节点 closed 不波及父与兄弟", () => {
+    const closed = closedSubtreeIds([
+      proj({ id: "rootA", name: "A" }),
+      proj({
+        id: "childA1",
+        name: "A1",
+        parent_id: "rootA",
+        closed_at: "2026-11-22T00:00:00.000Z",
+      }),
+      proj({ id: "childA2", name: "A2", parent_id: "rootA" }),
+    ]);
+    expect([...closed]).toEqual(["childA1"]);
+  });
+
+  test("无 closed 项目走快速路径返回空集;断链孤儿按根处理", () => {
+    expect(closedSubtreeIds(fixture()).size).toBe(0);
+    const orphan = [
+      proj({
+        id: "o",
+        name: "孤儿",
+        parent_id: "ghost",
+        closed_at: "2026-11-22T00:00:00.000Z",
+      }),
+    ];
+    expect([...closedSubtreeIds(orphan)]).toEqual(["o"]);
+  });
+
+  test("成环防御:父链成环不挂起,未闭环成员不入集", () => {
+    const projects = [
+      proj({ id: "x", name: "x", parent_id: "y" }),
+      proj({ id: "y", name: "y", parent_id: "x" }),
+      proj({ id: "c", name: "c", closed_at: "2026-11-22T00:00:00.000Z" }),
+    ];
+    expect([...closedSubtreeIds(projects)]).toEqual(["c"]);
+  });
+});
+
+describe("subtreeIds · 子树闭包(浏览态筛任务)", () => {
+  test("根 + 全部子孙;兄弟子树不入", () => {
+    const ids = subtreeIds(fixture(), "rootA");
+    expect([...ids].sort()).toEqual(["childA1", "childA2", "gc", "rootA"]);
+    expect(ids.has("rootB")).toBe(false);
+    expect(ids.has("orphan")).toBe(false);
+  });
+
+  test("叶子根 → 只有自己", () => {
+    expect([...subtreeIds(fixture(), "gc")]).toEqual(["gc"]);
+  });
+
+  test("根不在图中 → 空集", () => {
+    expect(subtreeIds(fixture(), "ghost").size).toBe(0);
+  });
+
+  test("成环防御:父指针成环不挂起", () => {
+    const projects = [
+      proj({ id: "x", name: "x", parent_id: "y" }),
+      proj({ id: "y", name: "y", parent_id: "x" }),
+    ];
+    expect(subtreeIds(projects, "x").size).toBe(2);
   });
 });
