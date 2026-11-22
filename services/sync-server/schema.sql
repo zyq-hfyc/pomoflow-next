@@ -169,3 +169,12 @@ CREATE TABLE IF NOT EXISTS release_assets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_release_assets_release ON release_assets (release_id);
+
+-- 检查更新清单(ADR-013 扩展,2026-11-22):
+-- Android 端比较用 versionCode(versionName 字符串无法可靠推导);建版本时
+-- 可选录入,不录 = 该版本不进 Android 更新清单(客户端无从比较,宁缺毋滥)。
+ALTER TABLE releases ADD COLUMN IF NOT EXISTS version_code BIGINT;
+-- minisign 签名文本(Tauri 更新清单 signature 字段):安装包资产的**附属列**
+-- 而非独立资产 —— 重传安装包即随旧行一并删除,该平台自动退出更新清单,
+-- 杜绝「新包配旧签名」验签失败;`.sig` 扩展也不在资产白名单内,一石二鸟。
+ALTER TABLE release_assets ADD COLUMN IF NOT EXISTS sig_content TEXT;
